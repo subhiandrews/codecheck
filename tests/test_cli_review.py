@@ -8,6 +8,7 @@ from fakes import FakeProvider, FakeRunner
 from gitutil import commit_file, make_origin_and_clone, push_branch, sh
 
 from codecheck.config import ReviewConfig
+from codecheck.core.render import ATTRIBUTION
 
 pytestmark = pytest.mark.usefixtures("git_env")
 
@@ -116,7 +117,7 @@ def test_stale_head_aborts_posting(tmp_path):
     provider.prs[pr.ref] = replace(pr, head_sha="f" * 40)  # author pushed while we were reviewing
     code, res = call(ctx, "post", "--run", out["run_id"])
     assert code == 0 and res["posted"] is False and res["stale"] is True
-    assert provider.posted == [] and ctx.state.get(f"review:{pr.ref}") is None
+    assert provider.posted == [] and provider.labeled == [] and ctx.state.get(f"review:{pr.ref}") is None
 
 
 def test_missing_or_invalid_reviewer_makes_review_incomplete_and_never_approves(tmp_path):
@@ -314,7 +315,7 @@ def test_draft_pr_is_never_posted_to(tmp_path):
     provider.prs[pr.ref] = replace(pr, is_draft=True)
     code, res = call(ctx, "post", "--run", out["run_id"])
     assert code == 0 and res["posted"] is False and res["draft"] is True
-    assert provider.posted == [] and ctx.state.get(f"review:{pr.ref}") is None
+    assert provider.posted == [] and provider.labeled == [] and ctx.state.get(f"review:{pr.ref}") is None
 
 
 def test_repost_skips_findings_already_posted_inline_by_us(tmp_path):
@@ -451,3 +452,38 @@ def test_posted_comment_has_no_secret_and_no_corrupted_suggestion(tmp_path):
         assert "```suggestion" not in c.body
     assert "key [REDACTED] is committed" in review["comments"][0].body
     assert "(code suggestion withheld: it looked like it contained a secret)" in review["comments"][1].body
+
+
+def _posted_review(tmp_path, **config_over):
+    ctx, provider, pr = pr_setup(tmp_path, **config_over)
+    out = run_pr_context(ctx, pr)
+    finding = {"file": "app.py", "line": 2, "severity": "warning", "category": "bug", "message": "y unused", "reviewers": ["skeptic"]}
+    finish_review(ctx, out, per_member={"skeptic": [finding]}, aggregated={"findings": [finding]})
+    call(ctx, "ingest", "--run", out["run_id"])
+    _code, res = call(ctx, "post", "--run", out["run_id"])
+    return provider, pr, res
+
+
+def test_posted_review_has_footer_and_label(tmp_path):
+    provider, pr, res = _posted_review(tmp_path)
+    (review,) = provider.posted
+    assert ATTRIBUTION in review["body"]
+    assert all(ATTRIBUTION not in c.body for c in review["comments"]) and review["comments"]
+    assert provider.labeled == [(pr.ref, "code-check")] and res["labeled"] is True
+
+
+def test_attribution_and_label_can_be_disabled(tmp_path):
+    provider, _pr, res = _posted_review(tmp_path, review=ReviewConfig(attribution=False, label=""))
+    assert ATTRIBUTION not in provider.posted[0]["body"]
+    assert provider.labeled == [] and res["labeled"] is False
+
+
+def test_label_failure_does_not_fail_post(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path)
+    provider.label_error = True
+    out = run_pr_context(ctx, pr)
+    finish_review(ctx, out)
+    call(ctx, "ingest", "--run", out["run_id"])
+    code, res = call(ctx, "post", "--run", out["run_id"])
+    assert code == 0 and res["posted"] is True and res["labeled"] is False
+    assert len(provider.posted) == 1 and ctx.state.get(f"review:{pr.ref}") == pr.head_sha
