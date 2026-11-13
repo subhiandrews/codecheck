@@ -31,17 +31,17 @@ def _latest_by_thread(records: list[tuple[int, dict]]) -> dict[str, tuple[int, d
     return out
 
 
-def export_golden(shadow: ShadowStore, out_path: Path) -> int:
+def run_feedback(shadow: ShadowStore) -> dict[str, tuple[dict[str, dict], dict[str, dict]]]:
+    """Per run: its outcomes by finding id and human comments by thread id. A thread's feedback only counts in
+    the run it was last attributed to."""
     runs = [(rid, shadow.read(rid)) for rid in shadow.ordered_run_ids()]
     winners = {}
     for kind in ("outcome", "human_comment"):
         winners[kind] = _latest_by_thread(
             [(i, r) for i, (_, recs) in enumerate(runs) for r in recs if r.get("type") == kind]
         )
-    rows = []
-    for i, (rid, recs) in enumerate(runs):
-        run = next((r for r in recs if r.get("type") == "run"), None)
-        # a thread's feedback only counts in the run it was last attributed to
+    out = {}
+    for rid, recs in runs:
         outcomes = {
             r["finding_id"]: r for r in recs
             if r.get("type") == "outcome" and isinstance(r.get("finding_id"), str)
@@ -51,15 +51,30 @@ def export_golden(shadow: ShadowStore, out_path: Path) -> int:
             r["thread_id"]: r for r in recs
             if r.get("type") == "human_comment" and winners["human_comment"].get(r.get("thread_id"), (None, None))[1] is r
         }
+        out[rid] = (outcomes, humans)
+    return out
+
+
+def finding_label(fid: str, outcomes: dict[str, dict], humans: dict[str, dict]) -> str:
+    """confirmed, disputed, no_signal or unreviewed; a human comment that matched the finding confirms it."""
+    label = _label(outcomes.get(fid))
+    if label in ("unreviewed", "no_signal") and any(h.get("matches_finding") == fid for h in humans.values()):
+        label = "confirmed"
+    return label
+
+
+def export_golden(shadow: ShadowStore, out_path: Path) -> int:
+    feedback = run_feedback(shadow)
+    rows = []
+    for rid, (outcomes, humans) in feedback.items():
+        recs = shadow.read(rid)
+        run = next((r for r in recs if r.get("type") == "run"), None)
         diff = shadow.read_diff(rid)
         if run is None or not diff or not (outcomes or humans):
             continue
-        matched = {h.get("matches_finding") for h in humans.values() if h.get("matches_finding")}
         findings = []
         for r in (x for x in recs if x.get("type") == "finding" and isinstance(x.get("id"), str)):
-            label = _label(outcomes.get(r["id"]))
-            if r["id"] in matched and label in ("unreviewed", "no_signal"):
-                label = "confirmed"
+            label = finding_label(r["id"], outcomes, humans)
             findings.append({k: r.get(k) for k in ("id", "file", "line", "severity", "category", "message", "reviewers")} | {"label": label})
         rows.append({
             "run_id": rid, "repo": run.get("repo"), "pr": run.get("pr"), "head_sha": run.get("head_sha"),

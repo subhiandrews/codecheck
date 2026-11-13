@@ -283,6 +283,15 @@ code-check eval --replay                      # replay every case in the plugin 
 code-check eval --replay --cases path/to/dir  # or another directory of cases
 ```
 
+**Promoting a hand-off run.** A run made with `shadow.handoff = true` keeps its raw reviewer and aggregator outputs, so it can become a golden case. Promotion is two steps and works offline from the shadow store:
+
+```bash
+code-check shadow promote --run <run_id> --out drafts/case.json   # 1. write a draft with label_status "auto"
+code-check shadow promote --finalize drafts/case.json             # 2. after you confirmed it: write tests/golden/<repo>-<pr>-<sha8>.json
+```
+
+The draft (written 0600, since it holds the PR's code) labels each posted finding `expected` when its thread was resolved or outdated or a human comment matched it, `not_expected` when a human replied disputing it, and `unlabelled` otherwise; human comments with no matching finding become `misses`, and the hand-off's `signals` are copied in when a `handoff.json` exists. `expected_posted` and `expected_decision` come from replaying the stored aggregator output, with absolute worktree paths made repository-relative as `post` does. Check every label, set each to `expected` or `not_expected`, and set `label_status` to `"confirmed"`. `--finalize` refuses a draft that is not confirmed, still has an unlabelled finding, or does not replay exactly, then writes the case scrubbed (0644, never through a symlink) into `--dest` (default: the plugin repository's `tests/golden`). **Privacy:** golden cases are committed, so a case from a private repository, or one whose visibility is unknown (`repo_private` null, for example a run made offline), is refused unless you pass `--allow-private` for that case. Runs recorded without `shadow.handoff` cannot be promoted. The command is developer tooling and is not listed in `code-check shadow --help`.
+
 `eval --replay` runs each case's stored outputs through the same deterministic steps as `ingest` and `post` (validation, duplicate merging, anchoring to the diff, the inline cap and the approval policy) and compares the result with the case. It prints `{"passed": ..., "cases": N, "failed": [{"case": ..., "problems": [...]}]}`, each problem naming the finding that changed; the exit status is 0 either way, so read `passed`. It needs no network and no model access: it runs inside `pytest` (one test per case file) and as its own step in CI, which fails when `passed` is false. An installed package has no `tests/` directory, so there the default replays nothing and passes.
 
 ## Extending
