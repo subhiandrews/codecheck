@@ -43,7 +43,7 @@ node --test tests-node/*.test.js                 # installer tests (Node >= 20)
 - Never force-push; never post to draft PRs; the tool does not review its own PRs.
 - Shadow recording side effects only via `ctx.guarded(...)`: recording must never change a command's behaviour.
 - `ShadowStore.run_ids()` is not chronological; use `ordered_run_ids()` / `runs_for_pr`.
-- `StateStore` locks itself (`state.json.lock`); loop bookkeeping keys live under `loop:<mode>:<ref>`, never the `review:<ref>` keys that `precheck`/`post` own. Security-sensitive config keys (`state_dir`, `run_pr.*`, `shadow.*`, `review.auto_approve`, `loop.review_forks`) are rejected in a repo's `.code-check.toml`; user config beats repo config.
+- `StateStore` locks itself (`state.json.lock`); loop bookkeeping keys live under `loop:<mode>:<ref>`, never the `review:<ref>` keys that `precheck`/`post` own. Security-sensitive config keys (`state_dir`, `run_pr.*`, `shadow.*`, `review.auto_approve`, `review.attribution`, `review.label`, `loop.review_forks`) are rejected in a repo's `.code-check.toml`; user config beats repo config.
 
 ## Work in progress
 

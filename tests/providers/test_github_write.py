@@ -70,6 +70,20 @@ def test_request_review_with_nobody_is_a_noop():
     assert runner.calls == []
 
 
+def test_add_label_issues_one_gh_call():
+    runner = FakeRunner().on("gh", "api", "repos/o/r/issues/7/labels", "--method", "POST", "-f", "labels[]=code-check", stdout="[]")
+    GitHubProvider(runner).add_label(REF, "code-check")
+    assert len(runner.calls) == 1
+
+
+@pytest.mark.parametrize("bad", ["--foo", "-x", "a\nb", "x" * 51, ""])
+def test_add_label_rejects_option_like_and_overlong_names(bad):
+    runner = FakeRunner()
+    with pytest.raises(ProviderError):
+        GitHubProvider(runner).add_label(REF, bad)
+    assert runner.calls == []
+
+
 @pytest.mark.parametrize("bad", ["../..", "o/..", "./r", "-x/r", "o/r/x", ""])
 def test_write_side_rejects_bad_repo_including_dot_segments(bad):
     gh = GitHubProvider(FakeRunner())

@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from codecheck.models import Decision, Finding, Severity
 
 RUN_MARKER = "<!-- code-check:run:{} -->"
+ATTRIBUTION = "<sub>Reviewed with [code-check](https://github.com/subhiandrews/codecheck) · Apache-2.0</sub>"
 FINDING_MARKER = re.compile(r"<!-- code-check:finding:([0-9a-f]{12}) -->")
 
 
@@ -42,6 +43,7 @@ def summary_body(
     *,
     base_warning: str | None = None,
     failed_reviewers: Sequence[str] = (),
+    attribution: bool = False,
 ) -> str:
     counts = Counter(f.severity for f in findings)
     parts = [f"{counts[s]} {s.value}" for s in (Severity.CRITICAL, Severity.WARNING, Severity.SUGGESTION) if counts[s]]
@@ -53,6 +55,8 @@ def summary_body(
     if unlisted:
         lines += ["", "### Findings without an inline location", ""]
         lines += [f"- **{f.severity.label}** `{f.file}:{f.line}` {f.message}" for f in unlisted]
+    if attribution:
+        lines += ["", ATTRIBUTION]
     lines += ["", RUN_MARKER.format(run_id)]
     return "\n".join(lines)
 

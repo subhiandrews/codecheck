@@ -25,6 +25,7 @@ _SCOPES = {"review-requested": "--review-requested=@me", "authored": "--author=@
 _PR_FIELDS = "number,title,body,author,baseRefName,headRefName,headRefOid,isDraft,state,url,isCrossRepository"
 _REPO = re.compile(r"[A-Za-z0-9_.][A-Za-z0-9_.-]*/[A-Za-z0-9_.][A-Za-z0-9_.-]*")
 _LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\[bot\])?")
+_LABEL = re.compile(r"[A-Za-z0-9._ :-]{1,50}")
 _SHA = re.compile(r"[0-9A-Fa-f]{1,64}")
 _DIGITS = re.compile(r"[0-9]+")
 _LOG_TAIL_CHARS = 20_000
@@ -64,6 +65,12 @@ def _login(user: str) -> str:
     if not isinstance(user, str) or not _LOGIN.fullmatch(user):
         raise ProviderError(f"invalid user login {user!r}")
     return user
+
+
+def _label(label: str) -> str:
+    if not isinstance(label, str) or label.startswith("-") or not _LABEL.fullmatch(label):
+        raise ProviderError(f"invalid label {label!r}")
+    return label
 
 
 def _sha(sha: str) -> str:
@@ -215,6 +222,11 @@ class GitHubProvider:
 
     def resolve(self, thread: Thread) -> None:
         self._gh("api", "graphql", "-f", f"query={RESOLVE_MUTATION}", "-f", f"id={thread.id}")
+
+    def add_label(self, ref: PRRef, label: str) -> None:
+        # Adding a label that is already on the PR is a no-op on GitHub; a missing label is created.
+        self._gh("api", f"repos/{_repo(ref.repo)}/issues/{_num(ref.number)}/labels", "--method", "POST",
+                 "-f", f"labels[]={_label(label)}")
 
     def request_review(self, ref: PRRef, users: Sequence[str]) -> None:
         if not users:

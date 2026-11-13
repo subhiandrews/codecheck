@@ -44,6 +44,7 @@ class FakeRunner:
         return [c.argv for c in self.calls]
 
 
+from codecheck.errors import ProviderError
 from codecheck.models import Check, Decision, PostResult, PRRef, PullRequest, Thread
 
 
@@ -65,6 +66,8 @@ class FakeProvider:
         self.replies: list[tuple[PRRef, str, str]] = []
         self.resolved: list[str] = []
         self.requested: list[tuple[PRRef, list[str]]] = []
+        self.labeled: list[tuple[PRRef, str]] = []
+        self.label_error = False
 
     def add_pr(self, number: int = 7, **over) -> PullRequest:
         ref = PRRef(self.repo, number)
@@ -111,6 +114,11 @@ class FakeProvider:
 
     def request_review(self, ref, users):
         self.requested.append((ref, list(users)))
+
+    def add_label(self, ref, label):
+        if self.label_error:
+            raise ProviderError("cannot label")
+        self.labeled.append((ref, label))
 
     def get_checks(self, ref):
         return list(self.checks.get(ref, []))

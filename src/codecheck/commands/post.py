@@ -20,7 +20,7 @@ from codecheck.core.render import (
     render_local,
     summary_body,
 )
-from codecheck.errors import CodeCheckError
+from codecheck.errors import CodeCheckError, ProviderError
 from codecheck.models import PRRef, ReviewComment
 from codecheck.shadow.recorder import record_post
 
@@ -105,16 +105,24 @@ def run(args, ctx) -> dict:
     comments = [ReviewComment(a.path, a.line, a.side, comment_body(f, finding_id(f), relocated=a.relocated)) for f, a in inline]
     not_inline = [f for f, _ in unlisted] + [f for f, _ in overflow]
     body = summary_body(meta["run_id"], findings, not_inline, decision,
-                        base_warning=meta.get("base_warning"), failed_reviewers=failed)
+                        base_warning=meta.get("base_warning"), failed_reviewers=failed,
+                        attribution=cfg.review.attribution)
     result = ctx.provider.post_review(ref, pr.head_sha, body, comments, decision)
     if not incomplete:
         ctx.state.set(f"review:{ref}", pr.head_sha)
+    labeled = False
+    if cfg.review.label:
+        try:
+            ctx.provider.add_label(ref, cfg.review.label)
+            labeled = True
+        except ProviderError:
+            pass  # the reviewer may lack triage rights; the review itself is already posted
     if ctx.shadow is not None:
         ctx.guarded(lambda: record_post(
             ctx.shadow, meta, reviewer_findings=_reviewer_findings(run_dir, ingest, meta), findings=findings,
             inline_ids={finding_id(f) for f, _ in inline}, decision=decision, incomplete=incomplete, dropped=dropped))
     return {"posted": True, "degraded": result.degraded, "inline": len(comments), "unlisted": len(not_inline),
-            "already_posted": repeated,
+            "already_posted": repeated, "labeled": labeled,
             "findings": len(findings), "decision": decision.event, "reason": decision.reason,
             "incomplete": incomplete, "failed_reviewers": failed, "base_warning": meta.get("base_warning"),
             "run_id": meta["run_id"]}

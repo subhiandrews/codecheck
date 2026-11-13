@@ -31,5 +31,6 @@ class TestGitHubContract(ProviderContract):
             .on_prefix("gh", "api", "repos/o/r/pulls/7/reviews", stdout="{}")
             .on_prefix("gh", "api", "repos/o/r/pulls/7/comments/101/replies", stdout="{}")
             .on_prefix("gh", "api", "repos/o/r/pulls/7/requested_reviewers", stdout="{}")
+            .on_prefix("gh", "api", "repos/o/r/issues/7/labels", stdout="[]")
         )
         return GitHubProvider(runner), PRRef("o/r", 7)
