@@ -60,7 +60,7 @@ def test_install_does_not_lead_with_an_unpublished_npm_name():
     install = README[README.index("## Install"):README.index("## Quick start")]
     first_npx = install.index("npx code-check")
     assert "not published to npm yet" in install[:first_npx]
-    assert "node installer/cli.js install" in install and "npx github:OWNER/REPO install" in install
+    assert "node installer/cli.js install" in install and "npx github:subhiandrews/codecheck install" in install
     assert "plugin must be installed" in install
     assert "## Safety" in README and "### Prompt injection and unattended runs" in README
 

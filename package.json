@@ -2,9 +2,10 @@
   "name": "code-check",
   "version": "0.1.0",
   "description": "PR review and review-comment tooling for Claude Code",
+  "license": "Apache-2.0",
   "type": "module",
   "bin": { "code-check-plugin": "installer/cli.js" },
-  "files": [".claude-plugin", "hooks", "bin", "skills", "agents", "src", "pyproject.toml", "installer", "README.md"],
+  "files": [".claude-plugin", "hooks", "bin", "skills", "agents", "src", "pyproject.toml", "installer", "README.md", "LICENSE", "NOTICE"],
   "scripts": { "test": "node --test tests-node/*.test.js" },
   "engines": { "node": ">=20" }
 }
