@@ -3,6 +3,7 @@ from pathlib import Path
 
 from codecheck.commands._common import contained, safe_repo
 from codecheck.config import expand_path
+from codecheck.core.guidance import from_base
 from codecheck.core.state import ensure_private_dir
 from codecheck.errors import CodeCheckError
 from codecheck.vcs.git import Git
@@ -30,6 +31,18 @@ def managed_clone(ctx, repo: str) -> Git:
     return Git(ctx.runner, dest)
 
 
+def _guidance(git: Git, cfg, pr) -> dict | None:
+    """CODE_CHECK.md from the PR's base branch (never the PR head, which its author controls).
+
+    Best effort: a lookup failure must never make `workspace` fail."""
+    try:
+        git.fetch(cfg.remote, pr.base_ref)  # a failed fetch just means we use whatever is local
+        g = from_base(git, f"{cfg.remote}/{pr.base_ref}")
+    except CodeCheckError:  # GitError is a CodeCheckError
+        return None
+    return None if g is None else {"source": g.source, "text": g.text, "truncated": g.truncated}
+
+
 def run(args, ctx) -> dict:
     cfg = ctx.config
     ref = ctx.resolve_ref(args.pr)
@@ -42,7 +55,7 @@ def run(args, ctx) -> dict:
     if here == ref.repo and ctx.git.current_branch() == pr.head_ref:
         if ctx.git.is_dirty():
             raise CodeCheckError("working tree has uncommitted changes; commit or stash them first")
-        return {"path": str(ctx.git.cwd), "created": False}
+        return {"path": str(ctx.git.cwd), "created": False, "guidance": _guidance(ctx.git, cfg, pr)}
     base = ctx.git if here == ref.repo else managed_clone(ctx, ref.repo)
     refspec, local_ref = ctx.provider.fetch_refspec(ref)
     if not base.fetch(cfg.remote, refspec):
@@ -72,4 +85,5 @@ def run(args, ctx) -> dict:
         shutil.rmtree(path, ignore_errors=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     base.worktree_add_branch(path, branch, local_ref)
-    return {"path": str(path), "created": True, "git_dir": str(Path(base.cwd))}
+    return {"path": str(path), "created": True, "git_dir": str(Path(base.cwd)),
+            "guidance": _guidance(base, cfg, pr)}
