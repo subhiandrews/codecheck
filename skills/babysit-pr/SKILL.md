@@ -23,7 +23,7 @@ Keeps one of YOUR pull requests moving: review comments first, then failing CI.
 
 ## Without an argument (queue mode)
 
-Run `code-check loop --mode babysit` with the Bash tool's `run_in_background` option: an iteration runs up to `loop.max_prs_per_iteration` headless reviews of up to 30 minutes each, far longer than a foreground Bash call is allowed to take, and a killed iteration would leave work half done. Wait for the background command to finish, then read its JSON output. Never run a second `loop` while one is still running. It handles each of your PRs with new comments or failing checks in its own headless process, one at a time (the per-iteration cap comes from configuration). If `skipped` is true, say the previous iteration is still running. Otherwise print one compact line per entry of `results`. Do not touch any PR yourself in this mode.
+Run `code-check loop --mode babysit` with the Bash tool's `run_in_background` option: an iteration runs up to `loop.max_prs_per_iteration` headless reviews of up to 30 minutes each, far longer than a foreground Bash call is allowed to take, and a killed iteration would leave work half done. Wait for the background command to finish, then read its JSON output. Never run a second `loop` while one is still running. It handles each of your PRs with new comments or failing checks in its own headless process, one at a time (the per-iteration cap comes from configuration). If `skipped` is the boolean `true`, say the previous iteration is still running. Otherwise print one compact line per entry of `results`, then one line per entry of the `skipped` list (`pr`, `reason`). Do not touch any PR yourself in this mode.
 
 ## Rules
 

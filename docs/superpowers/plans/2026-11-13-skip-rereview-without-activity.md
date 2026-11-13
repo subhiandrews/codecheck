@@ -10,7 +10,9 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-13-skip-rereview-without-activity-design.md`
 
-**Spec correction (decided while planning):** the spec says a local `review:<ref>` match short-circuits before any extra API calls. That would hide replies on every PR we reviewed from this machine, which is the common case. Instead: when the local record is absent or equals the current head, fetch reviews and threads (2 calls); when the local record holds a different head, a new commit is certain and nothing extra is fetched. Update the spec's "Wiring" bullet in Task 3.
+**Spec correction (decided while planning, revised in the final review):** `list_reviews` is now always fetched (unless a `review-incomplete` marker forces a retry), threads only when a new commit is not certain, and a GitHub review at the head beats a stale local record. Original note follows.
+
+**Original correction:** the spec says a local `review:<ref>` match short-circuits before any extra API calls. That would hide replies on every PR we reviewed from this machine, which is the common case. Instead: when the local record is absent or equals the current head, fetch reviews and threads (2 calls); when the local record holds a different head, a new commit is certain and nothing extra is fetched. Update the spec's "Wiring" bullet in Task 3.
 
 ## Global Constraints
 

@@ -213,3 +213,19 @@ def test_thread_comment_marks_bots():
 
 def test_threads_query_asks_for_author_typename():
     assert "__typename" in THREADS_QUERY
+
+
+def test_slim_threads_query_has_no_reactions_and_stays_under_node_limit():
+    from codecheck.providers.github import THREADS_QUERY_SLIM
+
+    assert "reactions" not in THREADS_QUERY_SLIM
+    threads, comments = (int(n) for n in re.findall(r"first:(\d+)", THREADS_QUERY_SLIM))
+    assert threads + threads * comments < 500_000
+
+
+def test_list_threads_without_reactions_uses_slim_query():
+    from codecheck.providers.github import THREADS_QUERY_SLIM
+
+    argv = ["gh", "api", "graphql", "-f", f"query={THREADS_QUERY_SLIM}", "-f", "owner=o", "-f", "name=r", "-F", "number=7"]
+    runner = FakeRunner().on(*argv, stdout=page([node("T1")]))
+    assert [t.id for t in GitHubProvider(runner).list_threads(REF, reactions=False)] == ["T1"]

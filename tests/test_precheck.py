@@ -123,12 +123,24 @@ def test_verdict_table(tmp_path):
     assert review_verdict(pr(), s, Activity(rev, ())).kind == "retry"
 
 
+def test_verdict_trusts_github_review_at_head_over_stale_local(tmp_path):
+    s = StateStore(tmp_path / "s.json")
+    s.set(f"review:{REF}", "old111")
+    at_head = Review("me", "abc123", T0, "COMMENTED")
+    assert review_verdict(pr(), s, Activity(at_head, ())).kind == "reviewed"
+    assert review_verdict(pr(), s, Activity(at_head, (reply(),))).kind == "replies"
+    assert review_verdict(pr(), s, Activity(Review("me", "old111", T0, "COMMENTED"), ())).kind == "new"
+    assert review_verdict(pr(), s, Activity(None, ())).kind == "new"
+    s.set(f"review-incomplete:{REF}", "abc123")
+    assert review_verdict(pr(), s, Activity(at_head, ())).kind == "retry"
+
+
 def test_needs_activity(tmp_path):
     s = StateStore(tmp_path / "s.json")
     assert needs_activity(pr(), s)
     s.set(f"review:{REF}", "abc123")
     assert needs_activity(pr(), s)
-    assert not needs_activity(pr(head_sha="def"), s)
+    assert needs_activity(pr(head_sha="def"), s)  # GitHub may show our review at this head
     s.set(f"review-incomplete:{REF}", "abc123")
     assert not needs_activity(pr(), s)
 

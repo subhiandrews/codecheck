@@ -348,6 +348,16 @@ def test_loop_surfaces_replies_only_pr_without_running_it(tmp_path):
     assert out["considered"] == 2
 
 
+def test_replies_only_pr_stays_outside_the_cap(tmp_path):
+    from dataclasses import replace
+
+    ctx, _provider, _fake, refs = _reply_setup(tmp_path)
+    ctx.config = replace(ctx.config, loop=LoopConfig(max_prs_per_iteration=1))
+    out = call(ctx, "loop", "--mode", "review")[1]
+    assert [r["pr"] for r in out["results"]] == [str(refs[1])]
+    assert str(refs[0]) in [s["pr"] for s in out["skipped"]]
+
+
 def test_replies_only_pr_runs_again_after_a_new_push(tmp_path):
     from dataclasses import replace
 

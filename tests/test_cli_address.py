@@ -7,7 +7,7 @@ from fakes import FakeProvider
 from gitutil import commit_file, make_origin_and_clone, push_branch, sh
 
 from codecheck.config import AddressConfig
-from codecheck.models import Check, Thread, ThreadComment
+from codecheck.models import Check, Review, Thread, ThreadComment
 
 pytestmark = pytest.mark.usefixtures("git_env")
 
@@ -346,3 +346,40 @@ def test_pr_activity_uses_given_identity_without_refetching(tmp_path):
     provider.whoami = lambda: calls.append(1) or "me"
     pr_activity(ctx, pr.ref, pr, "me")
     assert calls == []
+
+
+def _activity_ctx(tmp_path, reviews, local=None):
+    from clihelp import make_ctx
+
+    provider = FakeProvider()
+    pr = provider.add_pr()
+    provider.reviews[pr.ref] = reviews
+    ctx = make_ctx(tmp_path, tmp_path, provider=provider)
+    if local:
+        ctx.state.set(f"review:{pr.ref}", local)
+    return ctx, provider, pr
+
+
+def test_pr_activity_skips_threads_without_own_review(tmp_path):
+    from codecheck.commands._common import pr_activity
+
+    ctx, provider, pr = _activity_ctx(tmp_path, [Review("someone", "x" * 8, "2026-01-01T00:00:00Z", "COMMENTED")])
+    assert pr_activity(ctx, pr.ref, pr, "me").last_review is None
+    assert provider.thread_calls == []
+
+
+def test_pr_activity_skips_threads_when_review_is_for_an_older_head(tmp_path):
+    from codecheck.commands._common import pr_activity
+
+    ctx, provider, pr = _activity_ctx(tmp_path, [Review("me", "old000", "2026-01-01T00:00:00Z", "COMMENTED")], local="old000")
+    assert pr_activity(ctx, pr.ref, pr, "me").replies == ()
+    assert provider.thread_calls == []
+
+
+def test_pr_activity_fetches_slim_threads_when_review_is_at_head(tmp_path):
+    from codecheck.commands._common import pr_activity
+
+    ctx, provider, pr = _activity_ctx(tmp_path, [])
+    provider.reviews[pr.ref] = [Review("me", pr.head_sha, "2026-01-01T00:00:00Z", "COMMENTED")]
+    pr_activity(ctx, pr.ref, pr, "me")
+    assert provider.thread_calls == [(pr.ref, False)]

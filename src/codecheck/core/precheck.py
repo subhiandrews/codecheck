@@ -54,8 +54,9 @@ def review_verdict(pr: PullRequest, state: StateStore, activity: Activity | None
     if state.get(f"review-incomplete:{pr.ref}") == pr.head_sha:
         return Verdict("retry", "the previous review of this head was incomplete")
     reviewed = state.get(f"review:{pr.ref}")
-    if not reviewed and activity and activity.last_review and activity.last_review.commit_id:
-        reviewed = activity.last_review.commit_id
+    theirs = activity.last_review.commit_id if activity and activity.last_review else ""
+    if theirs == pr.head_sha or not reviewed:
+        reviewed = theirs or reviewed  # GitHub showing our review at the head beats a stale local record
     if not reviewed:
         return Verdict("new", "ok")
     if reviewed != pr.head_sha:
@@ -72,11 +73,8 @@ def review_verdict(pr: PullRequest, state: StateStore, activity: Activity | None
 
 
 def needs_activity(pr: PullRequest, state: StateStore) -> bool:
-    """True when GitHub activity could change the verdict, so fetching it is worthwhile."""
-    if state.get(f"review-incomplete:{pr.ref}") == pr.head_sha:
-        return False
-    local = state.get(f"review:{pr.ref}")
-    return not local or local == pr.head_sha
+    """True unless a retry is forced: GitHub may show our review at the head even when local state differs."""
+    return state.get(f"review-incomplete:{pr.ref}") != pr.head_sha
 
 
 def cap_replies(replies: Sequence[Reply], max_threads: int = 20, max_chars: int = 1000) -> tuple[Reply, ...]:

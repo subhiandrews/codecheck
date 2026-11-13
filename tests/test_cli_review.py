@@ -581,3 +581,22 @@ def test_context_with_replies_rejected_in_local_mode(tmp_path):
     ctx, _pr = _replies_ctx(tmp_path, "hello")
     code, out = call(ctx, "context", "--mode", "local", "--with-replies")
     assert code != 0 and "error" in out
+
+
+
+def test_precheck_stale_local_record_loses_to_github_review_at_head(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path)
+    ctx.state.set(f"review:{pr.ref}", "stale000")
+    _our_review(provider, pr)
+    _code, out = call(ctx, "precheck", "--mode", "pr", "--pr", str(pr.ref))
+    assert out["proceed"] is False and "already reviewed" in out["reason"]
+
+
+def test_precheck_pr_asks_whoami_once(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path)
+    _our_review(provider, pr)
+    calls = []
+    real = provider.whoami
+    provider.whoami = lambda: calls.append(1) or real()
+    call(ctx, "precheck", "--mode", "pr", "--pr", str(pr.ref))
+    assert len(calls) == 1

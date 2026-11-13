@@ -67,7 +67,7 @@ def _build(args, ctx, run_id, run_dir) -> dict:
             raise CodeCheckError(f"could not fetch the head of {ref}")
         diff = ctx.git.diff(f"{sync.base_ref}...{local_ref}")
         if args.with_replies:
-            act = review_activity(ctx.provider.list_reviews(ref), ctx.provider.list_threads(ref), ctx.provider.whoami())
+            act = review_activity(ctx.provider.list_reviews(ref), ctx.provider.list_threads(ref, reactions=False), ctx.provider.whoami())
             capped = cap_replies(act.replies)
             if capped:
                 (run_dir / "replies.md").write_text(render_replies(capped), encoding="utf-8")

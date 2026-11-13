@@ -39,6 +39,14 @@ THREADS_QUERY = (
     "nodes{id isResolved isOutdated path line originalLine "
     "comments(first:100){nodes{databaseId author{login __typename} body createdAt reactions(first:20){nodes{content}}}}}}}}}"
 )
+# Slim variant for activity checks (no reactions, no outdated-line fields beyond what replies need).
+THREADS_QUERY_SLIM = (
+    "query($owner:String!,$name:String!,$number:Int!,$after:String){"
+    "repository(owner:$owner,name:$name){pullRequest(number:$number){"
+    "reviewThreads(first:50,after:$after){pageInfo{hasNextPage endCursor} "
+    "nodes{id isResolved isOutdated path line originalLine "
+    "comments(first:100){nodes{databaseId author{login __typename} body createdAt}}}}}}}"
+)
 _REVIEWS_JQ = '.[] | {author: (.user.login // "ghost"), commit_id: .commit_id, submitted_at: .submitted_at, state: .state}'
 RESOLVE_MUTATION = "mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}"
 
@@ -157,12 +165,13 @@ class GitHubProvider:
             raise ProviderError(f"invalid clone destination {dest!r}")
         return ["gh", "repo", "clone", _repo(repo), dest]
 
-    def list_threads(self, ref: PRRef) -> list[Thread]:
+    def list_threads(self, ref: PRRef, reactions: bool = True) -> list[Thread]:
+        query = THREADS_QUERY if reactions else THREADS_QUERY_SLIM
         owner, name = _repo(ref.repo).split("/", 1)
         threads: list[Thread] = []
         after: str | None = None
         while True:
-            args = ["api", "graphql", "-f", f"query={THREADS_QUERY}", "-f", f"owner={owner}", "-f", f"name={name}",
+            args = ["api", "graphql", "-f", f"query={query}", "-f", f"owner={owner}", "-f", f"name={name}",
                     "-F", f"number={_num(ref.number)}"]
             if after:
                 args += ["-f", f"after={after}"]

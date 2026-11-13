@@ -23,8 +23,9 @@ def run(args, ctx) -> dict:
         ref = ctx.resolve_ref(args.pr)
         pr = ctx.provider.get_pr(ref)
         files = ctx.provider.list_changed_files(ref)
-        res = precheck_pr(pr, files, ctx.state, ignore=cfg.review.ignore, me=ctx.provider.whoami(), force=args.force,
-                          activity=None if args.force else pr_activity(ctx, ref, pr))
+        me = ctx.provider.whoami()
+        res = precheck_pr(pr, files, ctx.state, ignore=cfg.review.ignore, me=me, force=args.force,
+                          activity=None if args.force else pr_activity(ctx, ref, pr, me))
         replies = [{"thread": r.thread_id, "path": r.path, "line": r.line, "author": r.author, "body": r.body,
                     "created_at": r.created_at} for r in cap_replies(res.replies)]
         return {"proceed": res.proceed, "reason": res.reason, "files": list(res.files), "head_sha": pr.head_sha,

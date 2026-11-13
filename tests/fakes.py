@@ -70,6 +70,8 @@ class FakeProvider:
         self.threads: dict[PRRef, list[Thread]] = {}
         self.checks: dict[PRRef, list[Check]] = {}
         self.reviews: dict[PRRef, list[Review]] = {}
+        self.thread_calls: list = []
+        self.review_calls: list = []
         self.logs: dict[str, str] = {}
         self.posted: list[dict] = []
         self.replies: list[tuple[PRRef, str, str]] = []
@@ -108,10 +110,12 @@ class FakeProvider:
     def clone_argv(self, repo, dest):
         return ["git", "clone", f"file:///fake/{repo}", dest]
 
-    def list_threads(self, ref):
+    def list_threads(self, ref, reactions=True):
+        self.thread_calls.append((ref, reactions))
         return list(self.threads.get(ref, []))
 
     def list_reviews(self, ref):
+        self.review_calls.append(ref)
         return list(self.reviews.get(ref, []))
 
     def post_review(self, ref, head_sha, body, comments, decision: Decision):

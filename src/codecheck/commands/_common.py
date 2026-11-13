@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from codecheck.core.precheck import needs_activity, review_activity
+from codecheck.core.precheck import Activity, needs_activity, review_activity
 from codecheck.errors import CodeCheckError
 
 
@@ -73,4 +73,11 @@ def pr_activity(ctx, ref, pr, me: str | None = None):
     """Our latest review and replies on our threads, fetched only when they could change the verdict."""
     if not needs_activity(pr, ctx.state):
         return None
-    return review_activity(ctx.provider.list_reviews(ref), ctx.provider.list_threads(ref), me or ctx.provider.whoami())
+    me = me or ctx.provider.whoami()
+    reviews = ctx.provider.list_reviews(ref)
+    last = review_activity(reviews, [], me).last_review
+    if last is None:
+        return Activity(None, ())  # no review of ours: there is nothing to reply to
+    if last.commit_id and last.commit_id != pr.head_sha and ctx.state.get(f"review:{pr.ref}") != pr.head_sha:
+        return Activity(last, ())  # a new commit is certain, so replies cannot change the verdict
+    return review_activity(reviews, ctx.provider.list_threads(ref, reactions=False), me)
