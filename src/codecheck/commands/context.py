@@ -71,8 +71,9 @@ def _build(args, ctx, run_id, run_dir) -> dict:
         diff = ctx.git.diff(f"{sync.base_ref}...{local_ref}")
         try:
             threads = ctx.provider.list_threads(ref, reactions=False)
-            act = review_activity(ctx.provider.list_reviews(ref), threads, ctx.provider.whoami())
-            existing = collect_existing(threads, act)
+            me = ctx.provider.whoami()
+            act = review_activity(ctx.provider.list_reviews(ref), threads, me)
+            existing = collect_existing(threads, act, me=me)
             if existing:
                 (run_dir / "existing-comments.md").write_text(render_existing(existing), encoding="utf-8")
                 existing_comments = {"threads": len(existing), "comments": sum(len(t.comments) for t in existing),
@@ -80,7 +81,7 @@ def _build(args, ctx, run_id, run_dir) -> dict:
             capped = cap_replies(act.replies)
             if capped:
                 replies = {"threads": len({r.thread_id for r in capped}), "comments": len(capped)}
-        except CodeCheckError as e:  # reviewing without the comments beats not reviewing
+        except Exception as e:  # noqa: BLE001 - reviewing without the comments beats not reviewing, whatever the response looked like
             existing_comments_error = str(e)[:300]
         guidance = from_base(ctx.git, sync.base_ref)  # base branch only: a PR cannot change the rules it is judged by
         root = expand_path(cfg.state_dir) / "worktrees" / run_id

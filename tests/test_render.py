@@ -70,10 +70,10 @@ def _thread(path="a.py", line=3, *comments, tid="T1", resolved=False, outdated=F
     return ExistingThread(tid, path, line, resolved, outdated, tuple(comments))
 
 
-def _comment(author, body="hi", at="2026-01-02T00:00:00Z", new=False):
+def _comment(author, body="hi", at="2026-01-02T00:00:00Z", new=False, mine=False):
     from codecheck.core.existing import ExistingComment
 
-    return ExistingComment(author, body, at, new)
+    return ExistingComment(author, body, at, new, mine)
 
 
 def test_render_existing_frames_text_as_data():
@@ -120,3 +120,10 @@ def test_render_existing_marks_resolved_outdated_and_new():
     assert "- alice (2026-01-02T00:00:00Z) [new]:" in out
     out = render_existing([_thread("a.py", 3, _comment("alice"), outdated=True)])
     assert "## a.py:3 (outdated)" in out and "[new]" not in out
+
+
+def test_render_existing_marks_our_own_comments():
+    from codecheck.core.render import render_existing
+
+    out = render_existing([_thread("a.py", 3, _comment("me", mine=True), _comment("alice"))])
+    assert "- me (2026-01-02T00:00:00Z) [ours]:" in out and "- alice (2026-01-02T00:00:00Z):" in out

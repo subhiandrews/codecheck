@@ -50,3 +50,19 @@ def test_scrubs_before_truncating_and_caps():
     assert len(collect_existing(many, Activity(None, ()))) == 20
     big = th(*(tc("alice", T0, i) for i in range(300)))
     assert len(collect_existing([big], Activity(None, ()))[0].comments) == 100
+
+
+def test_threads_with_new_replies_survive_the_thread_cap():
+    busy = [th(tc("alice", T0), tid=f"T{i}") for i in range(20)]
+    ours = th(tc("me", T0), tc("alice", LATER, 2), tid="R", resolved=True)
+    act = Activity(REV, (Reply("R", "a.py", 3, "alice", "body", LATER),))
+    out = collect_existing([*busy, ours], act)
+    assert len(out) == 20 and out[0].thread_id == "R"
+    assert sum(c.is_new for t in out for c in t.comments) == 1
+
+
+def test_own_comments_are_marked_ours():
+    t = th(tc("me", T0), tc("alice", LATER, 2))
+    comments = collect_existing([t], Activity(None, ()), me="me")[0].comments
+    assert [(c.author, c.is_mine) for c in comments] == [("me", True), ("alice", False)]
+    assert not any(c.is_mine for c in collect_existing([t], Activity(None, ()))[0].comments)

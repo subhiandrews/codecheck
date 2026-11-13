@@ -14,6 +14,7 @@ class ExistingComment:
     body: str
     created_at: str
     is_new: bool
+    is_mine: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,17 +28,21 @@ class ExistingThread:
 
 
 def collect_existing(
-    threads: Sequence[Thread], activity: Activity, *, max_threads: int = 20, max_chars: int = 1000, max_total: int = 100
+    threads: Sequence[Thread], activity: Activity, *, me: str = "", max_threads: int = 20, max_chars: int = 1000,
+    max_total: int = 100,
 ) -> tuple[ExistingThread, ...]:
-    """Human comments per thread, unresolved first, scrubbed then truncated; replies since our review are tagged new."""
+    """Human comments per thread, scrubbed then truncated. Threads with replies since our review come first, then
+    unresolved ones, so a cap never cuts what changed; `me` marks our own earlier comments."""
     new = {(r.thread_id, r.created_at, r.author) for r in activity.replies}
     out: list[ExistingThread] = []
     total = 0
-    for t in sorted(threads, key=lambda t: t.is_resolved):
+    fresh = {thread_id for thread_id, _, _ in new}
+    for t in sorted(threads, key=lambda t: (t.id not in fresh, t.is_resolved)):
         if len(out) >= max_threads or total >= max_total:
             break
         comments = tuple(
-            ExistingComment(c.author, scrub_text(c.body)[:max_chars], c.created_at, (t.id, c.created_at, c.author) in new)
+            ExistingComment(c.author, scrub_text(c.body)[:max_chars], c.created_at, (t.id, c.created_at, c.author) in new,
+                            bool(me) and c.author == me)
             for c in t.comments
             if not (c.is_bot or c.author.endswith("[bot]"))
         )[: max_total - total]

@@ -104,3 +104,16 @@ def test_pragmatist_checks_release_notes_and_test_quality():
 def test_aggregator_knows_existing_comments_and_new_drop_reasons():
     body = render_all(ModelsConfig())["aggregator.md"]
     assert "existing-comments.md" in body and "already-raised" in body and "unsupported-style" in body
+
+
+def test_already_raised_never_drops_critical_or_warning():
+    files = render_all(ModelsConfig())
+    agg = files["aggregator.md"]
+    assert "never drop a critical or warning finding as `already-raised`" in agg
+    assert "unless it is a critical or warning problem that is still present in the code" in files["skeptic.md"]
+
+
+def test_prompts_explain_ours_tag():
+    files = render_all(ModelsConfig())
+    for name in ("skeptic.md", "aggregator.md"):
+        assert "`[ours]`" in files[name] and "not a maintainer" in files[name]

@@ -607,6 +607,18 @@ def test_context_survives_comment_fetch_failure(tmp_path):
     assert not (Path(out["run_dir"]) / "existing-comments.md").exists()
 
 
+def test_context_survives_unexpected_fetch_errors(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path)
+
+    def bad_json(ref):
+        raise ValueError("not json")
+
+    provider.list_reviews = bad_json
+    code, out = call(ctx, "context", "--mode", "pr", "--pr", str(pr.ref))
+    assert code == 0, out
+    assert out["existing_comments"] is None and "not json" in out["existing_comments_error"]
+
+
 def test_context_with_replies_flag_still_accepted_in_pr_mode(tmp_path):
     ctx, pr = _replies_ctx(tmp_path, "hello")
     code, out = call(ctx, "context", "--mode", "pr", "--pr", str(pr.ref), "--with-replies")

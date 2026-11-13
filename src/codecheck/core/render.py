@@ -81,6 +81,6 @@ def render_existing(threads: Sequence[ExistingThread]) -> str:
         flags = ", ".join(f for f, on in (("resolved", t.resolved), ("outdated", t.outdated)) if on)
         lines += ["", f"## {path}" + ("" if t.line is None else f":{t.line}") + (f" ({flags})" if flags else "")]
         for c in t.comments:
-            lines.append(f"- {c.author} ({c.created_at}){' [new]' if c.is_new else ''}:")
+            lines.append(f"- {c.author} ({c.created_at}){' [new]' if c.is_new else ''}{' [ours]' if c.is_mine else ''}:")
             lines += [f"  > {ln}" for ln in c.body.splitlines() or [""]]
     return "\n".join(lines) + "\n"
