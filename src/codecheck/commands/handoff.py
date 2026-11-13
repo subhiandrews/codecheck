@@ -153,8 +153,24 @@ def _compare(ctx, ref: PRRef, run_id: str) -> tuple[dict | None, str | None]:
         collect_outcomes(ctx.provider, ctx.shadow, ref, ctx.provider.whoami())
     except Exception as e:  # noqa: BLE001 - offline or a gh failure: keep the rest of the hand-off
         return None, scrub_text(f"comparison failed: {type(e).__name__}: {e}")[:500]
-    records = ctx.shadow.read(run_id)
-    return build_comparison(records, [r for r in records if r.get("type") == "finding"]), None
+    ours = [r for r in ctx.shadow.read(run_id) if r.get("type") == "finding"]
+    # collect files a comment under the newest run whose findings it is near, so on a re-reviewed PR some of
+    # this PR's comments live in older runs' records. Take every thread's latest record across the PR's runs
+    # and match it against this run's findings, so a comment this run missed counts as a miss.
+    comments = sorted(
+        (r for rid in ctx.shadow.runs_for_pr(str(ref)) for r in ctx.shadow.read(rid) if r.get("type") == "human_comment"),
+        key=lambda r: r.get("ts") if isinstance(r.get("ts"), (int, float)) else 0,
+    )
+    rematched = [{**r, "matches_finding": _near(ours, r.get("path"), r.get("line"))} for r in comments]
+    return build_comparison(rematched, ours), None
+
+
+def _near(findings: list[dict], path, line) -> str | None:
+    """The same rule as `shadow collect`: same file, line within 3; first finding wins."""
+    if not isinstance(line, int):
+        return None
+    return next((f.get("id") for f in findings if f.get("file") == path and isinstance(f.get("line"), int)
+                 and abs(f["line"] - line) <= 3), None)
 
 
 def _pr_url(ctx, ref: PRRef) -> str | None:

@@ -255,3 +255,42 @@ def test_handoff_comparison_failure_still_writes_the_files(tmp_path):
     assert code == 0 and res["handoff"] is True and "network down" in res["comparison"]
     _folder, data = handoff_files(ctx, out["run_id"])
     assert data["comparison"] is None and "network down" in data["comparison_reason"]
+
+
+def test_handoff_second_run_counts_comments_filed_under_an_earlier_run(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path)
+    enable_handoff(ctx, tmp_path)
+    runs = []
+    for aggregated in ([FINDING], [FAR]):  # run 1 flags line 2, run 2 (same PR) flags only line 500
+        _code, out = call(ctx, "context", "--mode", "pr", "--pr", str(pr.ref))
+        finish_review(ctx, out, aggregated={"findings": aggregated, "dropped": []})
+        call(ctx, "ingest", "--run", out["run_id"])
+        _code, posted = call(ctx, "post", "--run", out["run_id"])
+        assert posted["posted"] is True
+        runs.append(out["run_id"])
+    provider.threads[pr.ref] = [human("T1", 1, "Critical: y"), human("T2", 499, "Suggestion: move it")]
+    code, res = call(ctx, "handoff", "--run", runs[1])
+    assert code == 0 and res["comparison"] is True
+    # collect files T1 under run 1 (near its finding); run 2's comparison must still see it, as a miss
+    assert [r["thread_id"] for r in ctx.shadow.read(runs[0]) if r["type"] == "human_comment"] == ["T1"]
+    _folder, data = handoff_files(ctx, runs[1])
+    cmp = data["comparison"]
+    by_thread = {h["thread_id"]: h for h in cmp["human_comments"]}
+    assert set(by_thread) == {"T1", "T2"} and cmp["misses"] == ["T1"]
+    assert by_thread["T1"]["matched_finding"] is None and by_thread["T1"]["human_severity"] == "critical"
+    far_id = next(f["id"] for f in data["findings"] if f["line"] == 500)
+    assert by_thread["T2"]["matched_finding"] == far_id and by_thread["T2"]["severity_agrees"] is True
+    assert cmp["unraised_findings"] == []
+
+
+def test_handoff_skips_comparison_when_the_head_moved(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path)
+    enable_handoff(ctx, tmp_path)
+    out = run_pr_context(ctx, pr)
+    finish_review(ctx, out)
+    call(ctx, "ingest", "--run", out["run_id"])
+    provider.prs[pr.ref] = replace(pr, head_sha="f" * 40)
+    _code, posted = call(ctx, "post", "--run", out["run_id"])
+    assert posted["stale"] is True
+    code, res = call(ctx, "handoff", "--run", out["run_id"])
+    assert code == 0 and res["handoff"] is True and "not posted" in res["comparison"]
