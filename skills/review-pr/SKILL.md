@@ -10,6 +10,10 @@ Reviews a teammate's PR (never your own) and posts a single review with inline c
 
 `code-check` below means `"${CLAUDE_PLUGIN_ROOT}/bin/code-check"`. Every subcommand prints one JSON document.
 
+## Arguments
+
+`security` is a bare keyword, never a PR reference. Take it out of the arguments first; whatever remains, if anything, is `<PR>`. `security` without a PR means queue mode, where it has no effect because configuration controls it. When a prompt says "Pass the security argument", that means the keyword `security`.
+
 ## With a PR argument
 
 1. Run `code-check precheck --mode pr --pr <PR>`. If `proceed` is false, say the `reason` in one sentence and STOP.

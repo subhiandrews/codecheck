@@ -411,11 +411,13 @@ def test_long_running_commands_carry_bash_timeout_guidance():
 
 
 def test_security_argument_is_documented_and_wired():
+    pinned = {"review-local": "independent keywords", "review-pr": "is a bare keyword, never a PR reference"}
     for name, mode in (("review-local", "local"), ("review-pr", "pr")):
         text = (REPO / f"skills/{name}/SKILL.md").read_text()
-        spans = [s for s in SPAN.findall(text) if s.startswith("code-check context --mode " + mode)]
-        assert spans and all(invocation_errors(s) == [] for s in spans)
-        assert "`--security`" in text
+        lines = [ln for ln in text.splitlines() if f"`code-check context --mode {mode}" in ln]
+        assert len(lines) == 1 and "`--security`" in lines[0]
+        assert all(invocation_errors(s) == [] for s in SPAN.findall(lines[0]))
         assert "security" in frontmatter(text)["argument-hint"]
+        assert pinned[name] in text
     for name in ("address-comments", "babysit-pr"):
         assert "guidance" in (REPO / f"skills/{name}/SKILL.md").read_text()

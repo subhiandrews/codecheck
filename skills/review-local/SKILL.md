@@ -10,6 +10,10 @@ Reviews the current branch against `<remote>/<base>` (fetched first) and prints 
 
 `code-check` below means `"${CLAUDE_PLUGIN_ROOT}/bin/code-check"`. Every subcommand prints one JSON document.
 
+## Arguments
+
+`security` and `--force` are independent keywords, accepted in either order; neither is a path or PR reference.
+
 ## Steps
 
 1. Run `code-check precheck --mode local` (add `--force` only if the user passed `--force`). If `proceed` is false, say the `reason` in one sentence and STOP. Do not read files or start agents.
