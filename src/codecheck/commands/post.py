@@ -1,0 +1,91 @@
+import json
+
+from codecheck.commands._common import check_finding_paths, finding_items, load_meta, read_json
+from codecheck.core.diffmap import anchor_finding, parse_diff
+from codecheck.core.findings import attach_anchors, finding_id, merge_exact_duplicates, validate_findings
+from codecheck.core.policy import decide
+from codecheck.core.render import comment_body, render_local, summary_body
+from codecheck.errors import CodeCheckError
+from codecheck.models import PRRef, ReviewComment
+from codecheck.shadow.recorder import record_post
+
+NAME = "post"
+HELP = "Post the aggregated review (PR mode) or print it (local mode)"
+
+
+def add_arguments(p) -> None:
+    p.add_argument("--run", required=True)
+
+
+def _reviewer_findings(run_dir, ingest, meta) -> dict:
+    out = {}
+    for member in ingest["valid"]:
+        raw = json.loads((run_dir / "findings" / f"{member}.json").read_text(encoding="utf-8"))
+        items, errs = validate_findings(finding_items(raw), reviewer=member, root=meta["root"])
+        out[member], _ = check_finding_paths(items, errs, meta["root"], member)
+    return out
+
+
+def run(args, ctx) -> dict:
+    cfg = ctx.config
+    meta = load_meta(ctx, args.run)
+    run_dir = ctx.run_dir(args.run)
+    if not (run_dir / "ingest.json").exists():
+        raise CodeCheckError("run `code-check ingest` before `post`")
+    ingest = read_json(run_dir / "ingest.json")
+    agg_path = run_dir / "findings" / "aggregator.json"
+    if not agg_path.exists():
+        raise CodeCheckError("aggregator output missing: findings/aggregator.json")
+    try:
+        raw = json.loads(agg_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise CodeCheckError(f"aggregator output is not valid JSON: {e}") from e
+    dropped = raw.get("dropped", []) if isinstance(raw, dict) else []
+    findings, errors = validate_findings(finding_items(raw), reviewer="aggregator", root=meta["root"])
+    findings, errors = check_finding_paths(findings, errors, meta["root"], "aggregator")
+    if errors:
+        raise CodeCheckError("aggregator output invalid: " + "; ".join(errors[:5]))
+    diff_files = parse_diff((run_dir / "diff.patch").read_text(encoding="utf-8"))
+    findings = merge_exact_duplicates(attach_anchors(findings, diff_files))
+    findings.sort(key=lambda f: (-f.severity.rank, f.file, f.line))
+    failed = sorted([*ingest["missing"], *ingest["invalid"]])
+    incomplete = bool(ingest["incomplete"])
+
+    if meta["mode"] == "local":
+        seen = set(ctx.state.get(f"seen:{meta['local_key']}", []))
+        new = [f for f in findings if finding_id(f) not in seen]
+        ctx.state.set(f"seen:{meta['local_key']}", sorted({finding_id(f) for f in findings}))
+        if not incomplete:
+            ctx.state.set(meta["local_key"], meta["fingerprint"])
+        unchanged = len(findings) - len(new)
+        return {"mode": "local", "new_count": len(new), "unchanged_count": unchanged, "incomplete": incomplete,
+                "failed_reviewers": failed, "text": render_local(new, unchanged, meta.get("base_warning"))}
+
+    ref = PRRef.parse(meta["pr"])
+    pr = ctx.provider.get_pr(ref)
+    if pr.author == ctx.provider.whoami():
+        raise CodeCheckError("refusing to post a review on your own PR")
+    if pr.head_sha != meta["head_sha"]:
+        return {"posted": False, "stale": True,
+                "reason": f"PR head moved ({meta['head_sha'][:8]} -> {pr.head_sha[:8]}); re-run the review"}
+    decision = decide(findings, auto_approve=cfg.review.auto_approve, is_draft=pr.is_draft, incomplete=incomplete)
+    anchored, unlisted = [], []
+    for f in findings:
+        a = anchor_finding(diff_files, f.file, f.line)
+        (anchored if a else unlisted).append((f, a))
+    cap = cfg.review.max_inline_comments
+    inline, overflow = anchored[:cap], anchored[cap:]
+    comments = [ReviewComment(a.path, a.line, a.side, comment_body(f, finding_id(f), relocated=a.relocated)) for f, a in inline]
+    not_inline = [f for f, _ in unlisted] + [f for f, _ in overflow]
+    body = summary_body(meta["run_id"], findings, not_inline, decision,
+                        base_warning=meta.get("base_warning"), failed_reviewers=failed)
+    result = ctx.provider.post_review(ref, pr.head_sha, body, comments, decision)
+    if not incomplete:
+        ctx.state.set(f"review:{ref}", pr.head_sha)
+    if ctx.shadow is not None:
+        ctx.guarded(record_post, ctx.shadow, meta, reviewer_findings=_reviewer_findings(run_dir, ingest, meta), findings=findings,
+                    inline_ids={finding_id(f) for f, _ in inline}, decision=decision, incomplete=incomplete, dropped=dropped)
+    return {"posted": True, "degraded": result.degraded, "inline": len(comments), "unlisted": len(not_inline),
+            "findings": len(findings), "decision": decision.event, "reason": decision.reason,
+            "incomplete": incomplete, "failed_reviewers": failed, "base_warning": meta.get("base_warning"),
+            "run_id": meta["run_id"]}

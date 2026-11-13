@@ -25,3 +25,16 @@ def commit_file(repo: Path, name: str, text: str, message: str) -> None:
     (repo / name).write_text(text)
     sh(repo, "add", name)
     sh(repo, "commit", "-m", message)
+
+
+def push_branch(tmp_path: Path, origin: Path, branch: str, files: dict[str, str]) -> str:
+    """Create `branch` on origin with the given files committed; return its head SHA."""
+    work = tmp_path / f"work-{branch}"
+    sh(tmp_path, "clone", str(origin), str(work))
+    sh(work, "checkout", "-b", branch)
+    for name, text in files.items():
+        (work / name).write_text(text)
+        sh(work, "add", name)
+    sh(work, "commit", "-m", f"work on {branch}")
+    sh(work, "push", "origin", branch)
+    return sh(work, "rev-parse", "HEAD").strip()
