@@ -45,7 +45,15 @@ class FakeRunner:
 
 
 from codecheck.errors import ProviderError
-from codecheck.models import Check, Decision, PostResult, PRRef, PullRequest, Thread
+from codecheck.models import (
+    Check,
+    Decision,
+    PostResult,
+    PRRef,
+    PullRequest,
+    Review,
+    Thread,
+)
 
 
 class FakeProvider:
@@ -61,6 +69,7 @@ class FakeProvider:
         self.listing: dict[str, list[PRRef]] = {"review-requested": [], "authored": []}
         self.threads: dict[PRRef, list[Thread]] = {}
         self.checks: dict[PRRef, list[Check]] = {}
+        self.reviews: dict[PRRef, list[Review]] = {}
         self.logs: dict[str, str] = {}
         self.posted: list[dict] = []
         self.replies: list[tuple[PRRef, str, str]] = []
@@ -101,6 +110,9 @@ class FakeProvider:
 
     def list_threads(self, ref):
         return list(self.threads.get(ref, []))
+
+    def list_reviews(self, ref):
+        return list(self.reviews.get(ref, []))
 
     def post_review(self, ref, head_sha, body, comments, decision: Decision):
         self.posted.append({"ref": ref, "head_sha": head_sha, "body": body, "comments": list(comments), "decision": decision})

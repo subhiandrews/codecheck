@@ -12,6 +12,7 @@ from codecheck.models import (
     PostResult,
     PRRef,
     PullRequest,
+    Review,
     ReviewComment,
     Thread,
     ThreadComment,
@@ -36,8 +37,9 @@ THREADS_QUERY = (
     "repository(owner:$owner,name:$name){pullRequest(number:$number){"
     "reviewThreads(first:50,after:$after){pageInfo{hasNextPage endCursor} "
     "nodes{id isResolved isOutdated path line originalLine "
-    "comments(first:100){nodes{databaseId author{login} body createdAt reactions(first:20){nodes{content}}}}}}}}}"
+    "comments(first:100){nodes{databaseId author{login __typename} body createdAt reactions(first:20){nodes{content}}}}}}}}}"
 )
+_REVIEWS_JQ = '.[] | {author: (.user.login // "ghost"), commit_id: .commit_id, submitted_at: .submitted_at, state: .state}'
 RESOLVE_MUTATION = "mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}"
 
 
@@ -88,6 +90,7 @@ def _thread(n: dict) -> Thread:
             body=c.get("body") or "",
             created_at=c.get("createdAt") or "",
             reactions=tuple(r["content"] for r in (c.get("reactions") or {}).get("nodes", [])),
+            is_bot=(c.get("author") or {}).get("__typename") == "Bot",
         )
         for c in n["comments"]["nodes"]
     )
@@ -168,6 +171,17 @@ class GitHubProvider:
             if not block["pageInfo"]["hasNextPage"]:
                 return threads
             after = block["pageInfo"]["endCursor"]
+
+    def list_reviews(self, ref: PRRef) -> list[Review]:
+        res = self._gh("api", f"repos/{_repo(ref.repo)}/pulls/{_num(ref.number)}/reviews", "--paginate", "--jq", _REVIEWS_JQ)
+        reviews = []
+        for line in res.stdout.splitlines():
+            if not line.strip():
+                continue
+            d = json.loads(line)
+            if d.get("submitted_at"):
+                reviews.append(Review(d["author"], d["commit_id"], d["submitted_at"], d["state"]))
+        return reviews
 
     def get_checks(self, ref: PRRef) -> list[Check]:
         res = self._gh("pr", "checks", _num(ref.number), "--repo", _repo(ref.repo), "--json", "name,bucket,link", ok=(0, 1, 8))

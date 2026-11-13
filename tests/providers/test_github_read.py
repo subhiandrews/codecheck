@@ -5,8 +5,13 @@ import pytest
 from fakes import FakeRunner
 
 from codecheck.errors import ProviderError
-from codecheck.models import Check, PRRef
-from codecheck.providers.github import THREADS_QUERY, GitHubProvider, parse_remote_url
+from codecheck.models import Check, PRRef, Review
+from codecheck.providers.github import (
+    _REVIEWS_JQ,
+    THREADS_QUERY,
+    GitHubProvider,
+    parse_remote_url,
+)
 
 REF = PRRef("o/r", 7)
 
@@ -175,3 +180,30 @@ def test_threads_query_stays_under_github_node_limit():
     # threads x comments x reactions, summed over every level of the nesting
     threads, comments, reactions = (int(n) for n in re.findall(r"first:(\d+)", THREADS_QUERY))
     assert threads + threads * comments + threads * comments * reactions < 500_000
+
+
+def test_list_reviews_parses_one_json_object_per_line():
+    lines = "\n".join([
+        json.dumps({"author": "me", "commit_id": "abc", "submitted_at": "2026-01-01T00:00:00Z", "state": "COMMENTED"}),
+        json.dumps({"author": "ghost", "commit_id": "def", "submitted_at": "2026-01-02T00:00:00Z", "state": "APPROVED"}),
+        json.dumps({"author": "me", "commit_id": "abc", "submitted_at": None, "state": "PENDING"}),
+        "",
+    ])
+    runner = FakeRunner().on("gh", "api", "repos/o/r/pulls/7/reviews", "--paginate", "--jq", _REVIEWS_JQ, stdout=lines)
+    assert GitHubProvider(runner).list_reviews(REF) == [
+        Review("me", "abc", "2026-01-01T00:00:00Z", "COMMENTED"),
+        Review("ghost", "def", "2026-01-02T00:00:00Z", "APPROVED"),
+    ]
+
+
+def test_thread_comment_marks_bots():
+    n = node("T1", comments=[("dependabot", "x", 1), ("alice", "y", 2)])
+    n["comments"]["nodes"][0]["author"]["__typename"] = "Bot"
+    n["comments"]["nodes"][1]["author"]["__typename"] = "User"
+    runner = FakeRunner().on(*threads_argv(), stdout=page([n]))
+    comments = GitHubProvider(runner).list_threads(REF)[0].comments
+    assert [c.is_bot for c in comments] == [True, False]
+
+
+def test_threads_query_asks_for_author_typename():
+    assert "__typename" in THREADS_QUERY
