@@ -62,3 +62,63 @@ def test_run_ids_runs_for_pr_and_diff(tmp_path):
     assert store.runs_for_pr("o/r#7") == [RID]
     assert "ghp_" not in store.read_diff(RID)
     assert store.read(("2" * 12)) == [] and store.read_diff("2" * 12) == ""
+
+
+@pytest.mark.parametrize("text", [
+    "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI", "GITHUB_TOKEN=abc", "DB_PASSWORD=hunter2",
+    "client_secret=xyz", "access_token: tok123",
+    '{"token": "abc"}', '{"password":"p w d"}', "secret: 'two words here'", "api_key: \"k\"",
+])
+def test_scrub_keyword_assignments_env_and_json_forms(text):
+    out = scrub_text(text)
+    assert "[REDACTED]" in out
+    for leaked in ("wJalrXUtnFEMI", "abc", "hunter2", "xyz", "tok123", "p w d", "two words", '"k"'):
+        if leaked in text:
+            assert leaked not in out
+
+
+_SHAPES = [
+    "xoxb-" + "1234567890-abcdefghij",
+    "sk-" + "A1b2C3d4E5" * 3,
+    "AIza" + "A1b2C3d4E5" * 3 + "abcde",
+    "sk_live_" + "A1b2C3d4E5" * 2,
+    "rk_live_" + "A1b2C3d4E5" * 2,
+    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.abcDEF_-123",
+]
+
+
+@pytest.mark.parametrize("secret", _SHAPES)
+def test_scrub_extra_token_shapes_bare_env_and_json(secret):
+    for text in (f"x {secret} y", f"MY_VALUE={secret}", f'{{"v": "{secret}"}}'):
+        assert secret not in scrub_text(text)
+
+
+def test_permissions_are_private(tmp_path):
+    root = tmp_path / "shadow"
+    store = ShadowStore(root)
+    store.append(RID, {"type": "run"})
+    store.save_diff(RID, "d")
+    assert (root.stat().st_mode & 0o777) == 0o700
+    assert ((root / f"{RID}.jsonl").stat().st_mode & 0o777) == 0o600
+    assert ((root / f"{RID}.diff").stat().st_mode & 0o777) == 0o600
+
+
+def test_unicode_line_separators_round_trip(tmp_path):
+    store = ShadowStore(tmp_path)
+    msg = "a\u2028b\u2029c\u0085d\x0be\x0cf"
+    store.append(RID, {"type": "finding", "message": msg})
+    store.append(RID, {"type": "decision"})
+    recs = store.read(RID)
+    assert [r["type"] for r in recs] == ["finding", "decision"] and recs[0]["message"] == msg
+
+
+def test_run_id_rejects_trailing_newline():
+    with pytest.raises(CodeCheckError):
+        check_run_id(RID + "\n")
+
+
+def test_append_after_truncated_line_keeps_next_record(tmp_path):
+    store = ShadowStore(tmp_path)
+    (tmp_path / f"{RID}.jsonl").write_text('{"type": "run", "tru')
+    store.append(RID, {"type": "decision"})
+    assert [r["type"] for r in store.read(RID)] == ["decision"]

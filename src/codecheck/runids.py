@@ -3,7 +3,7 @@ import uuid
 
 from codecheck.errors import CodeCheckError
 
-_RUN_ID = re.compile(r"^[0-9a-f]{12}$")
+_RUN_ID = re.compile(r"[0-9a-f]{12}")
 
 
 def new_run_id() -> str:
@@ -11,6 +11,6 @@ def new_run_id() -> str:
 
 
 def check_run_id(run_id: str) -> str:
-    if not isinstance(run_id, str) or not _RUN_ID.match(run_id):
+    if not isinstance(run_id, str) or not _RUN_ID.fullmatch(run_id):
         raise CodeCheckError(f"invalid run id {run_id!r}")
     return run_id

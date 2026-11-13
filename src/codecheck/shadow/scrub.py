@@ -11,7 +11,14 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), REDACTED),
     (re.compile(r"(?i)\bauthorization\b\s*[:=]\s*(?:bearer\s+|basic\s+|token\s+)?\S+"), f"Authorization: {REDACTED}"),
     (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{12,}"), f"Bearer {REDACTED}"),
-    (re.compile(r"""(?i)\b(api[_-]?key|secret|token|password|passwd)\b\s*[:=]\s*["']?[^\s"']{8,}"""), rf"\1={REDACTED}"),
+    (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}"), REDACTED),
+    (re.compile(r"\b(?:sk|rk)_live_[A-Za-z0-9]{16,}"), REDACTED),
+    (re.compile(r"\bAIza[0-9A-Za-z_-]{35}"), REDACTED),
+    (re.compile(r"\bsk-[A-Za-z0-9_-]{20,}"), REDACTED),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"), REDACTED),
+    (re.compile(
+        r"""(?i)(\w*(?:api[_-]?key|secret|token|password|passwd)\w*)(["']?)(\s*[:=]\s*)"""
+        r"""(?:"[^"\n]*"|'[^'\n]*'|[^\s"',;]+)"""), rf"\1\2\3{REDACTED}"),
 ]
 
 
