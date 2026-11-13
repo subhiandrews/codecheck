@@ -120,3 +120,16 @@ class Git:
         so uncommitted changes in the worktree are discarded."""
         self._raw("worktree", "remove", "--force", str(path))
         self._run("worktree", "prune")
+
+    def is_ancestor(self, a: str, b: str) -> bool:
+        _safe(a, b)
+        return self._run("merge-base", "--is-ancestor", a, b).returncode == 0
+
+    def would_conflict(self, base_ref: str) -> bool:
+        # Exit status 1 means "merged with conflicts"; needs git >= 2.38.
+        _safe(base_ref)
+        return self._run("merge-tree", "--write-tree", "HEAD", base_ref).returncode == 1
+
+    def worktree_add_branch(self, path: Path, branch: str, ref: str) -> None:
+        _safe(branch, ref)
+        self._raw("worktree", "add", "-B", branch, str(path), ref)
