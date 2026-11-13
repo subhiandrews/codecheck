@@ -84,6 +84,13 @@ def test_skills_gate_handoff_on_context_flag():
         assert text.index(gate) < text.index("`code-check cleanup --run <run_id>`"), skill
 
 
+def test_review_pr_skill_reports_blind_context():
+    text = (REPO / "skills/review-pr/SKILL.md").read_text()
+    step2 = next(ln for ln in text.splitlines() if ln.startswith("2. Run `code-check context --mode pr"))
+    assert "If the output contains `blind: true`" in step2
+    assert "did not see" in step2 and "`shadow.handoff` off" in step2
+
+
 def test_handoff_local_mode_writes_json_and_md(tmp_path):
     ctx, out = local_run(tmp_path)
     code, res = call(ctx, "handoff", "--run", out["run_id"])
