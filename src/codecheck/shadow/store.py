@@ -6,10 +6,19 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from codecheck.errors import CodeCheckError
 from codecheck.runids import check_run_id
 from codecheck.shadow.scrub import scrub, scrub_text
 
 SCHEMA = 1
+
+
+def write_private(path: Path, text: str) -> None:
+    """Write text to a 0600 file, never through a symlink. The caller scrubs: a text scrub of JSON can break it."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        os.chmod(path, 0o600)
+        fh.write(text.encode("utf-8"))
 
 
 class ShadowStore:
@@ -59,16 +68,36 @@ class ShadowStore:
     def save_diff(self, run_id: str, diff: str) -> None:
         path = self._path(run_id, ".diff")
         self._ensure_dir()
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            os.chmod(path, 0o600)
-            os.write(fd, scrub_text(diff).encode("utf-8"))
-        finally:
-            os.close(fd)
+        write_private(path, scrub_text(diff))
 
     def read_diff(self, run_id: str) -> str:
         path = self._path(run_id, ".diff")
         return path.read_text(encoding="utf-8") if path.exists() else ""
+
+    def save_raw(self, run_id: str, data: dict) -> None:
+        """Raw reviewer and aggregator outputs plus the run metadata, for replaying the pipeline later."""
+        path = self._path(run_id, ".raw.json")
+        self._ensure_dir()
+        write_private(path, json.dumps(scrub(data), ensure_ascii=False, sort_keys=True, indent=1))
+
+    def read_raw(self, run_id: str) -> dict | None:
+        path = self._path(run_id, ".raw.json")
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    def handoff_dir(self, run_id: str) -> Path:
+        path = self._path(run_id, ".handoff")
+        self._ensure_dir()
+        if path.is_symlink():
+            raise CodeCheckError(f"refusing to use a symlinked hand-off folder: {path}")
+        path.mkdir(exist_ok=True, mode=0o700)
+        os.chmod(path, 0o700)
+        return path
 
     def _order_key(self, run_id: str) -> tuple:
         ts = [r["ts"] for r in self.read(run_id) if r.get("type") == "run" and isinstance(r.get("ts"), (int, float))]

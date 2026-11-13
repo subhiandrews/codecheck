@@ -7,6 +7,7 @@ from codecheck.commands import (
     context,
     doctor,
     gen_agents,
+    handoff,
     ingest,
     list_work,
     loop,
@@ -26,7 +27,7 @@ from codecheck.commands import (
 )
 
 ALL = [
-    doctor, sync, precheck, context, ingest, post, cleanup,
+    doctor, sync, precheck, context, ingest, post, handoff, cleanup,
     status, workspace, threads, commit, push, reply, resolve, request_review,
     checks, check_log, attempt, list_work, mark_done, shadow, gen_agents, run_pr, loop,
 ]

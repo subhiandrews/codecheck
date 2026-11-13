@@ -3,7 +3,14 @@ import stat
 from pathlib import Path
 
 import pytest
-from clihelp import call, make_ctx, write_findings
+from clihelp import (
+    call,
+    finish_review,
+    make_ctx,
+    pr_setup,
+    run_pr_context,
+    write_findings,
+)
 from fakes import FakeProvider, FakeRunner
 from gitutil import commit_file, make_origin_and_clone, push_branch, sh
 
@@ -11,15 +18,6 @@ from codecheck.config import ReviewConfig
 from codecheck.core.render import ATTRIBUTION
 
 pytestmark = pytest.mark.usefixtures("git_env")
-
-
-def finish_review(ctx, out, per_member=None, aggregated=None):
-    """Simulate the agents: every panel member writes a findings file, then the aggregator writes its own."""
-    run_dir = Path(out["run_dir"])
-    members = out["panel"]["members"]
-    write_findings(run_dir, {m: (per_member or {}).get(m, []) for m in members})
-    write_findings(run_dir, {"aggregator": aggregated if aggregated is not None else {"findings": [], "dropped": []}})
-    return run_dir
 
 
 def test_local_flow_and_unchanged_noop_and_seen_suppression(tmp_path):
@@ -61,24 +59,6 @@ def test_local_flow_and_unchanged_noop_and_seen_suppression(tmp_path):
     assert res["new_count"] == 0 and res["unchanged_count"] == 1
     code, res = call(ctx, "cleanup", "--run", out2["run_id"])
     assert res == {"removed": False, "run_dir_removed": True} and not Path(out2["run_dir"]).exists()
-
-
-def pr_setup(tmp_path, **config_over):
-    origin, clone = make_origin_and_clone(tmp_path)
-    sha = push_branch(tmp_path, origin, "feature", {"app.py": "x = 1\ny = 2\n"})
-    provider = FakeProvider()
-    pr = provider.add_pr(head_ref="feature", head_sha=sha)
-    provider.files[pr.ref] = ["app.py"]
-    ctx = make_ctx(tmp_path, clone, provider=provider, **config_over)
-    return ctx, provider, pr
-
-
-def run_pr_context(ctx, pr):
-    code, out = call(ctx, "precheck", "--mode", "pr", "--pr", str(pr.ref))
-    assert out["proceed"], out
-    code, out = call(ctx, "context", "--mode", "pr", "--pr", str(pr.ref))
-    assert code == 0, out
-    return out
 
 
 def test_pr_flow_posts_one_inline_review_and_marks_head(tmp_path):

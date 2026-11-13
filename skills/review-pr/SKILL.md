@@ -21,9 +21,10 @@ Reviews a teammate's PR (never your own) and posts a single review with inline c
 3. Dispatch the panel in parallel: one message containing one Agent call per member of `panel.members`, with `subagent_type` `code-check:<member>`. Each prompt is only `RUN_DIR=<run_dir>`; for a `lang-<language>` member also add `Files you own: <panel.languages[language], comma-separated>`. With more than one chunk, repeat per chunk, one after another.
 4. Run `code-check ingest --run <run_id>`.
 5. Dispatch one Agent call with `subagent_type` `code-check:aggregator` and the prompt `RUN_DIR=<run_dir>`.
-6. Run `code-check post --run <run_id>`. If `stale` is true the PR moved while you were reviewing: clean up (step 7) and run this skill once more from step 1; if it is stale a second time, stop and report that.
-7. Always run `code-check cleanup --run <run_id>`, even when an earlier step failed.
-8. Report ONE line: `<PR>: <decision>, <inline> inline comments, <unlisted> in the summary`, plus `(incomplete: <failed_reviewers>)` when applicable, and `(ignored guidance: <reasons>)` when any subagent's final `done:` line contains `ignored guidance: ...`.
+6. Run `code-check post --run <run_id>`. If `stale` is true the PR moved while you were reviewing: clean up (step 8) and run this skill once more from step 1; if it is stale a second time, stop and report that.
+7. If the `context` output contains `handoff: true`, run `code-check handoff --run <run_id>` and ignore its output; otherwise skip this step.
+8. Always run `code-check cleanup --run <run_id>`, even when an earlier step failed.
+9. Report ONE line: `<PR>: <decision>, <inline> inline comments, <unlisted> in the summary`, plus `(incomplete: <failed_reviewers>)` when applicable, and `(ignored guidance: <reasons>)` when any subagent's final `done:` line contains `ignored guidance: ...`.
 
 ## Without an argument (queue mode)
 

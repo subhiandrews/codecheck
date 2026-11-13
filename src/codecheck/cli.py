@@ -90,9 +90,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cwd", type=Path, default=None, help="run as if started in this directory")
     sub = parser.add_subparsers(dest="command", required=True)
     for module in commands.ALL:
-        p = sub.add_parser(module.NAME, help=module.HELP)
+        hidden = module.HELP is argparse.SUPPRESS  # argparse prints "==SUPPRESS==" for a suppressed subcommand help
+        p = sub.add_parser(module.NAME) if hidden else sub.add_parser(module.NAME, help=module.HELP)
         module.add_arguments(p)
         p.set_defaults(func=module.run)
+    sub.metavar = "{" + ",".join(m.NAME for m in commands.ALL if m.HELP is not argparse.SUPPRESS) + "}"
     return parser
 
 

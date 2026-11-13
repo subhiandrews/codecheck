@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from codecheck.errors import CodeCheckError
@@ -178,3 +180,39 @@ def test_million_char_inputs_fast():
         start = time.perf_counter()
         scrub_text(text)
         assert time.perf_counter() - start < 2.0
+
+
+def test_save_raw_scrubs_is_private_and_round_trips(tmp_path):
+    import stat
+
+    store = ShadowStore(tmp_path / "shadow")
+    secret = "ghp_" + "R" * 36
+    store.save_raw(RID, {"reviewers": {"skeptic": [{"message": f"leak {secret}", "line": 3}]}, "panel": {"members": ["skeptic"]}})
+    path = tmp_path / "shadow" / f"{RID}.raw.json"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600 and secret not in path.read_text()
+    raw = store.read_raw(RID)
+    assert raw["reviewers"]["skeptic"][0]["line"] == 3 and "[REDACTED]" in raw["reviewers"]["skeptic"][0]["message"]
+    assert raw["panel"] == {"members": ["skeptic"]}
+
+
+def test_read_raw_unknown_run_is_none(tmp_path):
+    assert ShadowStore(tmp_path).read_raw(RID) is None
+
+
+def test_handoff_dir_is_created_private_and_rejects_bad_ids(tmp_path):
+    import stat
+
+    store = ShadowStore(tmp_path / "shadow")
+    folder = store.handoff_dir(RID)
+    assert folder == tmp_path / "shadow" / f"{RID}.handoff" and folder.is_dir()
+    assert stat.S_IMODE(folder.stat().st_mode) == 0o700
+    assert store.handoff_dir(RID) == folder  # idempotent
+    with pytest.raises(CodeCheckError):
+        store.handoff_dir("../../etc")
+
+
+def test_save_raw_stays_valid_json_when_keys_look_like_secret_assignments(tmp_path):
+    store = ShadowStore(tmp_path)
+    store.save_raw(RID, {"usage": {"output_tokens": 3}, "note": "password=hunter2"})
+    raw = store.read_raw(RID)
+    assert raw["usage"] == {"output_tokens": 3} and "hunter2" not in json.dumps(raw)
