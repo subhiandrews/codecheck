@@ -1,5 +1,7 @@
 from dataclasses import replace
 
+import pytest
+
 from codecheck.core.diffmap import parse_diff
 from codecheck.core.findings import (
     attach_anchors,
@@ -75,3 +77,85 @@ def test_attach_anchors_uses_the_changed_line_text():
     f = Finding("a.py", 2, Severity.WARNING, "bug", "m")
     assert attach_anchors([f], files)[0].anchor == "y = 2"
     assert attach_anchors([replace(f, file="zzz.py")], files)[0].anchor == ""
+
+
+_SEC = {"file": "a.py", "line": 3, "severity": "critical", "category": "security",
+        "message": "key is AKIAIOSFODNN7EXAMPLE in config", "suggestion": "rotate AKIAIOSFODNN7EXAMPLE now"}
+_NOTE = " (code suggestion withheld: it looked like it contained a secret)"
+
+
+def test_security_finding_message_is_scrubbed_and_secret_suggestion_withheld():
+    findings, errors = validate_findings([_SEC], reviewer="security")
+    assert errors == []
+    f = findings[0]
+    assert f.message == "key is [REDACTED] in config" + _NOTE
+    assert f.suggestion is None
+
+
+def test_security_scrub_is_idempotent_so_ids_are_stable():
+    first, _ = validate_findings([_SEC], reviewer="security")
+    assert "[REDACTED]" in first[0].message
+    again, _ = validate_findings([{**_SEC, "message": first[0].message, "suggestion": first[0].suggestion}],
+                                 reviewer="aggregator")
+    assert (again[0].message, again[0].suggestion) == (first[0].message, None)
+    assert finding_id(again[0]) == finding_id(first[0])
+
+
+@pytest.mark.parametrize("cat", ["security", "bug", "secrets", "insecurity"])
+@pytest.mark.parametrize("code", [
+    'API_KEY = os.environ["API_KEY"]',
+    'password = get_secret("db")',
+    "token: str = load_token()",
+])
+def test_realistic_code_suggestions_are_never_corrupted(cat, code):
+    findings, _ = validate_findings([{**_SEC, "category": cat, "message": "read it from the env", "suggestion": code}],
+                                    reviewer="r")
+    f = findings[0]
+    assert "[REDACTED]" not in (f.suggestion or "")
+    assert f.suggestion in (code, None)
+    if f.suggestion is None:
+        assert f.message == "read it from the env" + _NOTE
+    else:
+        assert f.message == "read it from the env"
+
+
+def test_known_realistic_suggestion_is_withheld_not_mangled():
+    findings, _ = validate_findings(
+        [{**_SEC, "message": "m", "suggestion": 'API_KEY = os.environ["API_KEY"]'}], reviewer="r")
+    assert findings[0].suggestion is None
+    assert findings[0].message == "m" + _NOTE
+
+
+def test_suggestion_the_scrub_leaves_alone_is_kept_verbatim():
+    findings, _ = validate_findings([{**_SEC, "message": "m", "suggestion": "x = compute()"}], reviewer="r")
+    assert findings[0].suggestion == "x = compute()"
+    assert findings[0].message == "m"
+
+
+@pytest.mark.parametrize("cat", ["security", "bug", "secrets", "pii", "insecurity"])
+def test_secret_in_message_is_scrubbed_for_every_category(cat):
+    findings, _ = validate_findings([{**_SEC, "category": cat}], reviewer="r")
+    assert findings[0].message == "key is [REDACTED] in config" + _NOTE
+    assert findings[0].suggestion is None
+
+
+@pytest.mark.parametrize("cat", ["security", "bug", "insecurity", "style"])
+def test_ordinary_prose_is_unchanged_for_every_category(cat):
+    msg = "Off by one: the loop skips the last element when n is even"
+    findings, _ = validate_findings([{**_SEC, "category": cat, "message": msg, "suggestion": "range(n + 1)"}],
+                                    reviewer="r")
+    assert findings[0].message == msg
+    assert findings[0].suggestion == "range(n + 1)"
+
+
+def test_finding_without_suggestion_still_validates():
+    findings, _ = validate_findings([{k: v for k, v in _SEC.items() if k != "suggestion"}], reviewer="r")
+    assert findings[0].suggestion is None
+    assert findings[0].message == "key is [REDACTED] in config"
+
+
+@pytest.mark.parametrize("cat", ["Security", " SECURITY "])
+def test_scrub_ignores_category_case_and_padding(cat):
+    findings, _ = validate_findings([{**_SEC, "category": cat}], reviewer="r")
+    assert findings[0].message == "key is [REDACTED] in config" + _NOTE
+    assert findings[0].suggestion is None

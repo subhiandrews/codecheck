@@ -45,3 +45,8 @@ def test_ignore_globs():
     assert is_ignored("dist/app.js", pats)
     assert not is_ignored("src/dist.py", pats)
     assert filter_ignored(["a.py", "x.lock"], pats) == ["a.py"]
+
+
+def test_security_member_is_opt_in_and_ordered():
+    assert select_panel(["a.py"]).members == ("architect", "pragmatist", "skeptic", "lang-python")
+    assert select_panel(["a.py"], security=True).members == ("architect", "pragmatist", "skeptic", "security", "lang-python")

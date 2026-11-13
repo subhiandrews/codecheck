@@ -16,6 +16,7 @@ from codecheck.errors import ConfigError
 @dataclass(frozen=True, slots=True)
 class ReviewConfig:
     auto_approve: bool = False
+    security: bool = False
     max_files: int = 80
     max_chunk_chars: int = 120_000
     max_inline_comments: int = 25
@@ -35,6 +36,7 @@ class ModelsConfig:
     language_experts: str = "haiku"
     reviewers: str = "sonnet"
     deep: str = "sonnet"
+    security: str = "opus"
     per_language: dict = field(default_factory=dict)
 
 
@@ -113,7 +115,7 @@ def model_for(models: ModelsConfig, role: str, language: str | None = None) -> s
         if language and language in models.per_language:
             return models.per_language[language]
         return models.language_experts
-    if role in ("aggregator", "reviewers", "deep"):
+    if role in ("aggregator", "reviewers", "deep", "security"):
         return getattr(models, role)
     raise ConfigError(f"unknown model role {role!r}")
 
@@ -222,7 +224,7 @@ def _reject_repo_keys(repo: Mapping) -> None:
 def validate(cfg: Config) -> Config:
     m = cfg.models
     named = {"models.aggregator": m.aggregator, "models.language_experts": m.language_experts,
-             "models.reviewers": m.reviewers, "models.deep": m.deep}
+             "models.reviewers": m.reviewers, "models.deep": m.deep, "models.security": m.security}
     named |= {f"models.per_language.{k}": v for k, v in m.per_language.items()}
     for key, value in named.items():
         if not isinstance(value, str) or not MODEL_NAME.fullmatch(value):

@@ -63,3 +63,22 @@ def test_install_does_not_lead_with_an_unpublished_npm_name():
     assert "node installer/cli.js install" in install and "npx github:OWNER/REPO install" in install
     assert "plugin must be installed" in install
     assert "## Safety" in README and "### Prompt injection and unattended runs" in README
+
+
+def test_documents_security_review_and_code_check_md():
+    assert "## Security review" in README and "## CODE_CHECK.md" in README
+    assert 'security = "opus"' in README and "models.security" in README
+    assert "security = false" in README and "review.security" in README
+    section = README.split("## CODE_CHECK.md", 1)[1]
+    assert "16,000" in section and "base branch" in section and "symlink" in section
+    review = README.split("## Security review", 1)[1].split("## CODE_CHECK.md", 1)[0]
+    assert "--security" in review and "never to print a secret or PII value" in review and "not a replacement" in review
+
+
+def test_repo_code_check_md_has_the_two_instructions():
+    text = (Path(__file__).resolve().parent.parent / "CODE_CHECK.md").read_text()
+    low = text.lower()
+    assert "skills/*/SKILL.md" in text
+    assert "duplication" in low
+    assert "tests" in low
+    assert "tautolog" in low
