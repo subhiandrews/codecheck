@@ -55,4 +55,5 @@ class ProviderContract:
         provider.reply(ref, thread, "thanks")
         provider.resolve(thread)
         provider.request_review(ref, ["alice"])
+        provider.add_label(ref, "code-check")
         assert isinstance(ref, PRRef)
