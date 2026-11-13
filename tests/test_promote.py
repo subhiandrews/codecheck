@@ -228,3 +228,69 @@ def test_promote_cli_run_needs_out(tmp_path):
     ctx, _pr, out, _ids = review_run(tmp_path)
     code, res = call(ctx, "shadow", "promote", "--run", out["run_id"])
     assert code != 0 and "--out" in res["error"]
+
+
+def test_draft_signals_carry_no_tool_error_text(tmp_path):
+    # Tool output (home paths, user names, PR text) must never reach a case meant for tests/golden.
+    planted = "PLANTED-tool-output-7f3e9a"
+    ctx, provider, pr = pr_setup(tmp_path)
+    provider.private = False
+    ctx.config = replace(ctx.config, shadow=replace(ctx.config.shadow, handoff=True))
+    ctx.env = {"CLAUDE_CONFIG_DIR": str(tmp_path / "claude")}
+    out = run_pr_context(ctx, pr)
+    session = tmp_path / "claude" / "projects" / "proj"
+    session.mkdir(parents=True)
+    use = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "a", "name": "Read", "input": {}}]}}
+    err = {"type": "user", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": "a", "is_error": True, "content": f"{planted} at /home/alice"}]}}
+    start = {"type": "user", "message": {"content": f"RUN_DIR={out['run_dir']}"}}
+    (session / "s1.jsonl").write_text("\n".join(json.dumps(e) for e in (start, use, err)) + "\n")
+    finish_review(ctx, out, {"skeptic": [FINDING]}, {"findings": [FINDING, FAR], "dropped": []})
+    call(ctx, "ingest", "--run", out["run_id"])
+    assert call(ctx, "post", "--run", out["run_id"])[1]["posted"]
+    assert call(ctx, "handoff", "--run", out["run_id"])[1]["transcript"] is True
+    case = draft_case(ctx.shadow, out["run_id"])
+    assert case["signals"]["tool_errors"] == [{"agent": "s1", "tool": "Read"}]
+    assert case["signals"]["tool_calls"] == 1 and case["signals"]["agents"][0]["tool_errors"] == 1
+    assert planted not in json.dumps(case)
+
+
+def test_dict_shaped_reviewer_outputs_are_stored_relative(tmp_path):
+    # `ingest` rewrites valid reviewer files as lists, but a file it could not read keeps the agent's own shape.
+    ctx, _pr, out, _ids = review_run(tmp_path)
+    root = out["root"]
+    raw = ctx.shadow.read_raw(out["run_id"])
+    raw["reviewers"]["skeptic"] = {"findings": [{**FINDING, "file": f"{root}/app.py"}]}
+    ctx.shadow.save_raw(out["run_id"], raw)
+    case = draft_case(ctx.shadow, out["run_id"])
+    assert case["reviewer_outputs"]["skeptic"] == {"findings": [FINDING]}
+    assert root not in json.dumps(case)
+
+
+def test_finalize_refuses_to_overwrite_a_different_case(tmp_path):
+    ctx, _pr, out, _ids = review_run(tmp_path)
+    case = labelled(draft_case(ctx.shadow, out["run_id"]))
+    draft = write(tmp_path / "draft.json", case)
+    target = finalize_case(draft, tmp_path / "golden", allow_private=False)
+    before = target.read_text()
+    assert finalize_case(draft, tmp_path / "golden", allow_private=False) == target  # identical: a no-op success
+    assert target.read_text() == before
+    write(draft, {**case, "misses": [{"path": "app.py", "line": 9, "author": "bob", "body": "changed"}]})
+    with pytest.raises(CodeCheckError, match="already exists"):
+        finalize_case(draft, tmp_path / "golden", allow_private=False)
+    assert target.read_text() == before
+    assert finalize_case(draft, tmp_path / "golden", allow_private=False, force=True) == target
+    assert "changed" in target.read_text()
+
+
+def test_promote_cli_finalize_force(tmp_path):
+    ctx, _pr, out, _ids = review_run(tmp_path)
+    case = labelled(draft_case(ctx.shadow, out["run_id"]))
+    draft = write(tmp_path / "draft.json", case)
+    dest = str(tmp_path / "golden")
+    assert call(ctx, "shadow", "promote", "--finalize", str(draft), "--dest", dest)[0] == 0
+    write(draft, {**case, "misses": [{"path": "app.py", "line": 9, "author": "bob", "body": "changed"}]})
+    code, res = call(ctx, "shadow", "promote", "--finalize", str(draft), "--dest", dest)
+    assert code != 0 and "--force" in res["error"]
+    code, res = call(ctx, "shadow", "promote", "--finalize", str(draft), "--dest", dest, "--force")
+    assert code == 0, res

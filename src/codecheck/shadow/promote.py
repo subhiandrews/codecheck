@@ -31,19 +31,27 @@ def _relative(items: object, root: str | None) -> object:
 
 
 def _aggregator(raw: object, root: str | None) -> object:
+    """A list of findings or a `{"findings": [...]}` object (both shapes agents write), made repository-relative."""
     if isinstance(raw, dict) and "findings" in raw:
         return {**raw, "findings": _relative(raw["findings"], root)}
     return _relative(raw, root)
 
 
 def _signals(shadow: ShadowStore, run_id: str):
+    """The hand-off's transcript signals without tool output: a case is committed, and error text can hold home
+    paths, user names or PR text. Counts and per-agent stats stay; each tool error keeps only its agent and tool."""
     path = shadow.root / f"{run_id}.handoff" / "handoff.json"
     if path.is_symlink() or not path.is_file():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8")).get("signals")
+        signals = json.loads(path.read_text(encoding="utf-8")).get("signals")
     except (OSError, ValueError, AttributeError):
         return None
+    if not isinstance(signals, dict):
+        return None
+    errors = signals.get("tool_errors")
+    errors = [{k: e.get(k) for k in ("agent", "tool")} for e in errors if isinstance(e, dict)] if isinstance(errors, list) else []
+    return {**{k: v for k, v in signals.items() if k not in ("ignored_guidance",)}, "tool_errors": errors}
 
 
 def _pr_number(pr) -> int | None:
@@ -78,7 +86,7 @@ def draft_case(shadow: ShadowStore, run_id: str) -> dict:
         "version": SCHEMA_VERSION,
         "case_id": f"{str(repo).replace('/', '-')}-{number if number is not None else 'local'}-{str(head_sha)[:8]}",
         "repo": repo, "pr": number, "head_sha": head_sha, "diff": diff,
-        "reviewer_outputs": {m: _relative(v, root) for m, v in reviewers.items()},
+        "reviewer_outputs": {m: _aggregator(v, root) for m, v in reviewers.items()},
         "aggregator": _aggregator(raw["aggregator"], root),
         "expected_posted": view["findings"], "expected_decision": view["decision"],
         "labels": labels,
@@ -99,8 +107,10 @@ def _file_name(case: dict) -> str:
     return f"{name}.json"
 
 
-def finalize_case(path: Path, dest_dir: Path, *, allow_private: bool) -> Path:
-    """Check a confirmed draft and write it, scrubbed, as `dest_dir/<repo>-<pr>-<sha8>.json`."""
+def finalize_case(path: Path, dest_dir: Path, *, allow_private: bool, force: bool = False) -> Path:
+    """Check a confirmed draft and write it, scrubbed, as `dest_dir/<repo>-<pr>-<sha8>.json`.
+
+    An existing case with different content is only replaced with `force`; identical content is left alone."""
     path, dest_dir = Path(path), Path(dest_dir)
     try:
         status = json.loads(path.read_text(encoding="utf-8")).get("label_status")
@@ -125,12 +135,22 @@ def finalize_case(path: Path, dest_dir: Path, *, allow_private: bool) -> Path:
     target = dest_dir / _file_name(case)
     if target.is_symlink():
         raise CodeCheckError(f"refusing to write through symlink {target}")
+    text = json.dumps(case, indent=2, ensure_ascii=False) + "\n"
+    if target.exists() and not force:
+        try:
+            same = target.read_text(encoding="utf-8") == text
+        except (OSError, UnicodeDecodeError):
+            same = False
+        if same:
+            return target
+        raise CodeCheckError(f"golden case {target.name} already exists with different content; "
+                             "pass --force to overwrite it")
     tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
     try:
         with os.fdopen(fd, "wb") as fh:
             os.fchmod(fh.fileno(), 0o644)  # a golden case is committed to the repository; the umask must not matter
-            fh.write((json.dumps(case, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
+            fh.write(text.encode("utf-8"))
         os.replace(tmp, target)
     except BaseException:
         tmp.unlink(missing_ok=True)

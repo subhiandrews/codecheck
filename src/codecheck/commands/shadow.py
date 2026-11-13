@@ -35,6 +35,7 @@ def add_arguments(p) -> None:
     mode.add_argument("--finalize", help="check a confirmed draft and write it into the golden set")
     pr.add_argument("--out", help="where to write the draft (with --run)")
     pr.add_argument("--allow-private", action="store_true", help="promote a case from a private or unknown repository")
+    pr.add_argument("--force", action="store_true", help="with --finalize, overwrite an existing case with different content")
     pr.add_argument("--dest", default=None, help="golden case directory (default: the plugin repository's tests/golden)")
     sub.metavar = "{collect,export-golden,record-verdict}"
 
@@ -80,7 +81,7 @@ def _promote(args, ctx) -> dict:
             dest = DEFAULT_CASES
         else:  # an installed package has no tests/golden; never invent one inside site-packages
             raise CodeCheckError("no tests/golden directory next to this install; pass --dest")
-        case = finalize_case(_path(ctx, args.finalize), dest, allow_private=args.allow_private)
+        case = finalize_case(_path(ctx, args.finalize), dest, allow_private=args.allow_private, force=args.force)
         return {"case": str(case), "case_id": json.loads(case.read_text(encoding="utf-8"))["case_id"]}
     if not args.out:
         raise CodeCheckError("promote --run needs --out <draft path>")
