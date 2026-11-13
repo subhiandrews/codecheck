@@ -8,7 +8,7 @@ import { OWNER_MARKER, isOwned, readReceipt, reverseReceipt } from './uninstall.
 
 export { CLAUDE_CMDS };
 
-const PAYLOAD = ['.claude-plugin', 'hooks', 'bin', 'skills', 'agents', 'src', 'pyproject.toml', 'VERSION', 'README.md'];
+export const PAYLOAD = ['.claude-plugin', 'hooks', 'bin', 'skills', 'agents', 'src', 'pyproject.toml', 'VERSION', 'README.md'];
 
 export const stageDir = (paths) => path.join(paths.dataDir, 'plugin');
 

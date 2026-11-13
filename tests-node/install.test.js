@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { install } from '../installer/lib/install.js';
+import { install, PAYLOAD } from '../installer/lib/install.js';
 import { uninstall } from '../installer/lib/uninstall.js';
 import { fakeExec, makeEnv } from './helpers.js';
 
@@ -169,4 +169,10 @@ test('refuses to replace an unowned <data>/plugin directory', () => {
   fs.writeFileSync(path.join(root, 'data', 'plugin', 'precious'), 'x');
   assert.throws(() => install({ exec: fakeExec(), env }), /refusing to replace/);
   assert.ok(fs.existsSync(path.join(root, 'data', 'plugin', 'precious')));
+});
+
+test('every installer payload entry is shipped in the npm package', () => {
+  const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  const missing = PAYLOAD.filter((item) => !pkg.files.includes(item));
+  assert.deepEqual(missing, []);
 });

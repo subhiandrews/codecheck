@@ -26,7 +26,7 @@ Prerequisites: Python **3.14.10 or later** (`doctor` warns below this, and the i
 ### 1. From the plugin marketplace (recommended)
 
 ```text
-/plugin marketplace add OWNER/REPO
+/plugin marketplace add subhiandrews/codecheck
 /plugin install code-check@code-check
 ```
 
@@ -38,7 +38,7 @@ The package is **not published to npm yet**, and the npm name `code-check` has n
 
 ```bash
 node installer/cli.js install             # from a clone of this repository (needs only Node 20+)
-npx github:OWNER/REPO install             # straight from GitHub, no clone needed
+npx github:subhiandrews/codecheck install             # straight from GitHub, no clone needed
 ```
 
 Each takes the same subcommands:
@@ -58,7 +58,7 @@ Overrides: `CODE_CHECK_HOME` (data directory, default `~/.local/share/code-check
 ### 3. Remote agents and CI
 
 ```bash
-pip install git+https://github.com/OWNER/REPO.git     # or a container image built from this repo
+pip install git+https://github.com/subhiandrews/codecheck.git     # or a container image built from this repo
 export GH_TOKEN=...            # gh authentication, no interactive login
 export ANTHROPIC_API_KEY=...   # for the headless `claude -p` processes
 code-check loop --mode review      # one iteration of the review loop
@@ -66,7 +66,7 @@ code-check loop --mode babysit     # one iteration of the babysit loop
 code-check run-pr --mode review --pr OWNER/REPO#123
 ```
 
-The `claude` binary must be installed and on the PATH (`run_pr.claude_bin`), and **the code-check plugin must be installed for that `claude`**: each headless process is only told to use the `code-check:review-pr` (or `code-check:babysit-pr`) skill, so without the plugin it has no skill, agents or `bin/code-check` to run. In the remote environment install it with `claude plugin marketplace add OWNER/REPO` and `claude plugin install code-check@code-check`, or with `node installer/cli.js install` from a clone. `pip install` alone gives you the CLI, not the plugin.
+The `claude` binary must be installed and on the PATH (`run_pr.claude_bin`), and **the code-check plugin must be installed for that `claude`**: each headless process is only told to use the `code-check:review-pr` (or `code-check:babysit-pr`) skill, so without the plugin it has no skill, agents or `bin/code-check` to run. In the remote environment install it with `claude plugin marketplace add subhiandrews/codecheck` and `claude plugin install code-check@code-check`, or with `node installer/cli.js install` from a clone. `pip install` alone gives you the CLI, not the plugin.
 
 Unattended runs have nobody to answer prompts, so they use `--permission-mode dontAsk --permission-prompts none` together with the per-mode allow-lists `run_pr.review_allowed_tools` and `run_pr.babysit_allowed_tools`, plus `--add-dir <state_dir>` (see "Prompt injection and unattended runs" below). There is no `--max-turns` limit; `run_pr.timeout_seconds` (default 1800) is the bound on a single run, and cloning a repository is bounded at 15 minutes.
 
@@ -96,7 +96,7 @@ code-check doctor                         # prerequisites
 
 Settings are layered, highest precedence first: environment (`CODE_CHECK_<SECTION>__<KEY>`, for example `CODE_CHECK_REVIEW__AUTO_APPROVE=true`), your `~/.config/code-check/config.toml`, the repository's `.code-check.toml`, then the defaults below. Your own settings therefore win over a repository's. Unknown keys and wrong types in files are errors.
 
-A repository's `.code-check.toml` may **not** set the security-sensitive keys `state_dir`, anything under `[run_pr]` or `[shadow]`, `review.auto_approve` or `loop.review_forks`: a repository you review is not trusted to choose what an unattended run may do, where state is written, or whether reviews approve. Such a key in the repository file is an error that names the key; set it in your user file or the environment instead. Model names must match `[A-Za-z0-9._:[\]-]+`, `run_pr.permission_mode` must be one of `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`, and allowed-tool entries and prompts must not start with `-`.
+A repository's `.code-check.toml` may **not** set the security-sensitive keys `state_dir`, anything under `[run_pr]` or `[shadow]`, `review.auto_approve`, `loop.review_forks`, `address.test_command` or `deep_reviewer.command`: a repository you review is not trusted to choose what an unattended run may do or execute, where state is written, or whether reviews approve. Such a key in the repository file is an error that names the key; set it in your user file or the environment instead. Model names must match `[A-Za-z0-9._:[\]-]+`, `run_pr.permission_mode` must be one of `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`, and allowed-tool entries and prompts must not start with `-`.
 
 ```toml
 provider = "github"            # only GitHub in Phase 1
@@ -272,3 +272,7 @@ Start with `code-check doctor` (or `node installer/cli.js doctor`).
 | A PR keeps failing in the loop | It is retried 3 times per fingerprint, then set aside until it changes; run `code-check run-pr --mode review --pr OWNER/REPO#123` to retry now |
 | "cannot be set in the repository's .code-check.toml" | Move that key to `~/.config/code-check/config.toml` or a `CODE_CHECK_` environment variable |
 | Python is older than 3.14.10 | Upgrade (`brew upgrade python@3.14`, `uv python install 3.14`) |
+
+## License
+
+Code Check is released under the [Apache License 2.0](LICENSE). Copyright 2026 Subhi Andrews; see [NOTICE](NOTICE). Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). To report a vulnerability privately, see [SECURITY.md](SECURITY.md).

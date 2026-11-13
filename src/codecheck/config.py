@@ -98,7 +98,10 @@ class Config:
 
 _FREEFORM = {("models", "per_language")}
 # Keys (or whole tables) a repository's .code-check.toml may not set.
-REPO_FORBIDDEN = {("state_dir",), ("run_pr",), ("shadow",), ("review", "auto_approve"), ("loop", "review_forks")}
+REPO_FORBIDDEN = {
+    ("state_dir",), ("run_pr",), ("shadow",), ("review", "auto_approve"), ("loop", "review_forks"),
+    ("address", "test_command"), ("deep_reviewer", "command"),
+}
 MODEL_NAME = re.compile(r"[A-Za-z0-9._:\[\]-]+")
 # Values accepted by `claude --permission-mode` (Task 1 spike).
 PERMISSION_MODES = ("acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")

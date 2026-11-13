@@ -37,6 +37,8 @@ def test_user_overrides_repo_and_env_overrides_both(tmp_path):
     ('[run_pr]\nclaude_bin = "/tmp/evil"\n', "run_pr"),
     ("[shadow]\nenabled = false\n", "shadow"),
     ("[loop]\nreview_forks = true\n", "loop.review_forks"),
+    ('[address]\ntest_command = "true"\n', "address.test_command"),
+    ('[deep_reviewer]\ncommand = "/tmp/evil"\n', "deep_reviewer.command"),
 ])
 def test_repo_file_cannot_set_security_sensitive_keys(tmp_path, text, key):
     write(tmp_path / "repo/.code-check.toml", text)
