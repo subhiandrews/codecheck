@@ -7,6 +7,13 @@ from codecheck.errors import GitError
 from codecheck.runner import CommandResult, CommandRunner
 
 
+def _safe(*values: str) -> None:
+    """Reject ref/remote/branch values git would parse as options (argument injection)."""
+    for v in values:
+        if v.startswith("-"):
+            raise GitError(f"refusing ref-like value that starts with '-': {v!r}")
+
+
 class Git:
     def __init__(self, runner: CommandRunner, cwd: Path | str) -> None:
         self.runner = runner
@@ -25,12 +32,15 @@ class Git:
         return self._raw(*args).strip()
 
     def fetch(self, remote: str, *refspecs: str) -> bool:
+        _safe(remote, *refspecs)
         return self._run("fetch", "--quiet", remote, *refspecs).returncode == 0
 
     def ref_exists(self, ref: str) -> bool:
+        _safe(ref)
         return self._run("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").returncode == 0
 
     def default_branch(self, remote: str = "origin") -> str:
+        _safe(remote)
         res = self._run("symbolic-ref", "--quiet", "--short", f"refs/remotes/{remote}/HEAD")
         if res.returncode == 0 and res.stdout.strip():
             return res.stdout.strip().removeprefix(f"{remote}/")
@@ -40,12 +50,15 @@ class Git:
         raise GitError("cannot determine the default branch; set base_branch in .code-check.toml")
 
     def rev_parse(self, ref: str) -> str:
+        _safe(ref)
         return self._out("rev-parse", ref)
 
     def merge_base(self, a: str, b: str) -> str:
+        _safe(a, b)
         return self._out("merge-base", a, b)
 
     def diff(self, range_expr: str) -> str:
+        _safe(range_expr)
         return self._raw("diff", "--no-color", "--no-ext-diff", range_expr)
 
     def untracked(self) -> list[str]:
@@ -53,6 +66,7 @@ class Git:
         return [p for p in out.split("\0") if p]
 
     def local_diff(self, base_sha: str) -> str:
+        _safe(base_sha)
         parts = [self._raw("diff", "--no-color", "--no-ext-diff", base_sha)]
         for path in self.untracked():
             res = self._run("diff", "--no-color", "--no-index", "--", "/dev/null", path)
@@ -70,12 +84,15 @@ class Git:
         return self._out("rev-parse", "HEAD")
 
     def commit_time(self, ref: str) -> int:
+        _safe(ref)
         return int(self._out("log", "-1", "--format=%ct", ref))
 
     def behind_count(self, base_ref: str) -> int:
+        _safe(base_ref)
         return int(self._out("rev-list", "--count", f"HEAD..{base_ref}"))
 
     def remote_url(self, remote: str) -> str:
+        _safe(remote)
         return self._out("remote", "get-url", remote)
 
     def toplevel(self) -> Path:
@@ -85,16 +102,21 @@ class Git:
         if not paths:
             raise GitError("commit requires explicit paths; refusing to stage everything")
         self._raw("add", "--", *paths)
-        self._raw("commit", "-m", message)
+        # Pathspec limits the commit to these paths, leaving other staged files alone.
+        self._raw("commit", "-m", message, "--", *paths)
         return self.head_sha()
 
     def push(self, remote: str, branch: str) -> None:
         # Deliberately no force options anywhere in this layer.
+        _safe(remote, branch)
         self._raw("push", remote, f"HEAD:refs/heads/{branch}")
 
     def worktree_add(self, path: Path, ref: str) -> None:
+        _safe(ref)
         self._raw("worktree", "add", "--detach", str(path), ref)
 
     def worktree_remove(self, path: Path) -> None:
-        self._run("worktree", "remove", "--force", str(path))
+        """Remove a worktree. Only for the tool's own temporary worktrees: uses --force,
+        so uncommitted changes in the worktree are discarded."""
+        self._raw("worktree", "remove", "--force", str(path))
         self._run("worktree", "prune")

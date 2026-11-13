@@ -17,6 +17,8 @@ class SyncResult:
 
 
 def sync_base(git: Git, remote: str, base_branch: str = "auto") -> SyncResult:
+    if remote.startswith("-") or base_branch.startswith("-"):
+        raise SyncError(f"refusing remote/base_branch that starts with '-': {remote!r} {base_branch!r}")
     branch = git.default_branch(remote) if base_branch == "auto" else base_branch
     fresh = git.fetch(remote, branch)
     ref = f"{remote}/{branch}"

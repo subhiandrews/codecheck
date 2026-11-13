@@ -78,3 +78,40 @@ def test_push_failure_raises_git_error():
     )
     with pytest.raises(GitError, match="non-fast-forward"):
         Git(runner, "/x").push("origin", "feat")
+
+
+def test_option_like_refs_are_rejected(tmp_path):
+    _, clone = make_origin_and_clone(tmp_path)
+    g = git_for(clone)
+    bad = "--upload-pack=x"
+    for call in (
+        lambda: g.fetch("origin", bad), lambda: g.fetch(bad), lambda: g.ref_exists(bad),
+        lambda: g.rev_parse(bad), lambda: g.merge_base(bad, "HEAD"), lambda: g.diff(bad),
+        lambda: g.behind_count(bad), lambda: g.remote_url(bad), lambda: g.push("origin", bad),
+        lambda: g.commit_time(bad), lambda: g.local_diff(bad), lambda: g.worktree_add(tmp_path / "w", bad),
+    ):
+        with pytest.raises(GitError, match="starts with '-'"):
+            call()
+
+
+def test_commit_leaves_other_staged_files_out(tmp_path):
+    _, clone = make_origin_and_clone(tmp_path)
+    g = git_for(clone)
+    (clone / "other.txt").write_text("o")
+    sh(clone, "add", "other.txt")
+    (clone / "mine.txt").write_text("m")
+    sha = g.commit("mine only", ["mine.txt"])
+    assert sh(clone, "show", "--name-only", "--format=", sha).split() == ["mine.txt"]
+    assert "other.txt" in sh(clone, "diff", "--cached", "--name-only")
+
+
+def test_worktree_add_and_remove(tmp_path):
+    _, clone = make_origin_and_clone(tmp_path)
+    g = git_for(clone)
+    wt = tmp_path / "wt"
+    g.worktree_add(wt, "origin/main")
+    assert (wt / "README.md").exists()
+    g.worktree_remove(wt)
+    assert not wt.exists()
+    with pytest.raises(GitError):
+        g.worktree_remove(wt)

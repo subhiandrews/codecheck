@@ -37,3 +37,9 @@ def test_sync_without_any_base_ref_raises(tmp_path):
     sh(tmp_path, "init", "-b", "main", "lonely")
     with pytest.raises(SyncError):
         sync_base(Git(SubprocessRunner(), tmp_path / "lonely"), "origin", "main")
+
+
+def test_sync_rejects_option_like_base_branch(tmp_path):
+    _, clone = make_origin_and_clone(tmp_path)
+    with pytest.raises(SyncError):
+        sync_base(Git(SubprocessRunner(), clone), "origin", "--upload-pack=x")
