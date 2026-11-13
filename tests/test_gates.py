@@ -152,11 +152,17 @@ def test_gate_paths_patterns_match_expected_files():
         "src/codecheck/agentgen.py", "agents/skeptic.md", "skills/review-pr/SKILL.md", "src/codecheck/config.py",
         "src/codecheck/core/findings.py", "src/codecheck/core/diffmap.py", "src/codecheck/core/policy.py",
         "src/codecheck/commands/ingest.py", "src/codecheck/commands/post.py", "src/codecheck/evals/live.py",
+        "src/codecheck/core/panel.py", "src/codecheck/core/chunk.py", "src/codecheck/core/paths.py",
+        "src/codecheck/commands/context.py", "src/codecheck/commands/handoff.py", "src/codecheck/commands/eval_run.py",
     ):
         assert matches(path), path
-    for path in ("README.md", "tests/test_gates.py", "src/codecheck/cli.py", "src/codecheck/commands/loop.py"):
+    for path in ("README.md", "tests/test_gates.py", "src/codecheck/cli.py", "src/codecheck/commands/loop.py",
+                 "src/codecheck/commands/run_pr.py", "src/codecheck/shadow/handoff.py", "src/codecheck/core/state.py",
+                 "src/codecheck/commands/context.pyc", "src/codecheck/commands/xhandoff.py"):
         assert not matches(path), path
-    for path in ("src/codecheck/core/findings.py", "src/codecheck/commands/ingest.py"):
+    for path in ("src/codecheck/core/findings.py", "src/codecheck/commands/ingest.py", "src/codecheck/core/panel.py",
+                 "src/codecheck/core/chunk.py", "src/codecheck/core/paths.py", "src/codecheck/commands/context.py",
+                 "src/codecheck/commands/handoff.py", "src/codecheck/commands/eval_run.py"):
         assert (REPO / path).exists(), path
 
 
@@ -311,3 +317,82 @@ def test_claude_hook_mode_without_head_does_not_crash(sandbox):
     (sandbox.repo / "agents/y.md").write_text("y\n")
     assert run_gates(sandbox, "--if-no-git-hook").returncode == 0
     assert sandbox.calls() == ["eval --replay", "eval --live --if-reachable"]
+
+
+def _bin_without_python(tmp_path, extra=None):
+    """A PATH holding only the tools gates.sh and the fake CLI use: no python3, unless `extra` adds a fake one."""
+    bindir = tmp_path / "nopy-bin"
+    bindir.mkdir()
+    for tool in ("bash", "sh", "env", "git", "mktemp", "rm", "dirname", "cat", "grep", "head"):
+        found = shutil.which(tool, path="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin")
+        assert found, tool
+        (bindir / tool).symlink_to(found)
+    for name, body in (extra or {}).items():
+        (bindir / name).write_text(body)
+        (bindir / name).chmod(0o755)
+    return {**os.environ, "PATH": str(bindir)}
+
+
+def test_gates_parse_without_python3_on_path(sandbox, tmp_path):
+    env = _bin_without_python(tmp_path)
+    sandbox.stage("agents/x.md")
+    res = run_gates(sandbox, env=env)
+    assert res.returncode == 0, res.stderr
+    assert sandbox.calls() == ["eval --replay", "eval --live --if-reachable"]
+    (sandbox.fake_dir / "fail-live").write_text("")
+    res = run_gates(sandbox, env=env)
+    assert res.returncode != 0 and "eval --live failed" in res.stderr
+
+
+def test_gates_survive_a_broken_python3_stub(sandbox, tmp_path):
+    # The macOS command line tools stub is a python3 that exits non-zero without running anything.
+    env = _bin_without_python(tmp_path, {"python3": "#!/bin/sh\necho 'xcode-select: note: no developer tools' >&2\nexit 1\n"})
+    sandbox.stage("README.md")
+    res = run_gates(sandbox, env=env)
+    assert res.returncode == 0, res.stderr
+    (sandbox.fake_dir / "fail-replay").write_text("")
+    res = run_gates(sandbox, env=env)
+    assert res.returncode != 0 and "eval --replay failed" in res.stderr
+
+
+def test_gates_grep_fallback_reads_the_top_level_passed(sandbox, tmp_path):
+    env = _bin_without_python(tmp_path)
+    _fake(sandbox, "echo '{\"passed\": false, \"cases\": [{\"result\": {\"passed\": true}}]}'\n")
+    sandbox.stage("README.md")
+    assert run_gates(sandbox, env=env).returncode != 0
+
+
+def test_gates_default_cli_parses_with_its_own_interpreter(tmp_path, git_env, monkeypatch):
+    import sys
+
+    for var in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE", "CODE_CHECK_BIN"):
+        monkeypatch.delenv(var, raising=False)
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    git(repo, "init", "-q")
+    shutil.copy2(REPO / "scripts/gates.sh", repo / "scripts/gates.sh")
+    shutil.copy2(REPO / "scripts/gate-paths.txt", repo / "scripts/gate-paths.txt")
+    py = repo / ".venv/bin/python"
+    py.parent.mkdir(parents=True)
+    # Parser calls (-c) go to a real interpreter; CLI calls answer with the verdict in $VERDICT.
+    py.write_text(f'#!/bin/sh\nif [ "$1" = "-c" ]; then exec "{sys.executable}" "$@"; fi\n'
+                  'echo "{\\"passed\\": $VERDICT}"\n')
+    py.chmod(0o755)
+    env = _bin_without_python(tmp_path)
+    for verdict, ok in (("true", True), ("false", False)):
+        res = subprocess.run([str(repo / "scripts/gates.sh")], cwd=repo, env={**env, "VERDICT": verdict},
+                             capture_output=True, text=True, check=False)
+        assert (res.returncode == 0) is ok, res.stderr
+
+
+def test_gates_print_one_summary_line_on_success(sandbox):
+    sandbox.stage("README.md")
+    res = run_gates(sandbox)
+    assert res.returncode == 0 and res.stdout == ""
+    assert res.stderr.strip().splitlines()[-1] == "gates: replay passed; live skipped (no gated path)"
+    sandbox.stage("agents/x.md")
+    res = run_gates(sandbox)
+    assert res.stdout == "" and res.stderr.strip().splitlines()[-1] == "gates: replay passed; live passed"
+    _fake(sandbox, "echo '{\"passed\": true, \"skipped\": \"model not reachable: x\", \"cases\": []}'\n")
+    res = run_gates(sandbox)
+    assert res.stderr.strip().splitlines()[-1] == "gates: replay passed; live skipped (no model reachable)"

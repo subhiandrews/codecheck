@@ -5,6 +5,9 @@
 # --if-no-git-hook: do nothing when the git pre-commit hook is installed
 # (core.hooksPath = .githooks), because that hook runs these gates itself.
 # CODE_CHECK_BIN overrides the CLI command (default: .venv/bin/python -m codecheck).
+# It is a command line, word-split on whitespace, not a path: a path containing
+# spaces cannot be used there.
+# On success one summary line goes to stderr; stdout stays empty.
 set -u
 
 # Work from the repository root regardless of cwd; git may export GIT_DIR and
@@ -32,17 +35,51 @@ else
   BIN=("$ROOT/.venv/bin/python" -m codecheck)
 fi
 
+# The JSON parser: the CLI's own interpreter by default, else python3 when there
+# is one. A missing or broken parser (no python3, the macOS command line tools
+# stub) must never block a commit over valid JSON, so passes_json falls back to grep.
+PARSER=()
+if [ -z "${CODE_CHECK_BIN:-}" ]; then
+  PARSER=("$ROOT/.venv/bin/python")
+elif command -v python3 >/dev/null 2>&1; then
+  PARSER=(python3)
+fi
+PARSE='import json, sys
+try:
+    ok = json.load(sys.stdin).get("passed") is True
+except Exception:
+    ok = False
+sys.exit(0 if ok else 3)'
+
+# passes_json TEXT: 0 when the document's top-level "passed" is true. The
+# parser exits 0 or 3; any other status means the parser itself did not run.
+passes_json() {
+  local rc=99
+  if [ "${#PARSER[@]}" -gt 0 ]; then
+    printf '%s' "$1" | "${PARSER[@]}" -c "$PARSE" >/dev/null 2>&1
+    rc=$?
+  fi
+  case "$rc" in
+    0) return 0 ;;
+    3) return 1 ;;
+  esac
+  # Fallback: the first "passed" key in the output is the top-level one.
+  printf '%s' "$1" | grep -Eo '"passed"[[:space:]]*:[[:space:]]*(true|false)' | head -n 1 | grep -Eq 'true$'
+}
+
 ERRFILE="$(mktemp "${TMPDIR:-/tmp}/code-check-gates.XXXXXX")" || exit 1
 trap 'rm -f "$ERRFILE"' EXIT
 trap 'exit 130' INT TERM HUP
 
 # run_gate LABEL ARGS...: stdout (the JSON) is parsed, stderr is kept apart so a
 # warning on a passing run cannot fail it; both are shown on failure.
+LAST_OUT=""
 run_gate() {
   local label="$1" out
   shift
   out="$("${BIN[@]}" "$@" 2>"$ERRFILE")"
-  if printf '%s' "$out" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("passed") is True else 1)' 2>/dev/null; then
+  LAST_OUT="$out"
+  if passes_json "$out"; then
     return 0
   fi
   echo "$label failed:" >&2
@@ -75,7 +112,14 @@ if [ -f "$ROOT/scripts/gate-paths.txt" ]; then
   done < "$ROOT/scripts/gate-paths.txt"
 fi
 
+live="skipped (no gated path)"
 if [ "$gated" = 1 ]; then
   run_gate "eval --live" eval --live --if-reachable || exit 1
+  if grep -Eq '"skipped"[[:space:]]*:[[:space:]]*"' <<< "$LAST_OUT"; then
+    live="skipped (no model reachable)"
+  else
+    live="passed"
+  fi
 fi
+echo "gates: replay passed; live $live" >&2
 exit 0
