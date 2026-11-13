@@ -9,6 +9,7 @@ jobs:
         with: { python-version: "3.14" }
       - run: python -c "import sys; assert sys.version_info >= (3, 14, 10), sys.version"
       - run: pip install -e '.[dev]'
+      - run: ruff check .
       - run: pytest -q
   node:
     runs-on: ubuntu-latest

@@ -5,7 +5,7 @@
     {
       "name": "code-check",
       "source": "./",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "description": "Review code and address review comments on pull requests with a deterministic CLI and a panel of reviewer agents."
     }
   ]
