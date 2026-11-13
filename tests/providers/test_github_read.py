@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 from fakes import FakeRunner
@@ -168,3 +169,9 @@ def test_clone_dest_leading_dash_rejected_and_numbers_are_ints():
         gh.get_pr(PRRef("o/r", "--web"))  # type: ignore[arg-type]
     with pytest.raises(ProviderError):
         gh.get_check_log(REF, Check("b", "fail", "", "-1"))
+
+
+def test_threads_query_stays_under_github_node_limit():
+    # threads x comments x reactions, summed over every level of the nesting
+    threads, comments, reactions = (int(n) for n in re.findall(r"first:(\d+)", THREADS_QUERY))
+    assert threads + threads * comments + threads * comments * reactions < 500_000
