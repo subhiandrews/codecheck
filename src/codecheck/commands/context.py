@@ -4,10 +4,11 @@ from codecheck.commands._common import first_line, local_key, safe_repo, write_j
 from codecheck.config import expand_path, model_for
 from codecheck.core.chunk import chunk_files
 from codecheck.core.diffmap import parse_diff
+from codecheck.core.existing import collect_existing
 from codecheck.core.guidance import from_base, from_worktree
 from codecheck.core.panel import detect_language, filter_ignored, select_panel
 from codecheck.core.precheck import cap_replies, review_activity
-from codecheck.core.render import render_replies
+from codecheck.core.render import render_existing
 from codecheck.core.state import ensure_private_dir, local_fingerprint
 from codecheck.errors import CodeCheckError
 from codecheck.runids import new_run_id
@@ -22,7 +23,7 @@ def add_arguments(p) -> None:
     p.add_argument("--mode", choices=("local", "pr"), required=True)
     p.add_argument("--pr")
     p.add_argument("--security", action="store_true", help="include the security reviewer")
-    p.add_argument("--with-replies", action="store_true", help="PR mode: write replies.md with replies on our earlier threads")
+    p.add_argument("--with-replies", action="store_true", help="accepted for compatibility; PR mode always writes existing-comments.md")
     p.add_argument("--skill", default=None, help="recorded in shadow data")
 
 
@@ -43,6 +44,8 @@ def _build(args, ctx, run_id, run_dir) -> dict:
     if args.with_replies and args.mode != "pr":
         raise CodeCheckError("--with-replies requires --mode pr")
     replies = None
+    existing_comments = None
+    existing_comments_error = None
     meta: dict = {"run_id": run_id, "mode": args.mode, "skill": args.skill or ("review-local" if args.mode == "local" else "review-pr")}
 
     if args.mode == "local":
@@ -66,12 +69,19 @@ def _build(args, ctx, run_id, run_dir) -> dict:
         if not ctx.git.fetch(cfg.remote, refspec):
             raise CodeCheckError(f"could not fetch the head of {ref}")
         diff = ctx.git.diff(f"{sync.base_ref}...{local_ref}")
-        if args.with_replies:
-            act = review_activity(ctx.provider.list_reviews(ref), ctx.provider.list_threads(ref, reactions=False), ctx.provider.whoami())
+        try:
+            threads = ctx.provider.list_threads(ref, reactions=False)
+            act = review_activity(ctx.provider.list_reviews(ref), threads, ctx.provider.whoami())
+            existing = collect_existing(threads, act)
+            if existing:
+                (run_dir / "existing-comments.md").write_text(render_existing(existing), encoding="utf-8")
+                existing_comments = {"threads": len(existing), "comments": sum(len(t.comments) for t in existing),
+                                     "new_replies": sum(c.is_new for t in existing for c in t.comments)}
             capped = cap_replies(act.replies)
             if capped:
-                (run_dir / "replies.md").write_text(render_replies(capped), encoding="utf-8")
                 replies = {"threads": len({r.thread_id for r in capped}), "comments": len(capped)}
+        except CodeCheckError as e:  # reviewing without the comments beats not reviewing
+            existing_comments_error = str(e)[:300]
         guidance = from_base(ctx.git, sync.base_ref)  # base branch only: a PR cannot change the rules it is judged by
         root = expand_path(cfg.state_dir) / "worktrees" / run_id
         root.parent.mkdir(parents=True, exist_ok=True)
@@ -88,6 +98,8 @@ def _build(args, ctx, run_id, run_dir) -> dict:
         (run_dir / "CODE_CHECK.md").write_text(guidance.text, encoding="utf-8")
     meta["guidance"] = guidance.to_meta() if guidance else None
     meta["replies"] = replies
+    meta["existing_comments"] = existing_comments
+    meta["existing_comments_error"] = existing_comments_error
     (run_dir / "diff.patch").write_text(diff, encoding="utf-8")
     files = []
     for idx, path in enumerate(reviewable):
@@ -121,4 +133,5 @@ def _build(args, ctx, run_id, run_dir) -> dict:
         ctx.guarded(record_run, ctx.shadow, meta, diff, cfg)
     return {"run_id": run_id, "run_dir": str(run_dir), "root": meta["root"], "mode": args.mode,
             "base_warning": sync.warning, "files": len(files), "chunks": chunks, "panel": meta["panel"],
-            "guidance": meta["guidance"], "replies": replies}
+            "guidance": meta["guidance"], "replies": replies, "existing_comments": existing_comments,
+            "existing_comments_error": existing_comments_error}
