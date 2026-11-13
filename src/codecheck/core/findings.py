@@ -5,6 +5,7 @@ from dataclasses import replace
 
 from codecheck.core.diffmap import FileDiff
 from codecheck.models import Finding, Severity
+from codecheck.shadow.scrub import scrub_text
 
 
 def normalize_text(text: str) -> str:
@@ -53,12 +54,17 @@ def validate_findings(raw: object, *, reviewer: str, root: str | None = None) ->
         if problems:
             errors.extend(f"{where}: {p}" for p in problems)
             continue
+        message, category = message.strip(), category.strip()
+        if category == "security":
+            # Backstop: comments are public, so never let an echoed secret through.
+            message = scrub_text(message)
+            suggestion = scrub_text(suggestion) if suggestion is not None else None
         supplied = item.get("reviewers")
         who = tuple(supplied) if isinstance(supplied, list) and supplied and all(isinstance(r, str) for r in supplied) else (reviewer,)
         findings.append(
             Finding(
                 file=_clean_path(file, root), line=line, severity=Severity(sev.lower()),
-                category=category.strip(), message=message.strip(), suggestion=suggestion,
+                category=category, message=message, suggestion=suggestion,
                 reviewers=who,
             )
         )

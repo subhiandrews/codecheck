@@ -75,3 +75,35 @@ def test_attach_anchors_uses_the_changed_line_text():
     f = Finding("a.py", 2, Severity.WARNING, "bug", "m")
     assert attach_anchors([f], files)[0].anchor == "y = 2"
     assert attach_anchors([replace(f, file="zzz.py")], files)[0].anchor == ""
+
+
+_SEC = {"file": "a.py", "line": 3, "severity": "critical", "category": "security",
+        "message": "key is AKIAIOSFODNN7EXAMPLE in config", "suggestion": "rotate AKIAIOSFODNN7EXAMPLE now"}
+
+
+def test_security_finding_text_is_scrubbed():
+    findings, errors = validate_findings([_SEC], reviewer="security")
+    assert errors == []
+    f = findings[0]
+    assert f.message == "key is [REDACTED] in config"
+    assert f.suggestion == "rotate [REDACTED] now"
+    assert "AKIAIOSFODNN7EXAMPLE" not in f.message + f.suggestion
+
+
+def test_security_scrub_is_idempotent_so_ids_are_stable():
+    first, _ = validate_findings([_SEC], reviewer="security")
+    again, _ = validate_findings([{**_SEC, "message": first[0].message, "suggestion": first[0].suggestion}],
+                                 reviewer="aggregator")
+    assert (again[0].message, again[0].suggestion) == (first[0].message, first[0].suggestion)
+    assert finding_id(again[0]) == finding_id(first[0])
+
+
+def test_non_security_finding_text_is_not_scrubbed():
+    findings, _ = validate_findings([{**_SEC, "category": "bug"}], reviewer="r")
+    assert findings[0].message == "key is AKIAIOSFODNN7EXAMPLE in config"
+    assert findings[0].suggestion == "rotate AKIAIOSFODNN7EXAMPLE now"
+
+
+def test_security_finding_without_suggestion_still_validates():
+    findings, _ = validate_findings([{k: v for k, v in _SEC.items() if k != "suggestion"}], reviewer="r")
+    assert findings[0].suggestion is None
