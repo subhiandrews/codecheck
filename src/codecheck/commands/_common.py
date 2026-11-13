@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from codecheck.core.precheck import fetch_activity
 from codecheck.errors import CodeCheckError
 
 
@@ -66,3 +67,10 @@ def check_finding_paths(findings, errors, root, who):
 
 def finding_items(raw):
     return raw["findings"] if isinstance(raw, dict) and "findings" in raw else raw
+
+
+def pr_activity(ctx, ref, pr, me: str | None = None):
+    """Our latest review and replies on our threads, fetched only when they could change the verdict."""
+    me = me or ctx.provider.whoami()
+    return fetch_activity(pr, ctx.state, me, lambda: ctx.provider.list_reviews(ref),
+                          lambda: ctx.provider.list_threads(ref, reactions=False))

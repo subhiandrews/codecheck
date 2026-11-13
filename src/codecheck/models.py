@@ -56,6 +56,15 @@ class ThreadComment:
     body: str
     created_at: str
     reactions: tuple[str, ...] = ()
+    is_bot: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class Review:
+    author: str
+    commit_id: str
+    submitted_at: str
+    state: str
 
 
 @dataclass(frozen=True, slots=True)

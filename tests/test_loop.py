@@ -324,3 +324,44 @@ def test_run_pr_security_flag_is_review_only(tmp_path):
     code, out = call(ctx, "run-pr", "--mode", "babysit", "--pr", str(refs[0]), "--security", "--dry-run")
     assert code != 0 and "review mode only" in json.dumps(out)
     assert claude_calls(fake) == []
+
+
+def _reply_setup(tmp_path):
+    from codecheck.models import Review, Thread, ThreadComment
+
+    ctx, provider, fake, refs, _ = setup(tmp_path, n_prs=2)
+    provider.reviews[refs[0]] = [Review("me", "sha1", "2026-01-01T00:00:00Z", "COMMENTED")]
+    provider.threads[refs[0]] = [Thread("T1", "a.py", 1, False, False, (
+        ThreadComment(1, "me", "nit", "2026-01-01T00:00:01Z"),
+        ThreadComment(2, "alice", "why?", "2026-01-02T00:00:00Z")))]
+    ctx.state.set(f"review:{refs[0]}", "sha1")
+    return ctx, provider, fake, refs
+
+
+def test_loop_surfaces_replies_only_pr_without_running_it(tmp_path):
+    ctx, _provider, fake, refs = _reply_setup(tmp_path)
+    out = call(ctx, "loop", "--mode", "review")[1]
+    assert [r["pr"] for r in out["results"]] == [str(refs[1])]
+    assert len(claude_calls(fake)) == 1
+    (skip,) = [s for s in out["skipped"] if s["pr"] == str(refs[0])]
+    assert "1 reply on 1 of your threads" in skip["reason"]
+    assert out["considered"] == 2
+
+
+def test_replies_only_pr_stays_outside_the_cap(tmp_path):
+    from dataclasses import replace
+
+    ctx, _provider, _fake, refs = _reply_setup(tmp_path)
+    ctx.config = replace(ctx.config, loop=LoopConfig(max_prs_per_iteration=1))
+    out = call(ctx, "loop", "--mode", "review")[1]
+    assert [r["pr"] for r in out["results"]] == [str(refs[1])]
+    assert str(refs[0]) in [s["pr"] for s in out["skipped"]]
+
+
+def test_replies_only_pr_runs_again_after_a_new_push(tmp_path):
+    from dataclasses import replace
+
+    ctx, provider, _fake, refs = _reply_setup(tmp_path)
+    provider.prs[refs[0]] = replace(provider.prs[refs[0]], head_sha="sha1b")
+    out = call(ctx, "loop", "--mode", "review")[1]
+    assert str(refs[0]) in [r["pr"] for r in out["results"]]

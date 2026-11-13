@@ -108,7 +108,10 @@ def run(args, ctx) -> dict:
                         base_warning=meta.get("base_warning"), failed_reviewers=failed,
                         attribution=cfg.review.attribution)
     result = ctx.provider.post_review(ref, pr.head_sha, body, comments, decision)
-    if not incomplete:
+    if incomplete:
+        ctx.state.set(f"review-incomplete:{ref}", pr.head_sha)
+    else:
+        ctx.state.delete(f"review-incomplete:{ref}")
         ctx.state.set(f"review:{ref}", pr.head_sha)
     labeled = False
     if cfg.review.label:

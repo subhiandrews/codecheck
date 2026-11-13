@@ -1,3 +1,5 @@
+from codecheck.commands._common import pr_activity
+from codecheck.core.precheck import review_verdict
 from codecheck.core.state import WorkItem, babysit_work, select_work
 
 NAME = "list-work"
@@ -38,7 +40,10 @@ def _consider(ctx, mode: str, ref, me: str) -> tuple[WorkItem | None, str | None
             return None, None
         if pr.is_cross_repo and not ctx.config.loop.review_forks:
             return None, "fork-based PR: not reviewed unattended (set loop.review_forks = true to include forks)"
-        if ctx.state.get(f"review:{ref}") == pr.head_sha:
+        verdict = review_verdict(pr, ctx.state, pr_activity(ctx, ref, pr, me))
+        if verdict.kind == "replies":
+            return None, verdict.reason
+        if verdict.kind == "reviewed":
             return None, None  # this head was already reviewed (by the loop or by hand)
         return WorkItem(ref, pr.head_sha, "new head"), None
     if pr.is_cross_repo:
