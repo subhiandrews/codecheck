@@ -184,6 +184,7 @@ def test_handoff_saves_raw_outputs(tmp_path):
     assert set(raw["reviewers"]) <= set(out["panel"]["members"])
     assert raw["aggregator"]["findings"][0]["message"] == "y is unused"
     assert raw["panel"] == out["panel"] and raw["chunks"] == out["chunks"] and raw["base_ref"]
+    assert raw["root"] == out["root"]  # replay strips this prefix from absolute aggregator paths, as `post` does
 
 
 def test_handoff_error_is_swallowed(tmp_path, monkeypatch):

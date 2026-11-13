@@ -57,13 +57,15 @@ def load_cases(directory: Path) -> list[dict]:
     return [load_case(p) for p in sorted(directory.glob("*.json"))]
 
 
-def posted_view(aggregator: object, diff: str, *, auto_approve: bool = True, cap: int = 25) -> dict:
+def posted_view(aggregator: object, diff: str, *, auto_approve: bool = True, cap: int = 25,
+                root: str | None = None) -> dict:
     """What `post` would publish for this aggregator output: each finding in order, inline or summary-only, and the decision.
 
     The decision defaults to "would policy approve these findings" (`auto_approve=True`): with approval off every
-    decision is COMMENT, and comparing it would check nothing.
+    decision is COMMENT, and comparing it would check nothing. `root` is the run's worktree, stripped from absolute
+    finding paths exactly as `post` strips it; golden cases hold repository-relative paths and pass none.
     """
-    findings, errors = validate_findings(finding_items(aggregator), reviewer="aggregator")
+    findings, errors = validate_findings(finding_items(aggregator), reviewer="aggregator", root=root)
     findings, errors = check_finding_paths(findings, errors, _ROOT, "aggregator")
     if errors:
         raise CodeCheckError("aggregator output invalid: " + "; ".join(errors[:5]))

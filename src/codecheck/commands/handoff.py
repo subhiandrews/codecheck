@@ -55,7 +55,7 @@ def build_handoff(ctx, run_id: str) -> dict:
     reviewer_raw, aggregator_raw = _raw_outputs(run_dir, meta)
     ctx.shadow.save_raw(run_id, {
         "reviewers": reviewer_raw, "panel": meta.get("panel"), "chunks": meta.get("chunks"), "base_ref": meta.get("base_ref"),
-        **({"aggregator": aggregator_raw} if aggregator_raw is not None else {}),
+        "root": meta.get("root"), **({"aggregator": aggregator_raw} if aggregator_raw is not None else {}),
     })
     folder = ctx.shadow.handoff_dir(run_id)
     transcript, transcript_reason, transcript_files, signals = _transcripts(ctx, run_id, folder)

@@ -11,6 +11,7 @@ from codecheck.evals.golden import (
     check_case,
     load_case,
     load_cases,
+    posted_view,
     run_replay,
 )
 
@@ -132,3 +133,12 @@ def test_decision_check_flips_when_blocking_findings_are_downgraded():
     assert check_case(case) == ["decision APPROVE, expected COMMENT"]
     case["expected_decision"] = "APPROVE"
     assert check_case(case) == []
+
+
+def test_posted_view_strips_the_run_root_like_post():
+    case = _seed()
+    root = "/work/trees/run-1"
+    absolute = {**case["aggregator"], "findings": [{**f, "file": f"{root}/{f['file']}"} for f in case["aggregator"]["findings"]]}
+    with pytest.raises(CodeCheckError, match="escapes the repository"):
+        posted_view(absolute, case["diff"])
+    assert posted_view(absolute, case["diff"], root=root) == posted_view(case["aggregator"], case["diff"])
