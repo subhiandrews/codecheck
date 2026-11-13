@@ -8,9 +8,9 @@ the pipeline posted for it as a human confirmed them. Replaying needs no network
 import json
 from pathlib import Path
 
-from codecheck.commands._common import check_finding_paths, finding_items
 from codecheck.core.diffmap import parse_diff
 from codecheck.core.findings import finding_id, validate_findings
+from codecheck.core.paths import check_finding_paths, finding_items
 from codecheck.core.pipeline import finalize_findings, plan_review
 from codecheck.core.policy import decide
 from codecheck.errors import CodeCheckError
