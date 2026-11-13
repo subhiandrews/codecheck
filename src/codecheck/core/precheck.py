@@ -10,48 +10,6 @@ from codecheck.shadow.scrub import scrub_text
 
 
 @dataclass(frozen=True, slots=True)
-class PrecheckResult:
-    proceed: bool
-    reason: str
-    files: tuple[str, ...] = ()
-    fingerprint: str = ""
-
-
-def _skip(reason: str) -> PrecheckResult:
-    return PrecheckResult(False, reason)
-
-
-def precheck_pr(
-    pr: PullRequest, files: Sequence[str], state: StateStore, *, ignore: Sequence[str], me: str, force: bool = False
-) -> PrecheckResult:
-    if pr.state != "open":
-        return _skip(f"PR is {pr.state}")
-    if pr.is_draft:
-        return _skip("PR is a draft")
-    if pr.author == me:
-        return _skip("own PR: use address-comments instead")
-    reviewable = filter_ignored(files, ignore)
-    if not reviewable:
-        return _skip("no reviewable files after ignore patterns")
-    if not force and state.get(f"review:{pr.ref}") == pr.head_sha:
-        return _skip(f"head {pr.head_sha[:8]} already reviewed")
-    return PrecheckResult(True, "ok", tuple(reviewable), pr.head_sha)
-
-
-def precheck_local(
-    files: Sequence[str], fingerprint: str, state_key: str, state: StateStore, *, ignore: Sequence[str], force: bool = False
-) -> PrecheckResult:
-    if not files:
-        return _skip("no changes against base")
-    reviewable = filter_ignored(files, ignore)
-    if not reviewable:
-        return _skip("no reviewable files after ignore patterns")
-    if not force and state.get(state_key) == fingerprint:
-        return _skip("unchanged since last review")
-    return PrecheckResult(True, "ok", tuple(reviewable), fingerprint)
-
-
-@dataclass(frozen=True, slots=True)
 class Reply:
     thread_id: str
     path: str
@@ -131,3 +89,49 @@ def cap_replies(replies: Sequence[Reply], max_threads: int = 20, max_chars: int 
             allowed.append(r.thread_id)
         out.append(Reply(r.thread_id, r.path, r.line, r.author, scrub_text(r.body[:max_chars]), r.created_at))
     return tuple(out)
+
+
+@dataclass(frozen=True, slots=True)
+class PrecheckResult:
+    proceed: bool
+    reason: str
+    files: tuple[str, ...] = ()
+    fingerprint: str = ""
+    replies: tuple[Reply, ...] = ()
+
+
+def _skip(reason: str) -> PrecheckResult:
+    return PrecheckResult(False, reason)
+
+
+def precheck_pr(
+    pr: PullRequest, files: Sequence[str], state: StateStore, *, ignore: Sequence[str], me: str, force: bool = False,
+    activity: Activity | None = None,
+) -> PrecheckResult:
+    if pr.state != "open":
+        return _skip(f"PR is {pr.state}")
+    if pr.is_draft:
+        return _skip("PR is a draft")
+    if pr.author == me:
+        return _skip("own PR: use address-comments instead")
+    reviewable = filter_ignored(files, ignore)
+    if not reviewable:
+        return _skip("no reviewable files after ignore patterns")
+    if not force:
+        verdict = review_verdict(pr, state, activity)
+        if verdict.kind in ("replies", "reviewed"):
+            return PrecheckResult(False, verdict.reason, replies=verdict.replies)
+    return PrecheckResult(True, "ok", tuple(reviewable), pr.head_sha)
+
+
+def precheck_local(
+    files: Sequence[str], fingerprint: str, state_key: str, state: StateStore, *, ignore: Sequence[str], force: bool = False
+) -> PrecheckResult:
+    if not files:
+        return _skip("no changes against base")
+    reviewable = filter_ignored(files, ignore)
+    if not reviewable:
+        return _skip("no reviewable files after ignore patterns")
+    if not force and state.get(state_key) == fingerprint:
+        return _skip("unchanged since last review")
+    return PrecheckResult(True, "ok", tuple(reviewable), fingerprint)

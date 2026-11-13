@@ -487,3 +487,66 @@ def test_label_failure_does_not_fail_post(tmp_path):
     code, res = call(ctx, "post", "--run", out["run_id"])
     assert code == 0 and res["posted"] is True and res["labeled"] is False
     assert len(provider.posted) == 1 and ctx.state.get(f"review:{pr.ref}") == pr.head_sha
+
+
+def _our_review(provider, pr, commit=None):
+    from codecheck.models import Review
+
+    provider.reviews[pr.ref] = [Review("me", commit or pr.head_sha, "2026-01-01T00:00:00Z", "COMMENTED")]
+
+
+def _reply_thread(body="please look again"):
+    from codecheck.models import Thread, ThreadComment
+
+    return Thread("T1", "app.py", 2, False, False, (
+        ThreadComment(1, "me", "nit", "2026-01-01T00:00:01Z"),
+        ThreadComment(2, "alice", body, "2026-01-02T00:00:00Z"),
+    ))
+
+
+def test_precheck_reports_replies_without_reviewing(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path)
+    ctx.state.set(f"review:{pr.ref}", pr.head_sha)
+    _our_review(provider, pr)
+    provider.threads[pr.ref] = [_reply_thread()]
+    _code, out = call(ctx, "precheck", "--mode", "pr", "--pr", str(pr.ref))
+    assert out["proceed"] is False and "1 reply on 1 of your threads" in out["reason"]
+    assert out["replies"][0]["body"] == "please look again" and out["replies"][0]["author"] == "alice"
+
+
+def test_precheck_with_wiped_state_skips_when_github_shows_our_review_at_head(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path)
+    _our_review(provider, pr)
+    _code, out = call(ctx, "precheck", "--mode", "pr", "--pr", str(pr.ref))
+    assert out["proceed"] is False and "already reviewed" in out["reason"] and out["replies"] == []
+
+
+def test_precheck_force_ignores_replies(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path)
+    ctx.state.set(f"review:{pr.ref}", pr.head_sha)
+    _our_review(provider, pr)
+    provider.threads[pr.ref] = [_reply_thread()]
+    _code, out = call(ctx, "precheck", "--mode", "pr", "--pr", str(pr.ref), "--force")
+    assert out["proceed"] is True and out["replies"] == []
+
+
+def test_post_incomplete_marks_head_incomplete_and_next_precheck_retries(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path, review=ReviewConfig(auto_approve=True))
+    out = run_pr_context(ctx, pr)
+    run_dir = Path(out["run_dir"])
+    write_findings(run_dir, {m: [] for m in out["panel"]["members"][1:]})  # skeptic never wrote a file
+    write_findings(run_dir, {"aggregator": {"findings": []}})
+    call(ctx, "ingest", "--run", out["run_id"])
+    _code, res = call(ctx, "post", "--run", out["run_id"])
+    assert res["incomplete"] is True
+    assert ctx.state.get(f"review-incomplete:{pr.ref}") == pr.head_sha
+    _our_review(provider, pr)  # GitHub now shows our review at this head
+    _code, again = call(ctx, "precheck", "--mode", "pr", "--pr", str(pr.ref))
+    assert again["proceed"] is True
+    out2 = call(ctx, "context", "--mode", "pr", "--pr", str(pr.ref))[1]
+    finish_review(ctx, out2)
+    call(ctx, "ingest", "--run", out2["run_id"])
+    _code, res2 = call(ctx, "post", "--run", out2["run_id"])
+    assert res2["incomplete"] is False
+    assert ctx.state.get(f"review-incomplete:{pr.ref}") is None
+    assert ctx.state.get(f"review:{pr.ref}") == pr.head_sha

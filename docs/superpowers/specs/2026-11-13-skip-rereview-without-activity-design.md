@@ -38,10 +38,10 @@ Take our latest submitted review on the PR from GitHub. Since it was posted:
 **Core function** in `core/precheck.py` (pure, no I/O): `review_activity(reviews, threads, head_sha, me)` returns the latest own review (commit, time), `new_commits` (head differs from that review's commit), and `replies`: comments by someone other than `me` and not a bot, created after the review's time, on threads whose first comment is ours. Replies on resolved or outdated threads count.
 
 **Wiring.**
-- `precheck --mode pr` and `list_work._consider` (review mode) call `list_reviews` and `list_threads` only after the cheap local check passes, and only when the PR is not already known to be new. Result for replies-only: `proceed: false`, reason as above, plus `replies: {threads, comments}`.
+- `precheck --mode pr` and `list_work._consider` (review mode) call `list_reviews` and `list_threads` when the local `review:<ref>` record is absent or equals the current head; when it holds a different head a new commit is certain and nothing extra is fetched. Result for replies-only: `proceed: false`, reason as above, plus `replies: {threads, comments}`.
 - `loop` reports replies-only PRs under `skipped` with that reason. The `review-pr` skill prints them as one line each and never reviews them.
 - If we have no review on GitHub at all, behavior is today's (review unless local state says this head was reviewed).
-- Local state `review:<ref>` stays: a match with the current head still short-circuits before any extra API calls.
+- Local state `review:<ref>` stays, but a match with the current head no longer short-circuits: activity is still fetched so replies can be surfaced. A `review-incomplete:<ref>` marker equal to the head forces a retry without fetching.
 
 **Replies-only, interactive path (added after review).** When `review-pr <PR>` is run with an argument and `precheck` reports replies-only:
 1. The skill reads the replies (the CLI returns them with thread path, line and text, capped in count and length) and gives a one-line recommendation with its reason, then asks yes or no. Recommend re-review when a reply disputes a finding, gives evidence, or asks a question the code could settle; recommend no when replies are acknowledgements, thanks or "will fix". The recommendation is the skill's judgment, never the CLI's.
