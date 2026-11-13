@@ -1,4 +1,16 @@
-"""Pure pieces of the hand-off: compare human comments with our findings, and narrate a run."""
+"""Pure pieces of the hand-off: compare human comments with our findings, and narrate a run.
+
+`handoff.json` (SCHEMA 1) holds, from the design's section 3: the run (`run_id`, `skill`, `mode`, `repo`, `pr`,
+`pr_url`, `head_sha`, `tool_version`, `config_hash`, `models`, `panel`, `blind`), each reviewer's ingest status
+(`reviewers`), the aggregated `findings` (ids and order as `post` gives them), the aggregator's `dropped` list, the
+`decision`, transcript `signals` (tool calls and errors, retries, permission denials, turns and output tokens per
+transcript file), `ignored_guidance` lines from the transcripts, the human `comparison` (or `comparison_reason`), and
+`transcript`, `transcript_reason`, `transcript_files`.
+
+Deliberately absent: per-reviewer tokens and duration (subagent transcripts are named by file, not by panel member,
+so they cannot be attributed reliably; the per-file counts in `signals` are what is known) and stale-PR retries (the
+skill restarts from `precheck` with a new run id, so one run cannot see them).
+"""
 
 import re
 from collections.abc import Sequence
@@ -76,4 +88,5 @@ def render_markdown(h: dict) -> str:
         lines.append(f"- {signals['tool_calls']} tool calls, {len(signals['tool_errors'])} failed, "
                      f"{signals['retries']} retries, {signals['permission_denials']} permission denials")
         lines += [f"- {a['name']}: {a['turns']} turns, {a['output_tokens']} output tokens" for a in signals["agents"]]
+    lines += [f"- Ignored guidance: {g}" for g in h.get("ignored_guidance") or []]
     return "\n".join(lines) + "\n"

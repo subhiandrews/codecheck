@@ -9,6 +9,8 @@ from pathlib import Path
 from codecheck.shadow.scrub import scrub_text
 
 _ERROR_CAP = 300
+_GUIDANCE_CAP = 20  # entries; each is cut to _ERROR_CAP characters
+_GUIDANCE = "ignored guidance:"
 
 
 def find_transcript(
@@ -57,10 +59,23 @@ def _result_text(content) -> str:
     return "" if content is None else str(content)
 
 
+def _guidance_lines(text: str, found: list[str]) -> None:
+    """Collect lines reporting ignored guidance (an agent's `done:` line), scrubbed, capped and without repeats."""
+    for line in text.splitlines():
+        if len(found) >= _GUIDANCE_CAP:
+            return
+        if _GUIDANCE in line.lower():
+            entry = scrub_text(line.strip())[:_ERROR_CAP]
+            if entry not in found:
+                found.append(entry)
+
+
 def extract_signals(paths: Sequence[Path]) -> dict:
+    """Deterministic counts from transcripts. `ignored_guidance` comes only from assistant text and tool results,
+    never from thinking blocks or user prompts."""
     out = {
         "tool_calls": 0, "tool_errors": [], "retries": 0,
-        "permission_denials": 0, "agents": [], "unreadable_lines": 0,
+        "permission_denials": 0, "agents": [], "unreadable_lines": 0, "ignored_guidance": [],
     }
     for path in paths:
         agent = {"name": path.stem, "tool_calls": 0, "tool_errors": 0, "turns": 0, "output_tokens": 0}
@@ -88,6 +103,8 @@ def extract_signals(paths: Sequence[Path]) -> dict:
                     tokens = usage.get("output_tokens") if isinstance(usage, dict) else 0
                     agent["output_tokens"] += tokens if isinstance(tokens, int) else 0
                     for b in blocks if isinstance(blocks, list) else []:
+                        if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str):
+                            _guidance_lines(b["text"], out["ignored_guidance"])
                         if isinstance(b, dict) and b.get("type") == "tool_use":
                             key = (str(b.get("name")), json.dumps(b.get("input"), sort_keys=True))
                             agent["tool_calls"] += 1
@@ -100,6 +117,7 @@ def extract_signals(paths: Sequence[Path]) -> dict:
                     for b in blocks if isinstance(blocks, list) else []:
                         if not (isinstance(b, dict) and b.get("type") == "tool_result"):
                             continue
+                        _guidance_lines(_result_text(b.get("content")), out["ignored_guidance"])
                         if not b.get("is_error"):
                             continue
                         key = uses.get(str(b.get("tool_use_id")), ("unknown", ""))
@@ -110,7 +128,7 @@ def extract_signals(paths: Sequence[Path]) -> dict:
                         if "permission" in text.lower():
                             out["permission_denials"] += 1
                         last_error = key
-            except (ValueError, AttributeError, TypeError):
+            except (ValueError, AttributeError, TypeError, RecursionError):  # RecursionError: absurdly deep JSON
                 out["unreadable_lines"] += 1
         out["agents"].append(agent)
     return out
@@ -129,8 +147,13 @@ def copy_scrubbed(paths: Sequence[Path], dest: Path) -> list[str]:
         if target.is_symlink():
             target.unlink()
         fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-        with os.fdopen(fd, "wb") as f:
-            os.chmod(target, 0o600)
+        try:
+            f = os.fdopen(fd, "wb")
+        except BaseException:
+            os.close(fd)
+            raise
+        with f:
+            os.fchmod(f.fileno(), 0o600)  # the descriptor, not the path: nothing can swap the file in between
             f.write(scrub_text(text).encode("utf-8"))
         written.append(path.name)
     return written

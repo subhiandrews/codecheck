@@ -302,3 +302,81 @@ def test_handoff_skips_comparison_when_the_head_moved(tmp_path):
     assert posted["stale"] is True
     code, res = call(ctx, "handoff", "--run", out["run_id"])
     assert code == 0 and res["handoff"] is True and "not posted" in res["comparison"]
+
+
+def _local_run_with(tmp_path, aggregated):
+    _, clone = make_origin_and_clone(tmp_path)
+    ctx = make_ctx(tmp_path, clone)
+    enable_handoff(ctx, tmp_path)
+    sh(clone, "checkout", "-b", "feat")
+    commit_file(clone, "app.py", "x = 1\ny = 2\n", "add app")
+    _code, out = call(ctx, "context", "--mode", "local", "--skill", "review-local")
+    finish_review(ctx, out, {"skeptic": [FINDING]}, aggregated)
+    call(ctx, "ingest", "--run", out["run_id"])
+    call(ctx, "post", "--run", out["run_id"])
+    return ctx, out
+
+
+def test_handoff_records_config_hash_and_scrubbed_dropped(tmp_path):
+    from codecheck.shadow.recorder import config_hash
+
+    secret = "ghp_" + "D4" * 20
+    dropped = [{"reviewers": ["skeptic"], "file": "app.py", "line": 1, "message": f"dup {secret}", "reason": "duplicate"}]
+    ctx, out = _local_run_with(tmp_path, {"findings": [FINDING], "dropped": dropped})
+    assert call(ctx, "handoff", "--run", out["run_id"])[1]["handoff"] is True
+    _folder, data = handoff_files(ctx, out["run_id"])
+    assert data["config_hash"] == config_hash(ctx.config)
+    assert [(d["file"], d["line"], d["reason"]) for d in data["dropped"]] == [("app.py", 1, "duplicate")]
+    assert secret not in json.dumps(data)
+
+
+def test_handoff_dropped_is_empty_without_an_aggregator_list(tmp_path):
+    ctx, out = _local_run_with(tmp_path, [FINDING])  # a bare list: no dropped section at all
+    call(ctx, "handoff", "--run", out["run_id"])
+    assert handoff_files(ctx, out["run_id"])[1]["dropped"] == []
+
+
+def test_handoff_records_ignored_guidance_from_the_transcript(tmp_path):
+    ctx, out = local_run(tmp_path)
+    session = tmp_path / "claude" / "projects" / "proj"
+    sub = session / "s1" / "subagents"
+    sub.mkdir(parents=True)
+    (session / "s1.jsonl").write_text(json.dumps({"type": "user", "message": {"content": f"RUN_DIR={out['run_id']}"}}) + "\n")
+    done = {"type": "assistant", "message": {"content": [
+        {"type": "thinking", "thinking": "ignored guidance: only thinking about it"},
+        {"type": "text", "text": "done: 1 kept, 0 dropped; ignored guidance: rule 3 contradicts the diff"}]}}
+    (sub / "agent-1.jsonl").write_text(json.dumps(done) + "\n")
+    call(ctx, "handoff", "--run", out["run_id"])
+    folder, data = handoff_files(ctx, out["run_id"])
+    assert data["ignored_guidance"] == ["done: 1 kept, 0 dropped; ignored guidance: rule 3 contradicts the diff"]
+    assert "rule 3 contradicts the diff" in (folder / "handoff.md").read_text()
+
+
+def test_handoff_without_transcript_has_no_ignored_guidance(tmp_path):
+    ctx, out = local_run(tmp_path)
+    call(ctx, "handoff", "--run", out["run_id"])
+    assert handoff_files(ctx, out["run_id"])[1]["ignored_guidance"] == []
+
+
+def test_handoff_findings_match_post_order_and_ids(tmp_path):
+    critical = {"file": "app.py", "line": 1, "severity": "critical", "category": "bug", "message": "x is wrong"}
+    ctx, _provider, pr = pr_setup(tmp_path)
+    enable_handoff(ctx, tmp_path)
+    out = run_pr_context(ctx, pr)
+    finish_review(ctx, out, {"skeptic": [FINDING]}, {"findings": [FAR, FINDING, critical], "dropped": []})
+    call(ctx, "ingest", "--run", out["run_id"])
+    assert call(ctx, "post", "--run", out["run_id"])[1]["posted"]
+    call(ctx, "handoff", "--run", out["run_id"])
+    data = handoff_files(ctx, out["run_id"])[1]
+    assert [(f["severity"], f["line"]) for f in data["findings"]] == [("critical", 1), ("warning", 2), ("suggestion", 500)]
+    posted = [r["id"] for r in ctx.shadow.read(out["run_id"]) if r.get("type") == "finding"]
+    assert [f["id"] for f in data["findings"]] == posted
+
+
+def test_handoff_schema_note_lists_present_and_absent_fields():
+    import codecheck.shadow.handoff as mod
+
+    doc = mod.__doc__
+    for field in ("config_hash", "dropped", "ignored_guidance", "signals", "comparison"):
+        assert field in doc, field
+    assert "per-reviewer tokens" in doc and "stale-PR retries" in doc

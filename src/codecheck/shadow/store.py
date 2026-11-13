@@ -16,8 +16,13 @@ SCHEMA = 1
 def write_private(path: Path, text: str) -> None:
     """Write text to a 0600 file, never through a symlink. The caller scrubs: a text scrub of JSON can break it."""
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, "wb") as fh:
-        os.chmod(path, 0o600)
+    try:
+        fh = os.fdopen(fd, "wb")
+    except BaseException:
+        os.close(fd)
+        raise
+    with fh:
+        os.fchmod(fh.fileno(), 0o600)  # the descriptor, not the path: nothing can swap the file in between
         fh.write(text.encode("utf-8"))
 
 
@@ -36,7 +41,7 @@ class ShadowStore:
         line = json.dumps(rec, ensure_ascii=False, sort_keys=True) + "\n"
         fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
         try:
-            os.chmod(path, 0o600)
+            os.fchmod(fd, 0o600)
             size = os.fstat(fd).st_size
             if size and os.pread(fd, 1, size - 1) != b"\n":
                 line = "\n" + line

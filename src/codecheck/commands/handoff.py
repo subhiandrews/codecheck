@@ -12,16 +12,13 @@ from codecheck.commands._common import (
     read_json,
 )
 from codecheck.core.diffmap import parse_diff
-from codecheck.core.findings import (
-    attach_anchors,
-    finding_id,
-    merge_exact_duplicates,
-    validate_findings,
-)
+from codecheck.core.findings import finding_id, validate_findings
+from codecheck.core.pipeline import finalize_findings
 from codecheck.models import PRRef
 from codecheck.runids import check_run_id
 from codecheck.shadow.collect import collect_outcomes
 from codecheck.shadow.handoff import SCHEMA, build_comparison, render_markdown
+from codecheck.shadow.recorder import config_hash
 from codecheck.shadow.scrub import scrub, scrub_text
 from codecheck.shadow.store import write_private
 from codecheck.shadow.transcripts import (
@@ -59,6 +56,7 @@ def build_handoff(ctx, run_id: str) -> dict:
     })
     folder = ctx.shadow.handoff_dir(run_id)
     transcript, transcript_reason, transcript_files, signals = _transcripts(ctx, run_id, folder)
+    ignored_guidance = signals.pop("ignored_guidance", []) if signals else []
     records = ctx.shadow.read(run_id)
     decision = next((r for r in reversed(records) if r.get("type") == "decision"), None)
     pr_url = comparison = None
@@ -74,9 +72,10 @@ def build_handoff(ctx, run_id: str) -> dict:
     handoff = {
         "schema": SCHEMA, "run_id": run_id, "skill": meta.get("skill"), "mode": meta.get("mode"), "repo": meta.get("repo"),
         "pr": meta.get("pr"), "pr_url": pr_url, "head_sha": meta.get("head_sha"), "tool_version": __version__,
-        "models": meta.get("models"), "panel": meta.get("panel"), "blind": bool(meta.get("blind")),
+        "config_hash": config_hash(ctx.config), "models": meta.get("models"), "panel": meta.get("panel"), "blind": bool(meta.get("blind")),
         "reviewers": _reviewers(run_dir, meta, ingest), "signals": signals,
-        "findings": _findings(run_dir, meta, aggregator_raw),
+        "findings": _findings(run_dir, meta, aggregator_raw), "dropped": _dropped(aggregator_raw),
+        "ignored_guidance": ignored_guidance,
         "decision": {k: decision.get(k) for k in ("event", "reason", "incomplete")} if decision else None,
         "comparison": comparison, "comparison_reason": comparison_reason,
         "transcript": transcript, "transcript_reason": transcript_reason, "transcript_files": transcript_files,
@@ -120,16 +119,21 @@ def _reviewers(run_dir: Path, meta: dict, ingest: dict | None) -> dict:
 
 
 def _findings(run_dir: Path, meta: dict, raw) -> list[dict]:
-    """The aggregated findings with the same ids `post` gives them (anchored against the diff, exact repeats merged)."""
+    """The aggregated findings with the ids and order `post` gives them (the same `finalize_findings` step)."""
     if raw is None:
         return []
     findings, errors = validate_findings(finding_items(raw), reviewer="aggregator", root=meta.get("root"))
     findings, _ = check_finding_paths(findings, errors, meta.get("root"), "aggregator")
     diff = run_dir / "diff.patch"
     files = parse_diff(diff.read_text(encoding="utf-8")) if diff.exists() else {}
-    merged = merge_exact_duplicates(attach_anchors(findings, files))
     return [{"id": finding_id(f), "file": f.file, "line": f.line, "severity": f.severity.value, "category": f.category}
-            for f in merged]
+            for f in finalize_findings(findings, files)]
+
+
+def _dropped(raw) -> list:
+    """The aggregator's own `dropped` list as it wrote it (the whole hand-off is scrubbed before it is written)."""
+    dropped = raw.get("dropped") if isinstance(raw, dict) else None
+    return list(dropped) if isinstance(dropped, list) else []
 
 
 def _projects_dir(ctx) -> Path:
