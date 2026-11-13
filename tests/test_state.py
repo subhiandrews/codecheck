@@ -82,3 +82,51 @@ def test_select_work_skips_processed_caps_and_does_not_starve(tmp_path):
     changed = [WorkItem(PRRef("o/r", 1), "fp1-new", "x"), *items[1:]]
     assert select_work(changed, s, "review", 5)[0].ref.number == 1
     assert select_work(items, s, "babysit", 5)[0].ref.number == 1  # modes are independent
+
+
+def test_release_by_non_owner_and_double_release_are_noops(tmp_path):
+    path = tmp_path / "loop.lock"
+    a, b = FileLock(path), FileLock(path)
+    assert a.acquire()
+    b.release()  # never acquired
+    assert path.exists()
+    a.release()
+    assert not path.exists()
+    assert b.acquire()
+    a.release()  # double release by old owner must not delete b's lock
+    assert path.exists()
+    b.release()
+    b.release()
+    assert not path.exists()
+
+
+def test_reclaimed_holder_release_does_not_delete_new_holders_lock(tmp_path):
+    path = tmp_path / "loop.lock"
+    old = FileLock(path)
+    assert old.acquire()
+    new = FileLock(path, stale_after=10, now=lambda: path.stat().st_mtime + 100)
+    assert new.acquire()
+    old.release()
+    assert path.exists()
+
+
+def test_stale_reclaim_race_loser_does_not_take_fresh_lock(tmp_path):
+    path = tmp_path / "loop.lock"
+    FileLock(path).acquire()
+    winner = FileLock(path)
+    swapped = []
+
+    def clock():
+        # Between the loser's stat and its rename, another process reclaims and re-acquires.
+        if not swapped:
+            swapped.append(True)
+            path.unlink()
+            assert winner.acquire()
+        return path.stat().st_mtime + 100
+
+    loser = FileLock(path, stale_after=10, now=clock)
+    assert not loser.acquire()
+    assert path.read_text() == winner._token
+    assert not list(tmp_path.glob("*.reclaim.*"))
+    winner.release()
+    assert not path.exists()

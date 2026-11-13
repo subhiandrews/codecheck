@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import time
+import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,26 +57,60 @@ class StateStore:
 class FileLock:
     def __init__(self, path: Path, *, stale_after: float = 7200, now: Callable[[], float] = time.time) -> None:
         self.path, self.stale_after, self.now = Path(path), stale_after, now
+        self._token: str | None = None
 
-    def acquire(self, _retry: bool = True) -> bool:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+    def _create(self) -> bool:
+        token = f"{os.getpid()}:{uuid.uuid4().hex}"
         try:
             fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
-            try:
-                age = self.now() - self.path.stat().st_mtime
-            except FileNotFoundError:
-                return self.acquire(False) if _retry else False
-            if age < self.stale_after or not _retry:
-                return False
+            return False
+        try:
+            os.write(fd, token.encode())
+        except BaseException:
+            os.close(fd)
             self.path.unlink(missing_ok=True)
-            return self.acquire(False)
-        os.write(fd, str(os.getpid()).encode())
+            raise
         os.close(fd)
+        self._token = token
         return True
 
+    def acquire(self) -> bool:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if self._create():
+            return True
+        try:
+            seen = self.path.stat()
+        except FileNotFoundError:
+            return self._create()
+        if self.now() - seen.st_mtime < self.stale_after:
+            return False
+        # Reclaim: move the lock aside atomically, then confirm it is the same stale file we judged.
+        aside = self.path.with_name(f"{self.path.name}.reclaim.{uuid.uuid4().hex}")
+        try:
+            os.rename(self.path, aside)
+        except FileNotFoundError:
+            return self._create()
+        try:
+            moved = aside.stat()
+            if (moved.st_ino, moved.st_mtime_ns) == (seen.st_ino, seen.st_mtime_ns):
+                return self._create()
+            # We grabbed a lock that was freshly re-acquired; put it back (fails if someone else created one).
+            with contextlib.suppress(OSError):
+                os.link(aside, self.path)
+            return False
+        finally:
+            aside.unlink(missing_ok=True)
+
     def release(self) -> None:
-        self.path.unlink(missing_ok=True)
+        token, self._token = self._token, None
+        if token is None:
+            return
+        try:
+            if self.path.read_text(encoding="utf-8") == token:
+                self.path.unlink(missing_ok=True)
+        except (FileNotFoundError, UnicodeDecodeError):
+            pass
 
 
 def local_fingerprint(merge_base: str, head: str, diff: str) -> str:
