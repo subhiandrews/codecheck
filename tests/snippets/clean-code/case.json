@@ -1,0 +1,24 @@
+{
+  "name": "clean-code",
+  "calibrated": false,
+  "base": {
+    "series.py": "\"\"\"Helpers for numeric series.\"\"\"\n\n\ndef mean(values):\n    \"\"\"Arithmetic mean; raises ValueError on an empty series.\"\"\"\n    if not values:\n        raise ValueError(\"mean of an empty series\")\n    return sum(values) / len(values)\n"
+  },
+  "change": {
+    "series.py": "\"\"\"Helpers for numeric series.\"\"\"\n\n\ndef mean(values):\n    \"\"\"Arithmetic mean; raises ValueError on an empty series.\"\"\"\n    if not values:\n        raise ValueError(\"mean of an empty series\")\n    return sum(values) / len(values)\n\n\ndef gaps(values):\n    \"\"\"Differences between neighbours: gaps([1, 4, 9]) == [3, 5]. Fewer than two values give [].\"\"\"\n    return [values[i + 1] - values[i] for i in range(len(values) - 1)]\n"
+  },
+  "expected": [],
+  "must_not_report": [
+    {
+      "file": "series.py",
+      "line": 13,
+      "category": [
+        "correctness",
+        "bug",
+        "logic",
+        "off-by-one",
+        "boundary"
+      ]
+    }
+  ]
+}
