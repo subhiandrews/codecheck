@@ -142,3 +142,30 @@ def test_posted_view_strips_the_run_root_like_post():
     with pytest.raises(CodeCheckError, match="escapes the repository"):
         posted_view(absolute, case["diff"])
     assert posted_view(absolute, case["diff"], root=root) == posted_view(case["aggregator"], case["diff"])
+
+
+def test_check_case_ignores_extra_keys_in_expected_entries():
+    # A hand-edited expected entry may carry a note; only file, line, category, severity and inline are compared.
+    case = _seed()
+    case["expected_posted"][0]["note"] = "checked by hand"
+    assert check_case(case) == []
+
+
+def test_check_case_still_reports_a_real_reordering():
+    case = _seed()
+    case["expected_posted"] = list(reversed(case["expected_posted"]))
+    problems = check_case(case)
+    assert len(problems) == 1 and "different order" in problems[0], problems
+
+
+@pytest.mark.parametrize("name", ["summary_body", "comment_body"])
+def test_replay_renders_the_review_and_reports_a_render_crash(monkeypatch, name):
+    from codecheck.evals import golden
+
+    def boom(*a, **k):
+        raise ValueError("render broke")
+
+    assert check_case(_seed()) == []
+    monkeypatch.setattr(golden, name, boom)
+    problems = check_case(_seed())
+    assert len(problems) == 1 and "render" in problems[0] and "render broke" in problems[0], problems

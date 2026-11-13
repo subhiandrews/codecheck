@@ -191,6 +191,8 @@ def test_run_snippet_builds_isolated_argv(tmp_path):
     n = len(UNSET_GIT_REPO_VARS)
     assert argv[:n + 4] == ("env", *UNSET_GIT_REPO_VARS, f"CODE_CHECK_STATE_DIR={w}/state",
                             f"CODE_CHECK_SHADOW__STORE={w}/shadow", "CODE_CHECK_SHADOW__HANDOFF=1")
+    # A user's review.security must not add an Opus security agent to every snippet.
+    assert "CODE_CHECK_REVIEW__SECURITY=0" in argv[n + 1:argv.index("claude")]
     tools = ctx.config.run_pr.review_allowed_tools
     claude = argv[argv.index("claude"):]
     assert claude == ("claude", "-p", REVIEW_PROMPT, "--plugin-dir", str(REPO), "--output-format", "json",
@@ -250,6 +252,18 @@ def test_run_snippet_reports_a_failed_claude_run(tmp_path):
     _seed_shadow(workdir / "shadow", aggregator={"findings": [FOUND]})
     out = run_snippet(_ctx(tmp_path, LiveRunner(fake)), SNIPPET, workdir)
     assert out["result"]["passed"] is False and out["claude"]["ok"] is False and "boom" in out["error"]
+
+
+@pytest.mark.usefixtures("git_env")
+def test_run_snippet_fails_when_every_aggregator_finding_is_invalid(tmp_path):
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    fake = FakeRunner().on_prefix("env", stdout=OK)
+    _seed_shadow(workdir / "shadow", aggregator={"findings": [{**FOUND, "severity": "nope"}], "dropped": []})
+    clean = {**SNIPPET, "expected": []}  # would pass vacuously on no findings
+    out = run_snippet(_ctx(tmp_path, LiveRunner(fake)), clean, workdir)
+    assert out["got"] == [] and out["invalid"]
+    assert out["result"]["passed"] is False and out["error"] == "every aggregator finding was invalid"
 
 
 # --- end to end through the CLI ----------------------------------------------------------------------------------

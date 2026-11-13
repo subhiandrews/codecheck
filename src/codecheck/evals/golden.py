@@ -1,4 +1,4 @@
-"""Replay golden cases through the deterministic part of a review (validate, merge, anchor, cap, policy).
+"""Replay golden cases through the deterministic part of a review (validate, merge, anchor, cap, policy, render).
 
 A golden case stores a real (or hand-built) run's raw reviewer and aggregator outputs with the diff, and the findings
 the pipeline posted for it as a human confirmed them. Replaying needs no network and no model, so it runs in
@@ -13,6 +13,7 @@ from codecheck.core.findings import finding_id, validate_findings
 from codecheck.core.paths import check_finding_paths, finding_items
 from codecheck.core.pipeline import finalize_findings, plan_review
 from codecheck.core.policy import decide
+from codecheck.core.render import comment_body, summary_body
 from codecheck.errors import CodeCheckError
 
 SCHEMA_VERSION = 1
@@ -74,6 +75,12 @@ def posted_view(aggregator: object, diff: str, *, auto_approve: bool = True, cap
     plan = plan_review(findings, diff_files, already=set(), cap=cap)
     inline = {finding_id(f) for f, _ in plan.inline}
     decision = decide(findings, auto_approve=auto_approve, is_draft=False)
+    try:  # render as `post` does and discard the text: a crash here would break a real post
+        for f, a in plan.inline:
+            comment_body(f, finding_id(f), relocated=a.relocated)
+        summary_body("replay", findings, plan.not_inline, decision)
+    except Exception as e:  # reported as a replay problem naming the error, not a traceback
+        raise CodeCheckError(f"rendering the review failed: {type(e).__name__}: {e}") from e
     return {"findings": [{"file": f.file, "line": f.line, "category": f.category, "severity": f.severity.value,
                           "inline": finding_id(f) in inline} for f in findings],
             "decision": decision.event}
@@ -91,6 +98,11 @@ def _key(f: dict) -> tuple:
     return f.get("file"), f.get("line"), f.get("category")
 
 
+def _projected(f: dict) -> tuple:
+    """What replay compares; any other key in a hand-edited expected entry is ignored."""
+    return f.get("file"), f.get("line"), f.get("category"), f.get("severity"), f.get("inline")
+
+
 def _compare(actual: list[dict], expected: list[dict]) -> list[str]:
     problems: list[str] = []
     remaining = list(expected)
@@ -105,7 +117,7 @@ def _compare(actual: list[dict], expected: list[dict]) -> list[str]:
         if match.get("inline") != got["inline"]:
             problems.append(f"{_name(got)}: posted {_where(got['inline'])}, expected {_where(match.get('inline'))}")
     problems.extend(f"expected finding {_name(e)} was not posted" for e in remaining)
-    if not problems and actual != expected:
+    if not problems and [_projected(f) for f in actual] != [_projected(f) for f in expected]:
         problems.append("posted findings are in a different order than expected: "
                         + ", ".join(_name(f) for f in actual))
     return problems
