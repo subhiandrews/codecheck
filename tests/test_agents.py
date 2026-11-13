@@ -79,7 +79,28 @@ def test_done_lines_allow_reporting_ignored_guidance():
         assert "ignored guidance" in (REPO / "skills" / skill / "SKILL.md").read_text()
 
 
-def test_reviewer_prompts_read_untrusted_replies():
+def test_reviewer_prompts_read_existing_comments():
     files = render_all(ModelsConfig())
     for name in ("architect.md", "lang-go.md", "security.md", "deep-reviewer.md"):
-        assert "RUN_DIR/replies.md" in files[name] and "untrusted" in files[name]
+        assert "RUN_DIR/existing-comments.md" in files[name] and "untrusted" in files[name]
+        assert "replies.md" not in files[name]
+
+
+def test_reviewers_must_open_every_owned_patch():
+    body = render_all(ModelsConfig())["skeptic.md"]
+    assert "unread:" in body and "release notes" in body
+
+
+def test_style_findings_need_precedent():
+    body = render_all(ModelsConfig())["skeptic.md"]
+    assert "precedent" in body and "at most `suggestion`" in body
+
+
+def test_pragmatist_checks_release_notes_and_test_quality():
+    body = render_all(ModelsConfig())["pragmatist.md"]
+    assert "release note" in body and "one behavior per test" in body
+
+
+def test_aggregator_knows_existing_comments_and_new_drop_reasons():
+    body = render_all(ModelsConfig())["aggregator.md"]
+    assert "existing-comments.md" in body and "already-raised" in body and "unsupported-style" in body
