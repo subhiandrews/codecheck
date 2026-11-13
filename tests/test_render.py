@@ -1,4 +1,5 @@
 from codecheck.core.render import (
+    ATTRIBUTION,
     RUN_MARKER,
     comment_body,
     marker,
@@ -47,3 +48,17 @@ def test_render_local():
     text = render_local([f(suggestion="y")], 2, "base may be stale")
     assert "1 new, 2 already shown" in text and "[Warning] a.py:3 (bug) Off by one" in text
     assert "base may be stale" in text and "y" in text
+
+
+def test_summary_footer_present_when_attribution_on():
+    body = summary_body("abcdef012345", [], [], Decision("COMMENT", "r"), attribution=True)
+    assert ATTRIBUTION in body
+    assert body.index(ATTRIBUTION) < body.index("<!-- code-check:run:")
+
+
+def test_summary_footer_absent_by_default():
+    assert ATTRIBUTION not in summary_body("abcdef012345", [], [], Decision("COMMENT", "r"))
+
+
+def test_inline_comment_has_no_attribution():
+    assert ATTRIBUTION not in comment_body(f(), "abc123def456")
