@@ -34,16 +34,21 @@ until mkdir "$LOCK" 2>/dev/null; do
     ''|*[!0-9]*) ;;
     *)
       if [ $(( $(date +%s) - beat )) -gt "$STALE" ]; then
-        # Rename is atomic, so only one breaker wins. If what we moved is not the lock we
-        # judged stale (a new holder took over meanwhile), put it back.
-        if mv "$LOCK" "$LOCK.stale.$$" 2>/dev/null; then
-          if [ "$(cat "$LOCK.stale.$$/owner" 2>/dev/null || true)" = "$seen" ]; then
-            rm -rf "$LOCK.stale.$$"
-          elif [ ! -e "$LOCK" ]; then
-            mv "$LOCK.stale.$$" "$LOCK" 2>/dev/null || rm -rf "$LOCK.stale.$$"
-          else
-            rm -rf "$LOCK.stale.$$"
+        # Breaking is serialized by a short-lived break lock; under it the lock is re-read and
+        # removed only if it is still the exact stale one we saw, so a fresh lock is never removed.
+        if mkdir "$LOCK.break" 2>/dev/null; then
+          date +%s > "$LOCK.break/t"
+          if [ "$(cat "$LOCK/owner" 2>/dev/null || true)" = "$seen" ] && [ "$(cat "$LOCK/beat" 2>/dev/null || true)" = "$beat" ]; then
+            rm -rf "$LOCK"
           fi
+          rm -rf "$LOCK.break"
+        else
+          bt="$(cat "$LOCK.break/t" 2>/dev/null || true)"
+          case "$bt" in
+            ''|*[!0-9]*) ;;
+            *) [ $(( $(date +%s) - bt )) -le 60 ] || rm -rf "$LOCK.break" ;;
+          esac
+          sleep 1
         fi
         continue
       fi
