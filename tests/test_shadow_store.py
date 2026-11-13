@@ -122,3 +122,20 @@ def test_append_after_truncated_line_keeps_next_record(tmp_path):
     (tmp_path / f"{RID}.jsonl").write_text('{"type": "run", "tru')
     store.append(RID, {"type": "decision"})
     assert [r["type"] for r in store.read(RID)] == ["decision"]
+
+
+@pytest.mark.parametrize("text", [
+    "a" * 200_000,
+    "a_" * 100_000,
+    "token" * 40_000,
+    'password: "' * 20_000,
+    "-----BEGIN PRIVATE KEY-----" * 8_000,
+    "eyJ-" * 50_000,
+    "eyJ." * 50_000,
+    "secret=" * 30_000,
+])
+def test_scrub_text_is_fast_on_pathological_input(text):
+    import time
+    start = time.perf_counter()
+    scrub_text(text)
+    assert time.perf_counter() - start < 2.0
