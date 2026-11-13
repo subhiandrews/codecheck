@@ -5,6 +5,6 @@
   "type": "module",
   "bin": { "code-check-plugin": "installer/cli.js" },
   "files": [".claude-plugin", "hooks", "bin", "skills", "agents", "src", "pyproject.toml", "installer", "README.md"],
-  "scripts": { "test": "node --test tests-node/" },
+  "scripts": { "test": "node --test tests-node/*.test.js" },
   "engines": { "node": ">=20" }
 }

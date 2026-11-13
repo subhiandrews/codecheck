@@ -13,7 +13,7 @@ Python 3.14 (CI asserts >= 3.14.10). The venv lives in the repo at `.venv`.
 ```
 .venv/bin/pytest -q                              # all Python tests
 .venv/bin/pytest tests/test_loop.py::test_name   # one test
-node --test tests-node/                          # installer tests (Node >= 20)
+node --test tests-node/*.test.js                 # installer tests (Node >= 20)
 .venv/bin/python -m codecheck <subcommand>       # run the CLI (also: bin/code-check wrapper)
 .venv/bin/python -m codecheck gen-agents --out agents   # regenerate agents/*.md
 ```
