@@ -5,7 +5,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "bin": { "code-check-plugin": "installer/cli.js" },
-  "files": [".claude-plugin", "hooks", "bin", "skills", "agents", "src", "pyproject.toml", "installer", "README.md", "LICENSE", "NOTICE"],
+  "files": [".claude-plugin", "hooks", "bin", "skills", "agents", "src", "pyproject.toml", "VERSION", "installer", "README.md", "LICENSE", "NOTICE"],
   "scripts": { "test": "node --test tests-node/*.test.js" },
   "engines": { "node": ">=20" }
 }
