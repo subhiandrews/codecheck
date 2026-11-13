@@ -833,8 +833,7 @@ class AddressConfig:
 class RunPrConfig:
     claude_bin: str = "claude"
     timeout_seconds: int = 1800
-    max_turns: int = 60
-    permission_mode: str = "acceptEdits"
+    permission_mode: str = "dontAsk"
     allowed_tools: tuple[str, ...] = ("Read", "Grep", "Glob", "Write", "Edit", "Agent", "Bash")
     review_prompt: str = (
         "Use the code-check review-pr skill on {ref}. Run unattended: never ask questions; "
@@ -5751,7 +5750,7 @@ def test_dry_run_shows_the_headless_command_and_marks_nothing(tmp_path):
     code, out = call(ctx, "run-pr", "--mode", "review", "--pr", str(refs[0]), "--dry-run")
     argv = out["argv"]
     assert argv[:2] == ["claude", "-p"] and "o/r#1" in argv[2] and "review-pr" in argv[2]
-    assert "--output-format" in argv and "json" in argv and "--max-turns" in argv
+    assert "--output-format" in argv and "json" in argv and "--permission-mode" in argv and "dontAsk" in argv
     assert claude_calls(fake) == [] and ctx.state.get(f"review:{refs[0]}") is None
 
 
@@ -5882,13 +5881,13 @@ def run_one(ctx, mode: str, ref, fingerprint: str | None = None, dry_run: bool =
     cfg = ctx.config.run_pr
     template = cfg.review_prompt if mode == "review" else cfg.babysit_prompt
     argv = [cfg.claude_bin, "-p", template.format(ref=ref), "--output-format", "json",
-            "--max-turns", str(cfg.max_turns), "--permission-mode", cfg.permission_mode,
+            "--permission-mode", cfg.permission_mode, "--permission-prompts", "none",
             "--allowedTools", ",".join(cfg.allowed_tools)]
     if dry_run:
         return {"pr": str(ref), "argv": argv}
     cwd = ctx.git.cwd if safe_repo(ctx) == ref.repo else managed_clone(ctx, ref.repo).cwd
     started = time.time()
-    res = ctx.runner.run(argv, cwd=cwd, timeout=cfg.timeout_seconds)
+    res = ctx.runner.run(argv, cwd=cwd, timeout=cfg.timeout_seconds, input="")  # input="" closes stdin: claude -p otherwise waits ~3s for it
     parsed = parse_result(res.stdout, res.returncode, res.stderr)
     duration = round(time.time() - started, 1)
     if fingerprint:
@@ -7027,8 +7026,7 @@ max_ci_attempts = 3
 [run_pr]
 claude_bin = "claude"
 timeout_seconds = 1800
-max_turns = 60
-permission_mode = "acceptEdits"
+permission_mode = "dontAsk"
 allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit", "Agent", "Bash"]
 # review_prompt and babysit_prompt are the prompts given to each headless process; {ref} is the PR.
 ```
