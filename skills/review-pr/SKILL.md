@@ -16,7 +16,7 @@ Reviews a teammate's PR (never your own) and posts a single review with inline c
 
 ## With a PR argument
 
-1. Run `code-check precheck --mode pr --pr <PR>`. If `proceed` is false, say the `reason` in one sentence and STOP.
+1. Run `code-check precheck --mode pr --pr <PR>`. If `proceed` is false and `replies` is empty, say the `reason` in one sentence and STOP. If `proceed` is false and `replies` is non-empty, show them (author, `path:line`, one-line gist), give a one-line recommendation with its reason, and ask yes or no whether to re-review with the replies as context. Recommend yes when a reply disputes a finding, gives evidence, or asks a question the code could settle; recommend no when the replies are acknowledgements, thanks or "will fix". On yes, run `code-check precheck --mode pr --pr <PR> --force`, then continue with step 2 and add `--with-replies` to `context`. On no, or if the question cannot be asked or is denied (headless), say the `reason` in one sentence and STOP.
 2. Run `code-check context --mode pr --pr <PR> --skill review-pr` (add `--security` only if the user passed `security`). Note `run_id`, `run_dir`, `panel`, `chunks`. If `base_warning` is set, mention it in your report.
 3. Dispatch the panel in parallel: one message containing one Agent call per member of `panel.members`, with `subagent_type` `code-check:<member>`. Each prompt is only `RUN_DIR=<run_dir>`; for a `lang-<language>` member also add `Files you own: <panel.languages[language], comma-separated>`. With more than one chunk, repeat per chunk, one after another.
 4. Run `code-check ingest --run <run_id>`.
@@ -31,5 +31,5 @@ Run `code-check loop --mode review` with the Bash tool's `run_in_background` opt
 
 ## Rules
 
-- Never ask questions when running unattended; the CLI refuses your own PRs, drafts, closed PRs and already-reviewed heads.
+- Never ask questions when running unattended, with one exception: the replies-only question in step 1 of the PR flow; the CLI refuses your own PRs, drafts, closed PRs and already-reviewed heads.
 - Do not edit the PR's code; this skill only reviews.

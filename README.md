@@ -17,7 +17,7 @@ Findings are **Critical**, **Warning** or **Suggestion** and are posted inline o
 precheck (no LLM) → fetch latest base → context → reviewer panel (parallel) → ingest → aggregator → post (inline) → shadow record
 ```
 
-If there is nothing to review, the run stops after `precheck` and spends zero tokens.
+If there is nothing to review, the run stops after `precheck` and spends zero tokens. A PR we already reviewed is skipped until a new commit lands. Replies on our threads are reported but never trigger a review unattended; an interactive `review-pr <PR>` shows them and offers a reply-aware re-review (`context --with-replies`). GitHub (our latest submitted review on the PR) is the source of truth for "already reviewed"; the local state record is only a shortcut, so a fresh machine does not re-review.
 
 ## Install
 
@@ -205,7 +205,7 @@ Run the skills under Claude Code's `/loop`:
 /loop 2m /code-check:review-local        # your working tree, only reviewed again when it changes
 ```
 
-Each iteration lists the PRs with something new (no LLM), takes at most `loop.max_prs_per_iteration`, and runs each one in its **own headless `claude -p` process, one after another**. Your session only sees a one-line summary per PR, so its context does not fill up. The skills start `code-check loop` with the Bash tool's `run_in_background` option, because an iteration can take far longer than a foreground Bash call is allowed to run (and the test-gated `push` is run with the 10-minute maximum timeout).
+Each iteration lists the PRs with something new (no LLM; a PR where only replies landed since our review is listed under `skipped` and does not count against `loop.max_prs_per_iteration`), takes at most `loop.max_prs_per_iteration`, and runs each one in its **own headless `claude -p` process, one after another**. Your session only sees a one-line summary per PR, so its context does not fill up. The skills start `code-check loop` with the Bash tool's `run_in_background` option, because an iteration can take far longer than a foreground Bash call is allowed to run (and the test-gated `push` is run with the 10-minute maximum timeout).
 
 An iteration holds a per-mode lock file under `state_dir/locks`, and an iteration that starts while the previous one is still running is skipped. The lock records the holder's process id and is refreshed before each PR and every minute while the iteration runs. Another iteration takes it over only if the holder process is gone (for example it was killed) or the lock has not been refreshed for longer than a full iteration can take (`max_prs_per_iteration` x (`run_pr.timeout_seconds` + 15 minutes for a clone) + 15 minutes). On SIGTERM, SIGHUP or Ctrl-C the iteration releases its lock before exiting. If the loop process is killed with SIGKILL while a headless `claude` child is running, that child is not stopped and can overlap with the next iteration's run.
 
@@ -272,6 +272,7 @@ Start with `code-check doctor` (or `node installer/cli.js doctor`).
 | `gh auth` fails | `gh auth login`, or set `GH_TOKEN` for unattended runs |
 | "no changes against base" | Nothing differs from `<remote>/<base>`; commit or edit something, or check `base_branch` |
 | "already reviewed" / "unchanged since last review" | Nothing changed since the last run; pass `--force` to `precheck` to review anyway |
+| "N replies on T of your threads, no new commits since your review" | Only replies landed; the loop never re-reviews on a reply. Run `review-pr <PR>` interactively to see them and choose a reply-aware re-review, or `precheck --force` |
 | "base may be stale" | The fetch failed (offline or no access); results compare against the last fetched base |
 | "run this from a clone of OWNER/REPO" | `review-pr` needs a local clone of the PR's repository |
 | A loop does nothing | It only acts on PRs with something new; check `code-check list-work --mode review` (and its `skipped` list) |
