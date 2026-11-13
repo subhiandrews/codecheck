@@ -66,3 +66,11 @@ def test_from_base_reads_regular_blob_and_refuses_symlink_blob(tmp_path):
     sh(clone2, "add", "CODE_CHECK.md", "target.txt")
     sh(clone2, "commit", "-m", "symlink")
     assert from_base(Git(SubprocessRunner(), clone2), "HEAD") is None
+
+
+def test_from_base_non_utf8_blob_is_absent(tmp_path):
+    _, clone = make_origin_and_clone(_sub(tmp_path, "bad"))
+    (clone / "CODE_CHECK.md").write_bytes(b"\xff\xfe\x00bad")
+    sh(clone, "add", "CODE_CHECK.md")
+    sh(clone, "commit", "-m", "binary guidance")
+    assert from_base(Git(SubprocessRunner(), clone), "HEAD") is None

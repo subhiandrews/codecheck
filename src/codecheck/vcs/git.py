@@ -98,7 +98,7 @@ class Git:
     def show_file(self, ref: str, path: str) -> str | None:
         """Contents of `path` at `ref` if it is a regular-file blob, else None.
 
-        Symlinks, submodules, trees, and missing refs/paths all give None."""
+        Symlinks, submodules, trees, missing refs/paths and non-UTF-8 content all give None."""
         _safe(ref)
         res = self._run("ls-tree", "--full-tree", ref, "--", path)
         if res.returncode != 0:
@@ -107,7 +107,11 @@ class Git:
         if len(meta) != 3 or meta[0] not in ("100644", "100755") or meta[1] != "blob":
             return None
         shown = self._run("show", f"{ref}:{path}")
-        return shown.stdout if shown.returncode == 0 else None
+        if shown.returncode != 0:
+            return None
+        # The runner decodes with errors="replace", so undecodable bytes surface as U+FFFD;
+        # treat such a blob as non-text rather than hand lossy content on.
+        return None if "\ufffd" in shown.stdout else shown.stdout
 
     def toplevel(self) -> Path:
         return Path(self._out("rev-parse", "--show-toplevel"))
