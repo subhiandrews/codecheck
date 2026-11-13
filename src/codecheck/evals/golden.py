@@ -57,8 +57,12 @@ def load_cases(directory: Path) -> list[dict]:
     return [load_case(p) for p in sorted(directory.glob("*.json"))]
 
 
-def posted_view(aggregator: object, diff: str, *, auto_approve: bool = False, cap: int = 25) -> dict:
-    """What `post` would publish for this aggregator output: each finding in order, inline or summary-only, and the decision."""
+def posted_view(aggregator: object, diff: str, *, auto_approve: bool = True, cap: int = 25) -> dict:
+    """What `post` would publish for this aggregator output: each finding in order, inline or summary-only, and the decision.
+
+    The decision defaults to "would policy approve these findings" (`auto_approve=True`): with approval off every
+    decision is COMMENT, and comparing it would check nothing.
+    """
     findings, errors = validate_findings(finding_items(aggregator), reviewer="aggregator")
     findings, errors = check_finding_paths(findings, errors, _ROOT, "aggregator")
     if errors:

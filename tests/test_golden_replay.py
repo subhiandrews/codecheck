@@ -118,3 +118,17 @@ def test_eval_replay_command_passes_on_the_repo_cases(tmp_path):
 def test_eval_requires_a_mode(tmp_path, capsys):
     with pytest.raises(SystemExit):
         call(make_ctx(tmp_path, tmp_path), "eval")
+
+
+def test_decision_check_flips_when_blocking_findings_are_downgraded():
+    # The seed's COMMENT comes from its critical (and warning) findings, not from auto-approve being off.
+    case = _seed()
+    for f in case["aggregator"]["findings"]:
+        f["severity"] = "suggestion"
+    # all suggestions now, so they post in file/line order rather than by severity
+    case["expected_posted"] = sorted(({**f, "severity": "suggestion"} for f in case["expected_posted"]),
+                                     key=lambda f: (f["file"], f["line"]))
+    assert case["expected_decision"] == "COMMENT"
+    assert check_case(case) == ["decision APPROVE, expected COMMENT"]
+    case["expected_decision"] = "APPROVE"
+    assert check_case(case) == []
