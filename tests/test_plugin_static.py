@@ -308,6 +308,39 @@ def test_concurrent_bootstraps_install_once(tmp_path):
     assert (tmp_path / "log").read_text().count("pip install") == 1
 
 
+def _racy_mkdir(bindir: Path, barrier: Path, parties: int) -> None:
+    # A mkdir that checks for existence and then creates, treating "already exists" as success (as a
+    # create_dir_all-style implementation does). The barrier makes every party pass the check before
+    # any of them creates, so the race that is rare on a real machine happens on every run.
+    barrier.mkdir()
+    shim = bindir / "mkdir"
+    shim.write_text(
+        "#!/bin/sh\n"
+        'for a; do last="$a"; done\n'
+        'case "$last" in *.lock|*.lock.break) ;; *) exec /bin/mkdir "$@" ;; esac\n'
+        '[ ! -e "$last" ] || { echo "mkdir: $last: File exists" >&2; exit 1; }\n'
+        f': > "{barrier}/$$"\n'
+        f'while [ "$(ls "{barrier}" | wc -l)" -lt {parties} ]; do sleep 0.05; done\n'
+        '/bin/mkdir -p "$last"\n'
+    )
+    shim.chmod(0o755)
+
+
+def test_lock_holds_even_when_mkdir_is_not_atomic(tmp_path):
+    # Regression: on CI (ubuntu-26.04) four concurrent bootstraps all got past the mkdir lock and
+    # three then aborted with "lost the install lock". Ownership must not rely on mkdir being an
+    # atomic test-and-set; exactly one process may install and every process must succeed.
+    _stub_uv(tmp_path / "bin")
+    _racy_mkdir(tmp_path / "bin", tmp_path / "barrier", 4)
+    env = _env(tmp_path)
+    procs = [subprocess.Popen([str(REPO / "hooks/ensure-runtime.sh")], env=env, stderr=subprocess.PIPE, text=True)
+             for _ in range(4)]
+    results = [(p.wait(timeout=60), p.stderr.read()) for p in procs]
+    assert [rc for rc, _ in results] == [0, 0, 0, 0], results
+    assert (tmp_path / "log").read_text().count("pip install") == 1
+    assert (tmp_path / "data/venv/bin/python").exists() and not (tmp_path / "data/.lock").exists()
+
+
 def _wait_for(pred, timeout=15):
     end = time.time() + timeout
     while time.time() < end:

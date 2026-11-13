@@ -21,12 +21,17 @@ mkdir -p "$DATA" || { echo "code-check: cannot create $DATA" >&2; exit 1; }
 LOCK="$DATA/.lock"
 TOKEN="$$-$(date +%s)"
 owns_lock() { [ "$(cat "$LOCK/owner" 2>/dev/null || true)" = "$TOKEN" ]; }
+# Take lock directory $1 with token $2. mkdir alone is not a reliable test-and-set: a mkdir that
+# checks for existence and then creates, treating "already exists" as success, lets several racers
+# all "create" the same directory. The lock belongs to whoever creates the owner file inside it;
+# the shell's noclobber redirection opens it with O_EXCL, so exactly one racer wins.
+claim() { mkdir "$1" 2>/dev/null && ( set -C; printf '%s' "$2" > "$1/owner" ) 2>/dev/null; }
 
 BREAK_STALE="${CODE_CHECK_BREAK_STALE_SECS:-60}"
 waited=0
 nobeat=0
 brk=0
-until mkdir "$LOCK" 2>/dev/null; do
+until claim "$LOCK" "$TOKEN"; do
   if [ ! -e "$LOCK" ]; then
     echo "code-check: cannot create lock $LOCK (is $DATA writable?)" >&2
     exit 1
@@ -61,7 +66,7 @@ until mkdir "$LOCK" 2>/dev/null; do
       [ $(( $(date +%s) - beat )) -le "$STALE" ] || stale=1
       ;;
   esac
-  if [ "$stale" = 1 ] && mkdir "$LOCK.break" 2>/dev/null; then
+  if [ "$stale" = 1 ] && claim "$LOCK.break" "$TOKEN"; then
     # Under the break mutex, remove the lock only if it is still the exact stale one we saw,
     # so a fresh lock is never removed.
     if [ "$(cat "$LOCK/owner" 2>/dev/null || true)" = "$seen" ] && [ "$(cat "$LOCK/beat" 2>/dev/null || true)" = "$beat" ]; then
@@ -73,7 +78,6 @@ until mkdir "$LOCK" 2>/dev/null; do
   fi
   sleep 1
 done
-printf '%s' "$TOKEN" > "$LOCK/owner"
 date +%s > "$LOCK/beat"
 
 NEW="$VENV.new.$$"
