@@ -59,3 +59,24 @@ test('a tampered receipt cannot delete paths outside the Claude skills/agents di
   assert.ok(fs.existsSync(path.join(env.CLAUDE_CONFIG_DIR, 'skills')));
   assert.ok(logs.some((m) => /refusing/.test(m)));
 });
+
+test('uninstall runs claude removals whenever the receipt recorded a marketplace, whatever the mode', () => {
+  const { env, root } = makeEnv();
+  install({ exec: fakeExec(), env });
+  const rp = path.join(root, 'data', 'receipt.json');
+  const r = JSON.parse(fs.readFileSync(rp, 'utf8'));
+  r.mode = 'copy';
+  r.marketplaceAdded = true;
+  fs.writeFileSync(rp, JSON.stringify(r));
+  const exec = fakeExec();
+  uninstall({ exec, env });
+  assert.ok(exec.lines().some((l) => l.includes('plugin marketplace remove code-check')));
+});
+
+test('uninstall refuses to delete plugin/venv without an ownership marker', () => {
+  const { env, root } = makeEnv();
+  fs.mkdirSync(path.join(root, 'data', 'venv'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'data', 'venv', 'keep'), 'x');
+  uninstall({ exec: fakeExec(), env });
+  assert.ok(fs.existsSync(path.join(root, 'data', 'venv', 'keep')));
+});

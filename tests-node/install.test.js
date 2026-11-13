@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { install } from '../installer/lib/install.js';
+import { uninstall } from '../installer/lib/uninstall.js';
 import { fakeExec, makeEnv } from './helpers.js';
 
 test('plugin mode: stages the payload, sets up the runtime, registers through the claude CLI', () => {
@@ -88,4 +89,84 @@ test('relative or option-like data dirs are resolved to absolute paths', () => {
   } finally {
     process.chdir(cwd);
   }
+});
+
+test('copy mode never clobbers user-owned skills/agents (incl. symlinks) and records only what it created', () => {
+  const { env, root } = makeEnv();
+  const agents = path.join(env.CLAUDE_CONFIG_DIR, 'agents');
+  const skills = path.join(env.CLAUDE_CONFIG_DIR, 'skills');
+  fs.mkdirSync(agents, { recursive: true });
+  fs.mkdirSync(path.join(skills, 'review-pr'), { recursive: true });
+  fs.writeFileSync(path.join(agents, 'architect.md'), 'mine');
+  fs.writeFileSync(path.join(skills, 'review-pr', 'SKILL.md'), 'mine too');
+  const target = path.join(root, 'elsewhere.md');
+  fs.writeFileSync(target, 'linked');
+  fs.symlinkSync(target, path.join(agents, 'skeptic.md'));
+  const logs = [];
+  const r = install({ exec: fakeExec({ claude: false }), env, log: (m) => logs.push(m) });
+  assert.equal(fs.readFileSync(path.join(agents, 'architect.md'), 'utf8'), 'mine');
+  assert.equal(fs.readFileSync(path.join(skills, 'review-pr', 'SKILL.md'), 'utf8'), 'mine too');
+  assert.equal(fs.readFileSync(target, 'utf8'), 'linked');
+  assert.ok(!r.files.includes(path.join(agents, 'architect.md')));
+  assert.ok(!r.files.includes(path.join(skills, 'review-pr')));
+  assert.ok(!r.files.includes(path.join(agents, 'skeptic.md')));
+  assert.ok(r.files.includes(path.join(agents, 'aggregator.md')));
+  assert.ok(logs.filter((m) => /not managed by code-check/.test(m)).length >= 3);
+  // re-install and uninstall leave the foreign entries alone
+  install({ exec: fakeExec({ claude: false }), env });
+  uninstall({ exec: fakeExec({ claude: false }), env });
+  assert.equal(fs.readFileSync(path.join(agents, 'architect.md'), 'utf8'), 'mine');
+  assert.equal(fs.readFileSync(path.join(skills, 'review-pr', 'SKILL.md'), 'utf8'), 'mine too');
+  assert.ok(fs.lstatSync(path.join(agents, 'skeptic.md')).isSymbolicLink());
+  assert.equal(fs.existsSync(path.join(agents, 'aggregator.md')), false);
+});
+
+test('mode switch copy -> plugin removes the previously copied files', () => {
+  const { env } = makeEnv();
+  install({ exec: fakeExec({ claude: false }), env });
+  const copied = path.join(env.CLAUDE_CONFIG_DIR, 'agents', 'aggregator.md');
+  assert.ok(fs.existsSync(copied));
+  const r = install({ exec: fakeExec(), env });
+  assert.equal(r.mode, 'plugin');
+  assert.equal(fs.existsSync(copied), false);
+  assert.equal(fs.existsSync(path.join(env.CLAUDE_CONFIG_DIR, 'skills', 'review-pr')), false);
+});
+
+test('mode switch plugin -> copy unregisters the old plugin', () => {
+  const { env } = makeEnv();
+  install({ exec: fakeExec(), env });
+  const exec = fakeExec({ claudeFailsOn: ['plugin marketplace add'] });
+  const r = install({ exec, env });
+  assert.equal(r.mode, 'copy');
+  assert.ok(exec.lines().some((l) => l.includes('plugin uninstall code-check@code-check')));
+  assert.ok(exec.lines().some((l) => l.includes('plugin marketplace remove code-check')));
+});
+
+test('re-install with a corrupt receipt still works', () => {
+  const { env, root } = makeEnv();
+  install({ exec: fakeExec({ claude: false }), env });
+  fs.writeFileSync(path.join(root, 'data', 'receipt.json'), '{not json');
+  assert.equal(install({ exec: fakeExec({ claude: false }), env }).mode, 'copy');
+});
+
+test('marketplace add succeeds but plugin install fails: marketplace is removed and state is consistent', () => {
+  const { env, root } = makeEnv();
+  const exec = fakeExec({ claudeFailsOn: ['plugin install'] });
+  const r = install({ exec, env });
+  const lines = exec.lines();
+  const addIdx = lines.findIndex((l) => l.includes('plugin marketplace add'));
+  const instIdx = lines.findIndex((l) => l.includes('plugin install'));
+  assert.ok(lines.slice(instIdx + 1).some((l) => l.includes('plugin marketplace remove code-check')));
+  assert.ok(addIdx < instIdx);
+  assert.equal(r.mode, 'copy');
+  const receipt = JSON.parse(fs.readFileSync(path.join(root, 'data', 'receipt.json'), 'utf8'));
+  assert.equal(receipt.marketplaceAdded, false);
+});
+
+test('refuses to replace an unowned <data>/plugin directory', () => {
+  const { env, root } = makeEnv();
+  fs.mkdirSync(path.join(root, 'data', 'plugin'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'data', 'plugin', 'precious'), 'x');
+  assert.throws(() => install({ exec: fakeExec(), env }), /refusing to replace/);
+  assert.ok(fs.existsSync(path.join(root, 'data', 'plugin', 'precious')));
 });

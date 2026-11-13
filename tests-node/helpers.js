@@ -2,8 +2,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+const roots = [];
+process.on('exit', () => {
+  for (const r of roots) fs.rmSync(r, { recursive: true, force: true });
+});
+
 export function makeEnv() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'code-check-'));
+  roots.push(root);
   const home = path.join(root, 'home');
   fs.mkdirSync(home, { recursive: true });
   return {
