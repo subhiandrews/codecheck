@@ -4,6 +4,7 @@ from codecheck.commands._common import first_line, local_key, safe_repo, write_j
 from codecheck.config import expand_path, model_for
 from codecheck.core.chunk import chunk_files
 from codecheck.core.diffmap import parse_diff
+from codecheck.core.guidance import from_base, from_worktree
 from codecheck.core.panel import detect_language, filter_ignored, select_panel
 from codecheck.core.state import ensure_private_dir, local_fingerprint
 from codecheck.errors import CodeCheckError
@@ -44,6 +45,7 @@ def _build(args, ctx, run_id, run_dir) -> dict:
         diff = ctx.git.local_diff(merge_base)
         head = ctx.git.head_sha()
         root = ctx.git.toplevel()
+        guidance = from_worktree(root)
         meta.update(root=str(root), head_sha=head, pr=None, repo=safe_repo(ctx), title=None, description=None,
                     fingerprint=local_fingerprint(merge_base, head, diff), local_key=local_key(ctx), worktree=False)
     else:
@@ -58,6 +60,7 @@ def _build(args, ctx, run_id, run_dir) -> dict:
         if not ctx.git.fetch(cfg.remote, refspec):
             raise CodeCheckError(f"could not fetch the head of {ref}")
         diff = ctx.git.diff(f"{sync.base_ref}...{local_ref}")
+        guidance = from_base(ctx.git, sync.base_ref)  # base branch only: a PR cannot change the rules it is judged by
         root = expand_path(cfg.state_dir) / "worktrees" / run_id
         root.parent.mkdir(parents=True, exist_ok=True)
         meta.update(root=str(root), head_sha=ctx.git.rev_parse(local_ref), pr=str(ref), repo=ref.repo,
@@ -69,6 +72,9 @@ def _build(args, ctx, run_id, run_dir) -> dict:
         raise CodeCheckError("no reviewable files; run `code-check precheck` first")
     if meta["worktree"]:
         ctx.git.worktree_add(root, local_ref)
+    if guidance is not None:
+        (run_dir / "CODE_CHECK.md").write_text(guidance.text, encoding="utf-8")
+    meta["guidance"] = guidance.to_meta() if guidance else None
     (run_dir / "diff.patch").write_text(diff, encoding="utf-8")
     files = []
     for idx, path in enumerate(reviewable):
@@ -101,4 +107,5 @@ def _build(args, ctx, run_id, run_dir) -> dict:
     if ctx.shadow is not None:
         ctx.guarded(record_run, ctx.shadow, meta, diff, cfg)
     return {"run_id": run_id, "run_dir": str(run_dir), "root": meta["root"], "mode": args.mode,
-            "base_warning": sync.warning, "files": len(files), "chunks": chunks, "panel": meta["panel"]}
+            "base_warning": sync.warning, "files": len(files), "chunks": chunks, "panel": meta["panel"],
+            "guidance": meta["guidance"]}
