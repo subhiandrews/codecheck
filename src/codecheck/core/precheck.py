@@ -87,7 +87,7 @@ def cap_replies(replies: Sequence[Reply], max_threads: int = 20, max_chars: int 
             if len(allowed) >= max_threads:
                 continue
             allowed.append(r.thread_id)
-        out.append(Reply(r.thread_id, r.path, r.line, r.author, scrub_text(r.body[:max_chars]), r.created_at))
+        out.append(Reply(r.thread_id, r.path, r.line, r.author, scrub_text(r.body)[:max_chars], r.created_at))
     return tuple(out)
 
 

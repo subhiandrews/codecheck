@@ -69,8 +69,8 @@ def finding_items(raw):
     return raw["findings"] if isinstance(raw, dict) and "findings" in raw else raw
 
 
-def pr_activity(ctx, ref, pr):
+def pr_activity(ctx, ref, pr, me: str | None = None):
     """Our latest review and replies on our threads, fetched only when they could change the verdict."""
     if not needs_activity(pr, ctx.state):
         return None
-    return review_activity(ctx.provider.list_reviews(ref), ctx.provider.list_threads(ref), ctx.provider.whoami())
+    return review_activity(ctx.provider.list_reviews(ref), ctx.provider.list_threads(ref), me or ctx.provider.whoami())

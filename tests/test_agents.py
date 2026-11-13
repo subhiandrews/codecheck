@@ -77,3 +77,9 @@ def test_done_lines_allow_reporting_ignored_guidance():
     assert agg in files["aggregator.md"]
     for skill in ("review-local", "review-pr"):
         assert "ignored guidance" in (REPO / "skills" / skill / "SKILL.md").read_text()
+
+
+def test_reviewer_prompts_read_untrusted_replies():
+    files = render_all(ModelsConfig())
+    for name in ("architect.md", "lang-go.md", "security.md", "deep-reviewer.md"):
+        assert "RUN_DIR/replies.md" in files[name] and "untrusted" in files[name]

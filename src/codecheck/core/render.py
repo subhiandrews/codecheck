@@ -80,6 +80,6 @@ def render_replies(replies: Sequence[Reply]) -> str:
     for r in replies:
         if r.thread_id != current:
             current = r.thread_id
-            lines += ["", f"## {r.path}:{r.line}"]
+            lines += ["", f"## {r.path}" if r.line is None else f"## {r.path}:{r.line}"]
         lines.append(f"- {r.author} ({r.created_at}): {r.body}")
     return "\n".join(lines) + "\n"

@@ -139,3 +139,10 @@ def test_cap_replies_limits_threads_chars_and_scrubs():
     assert len(cap_replies([reply(body="x" * 2000)])[0].body) == 1000
     token = "ghp_" + "a1" * 18
     assert token not in cap_replies([reply(body=f"key {token} end")])[0].body
+
+
+def test_cap_replies_scrubs_before_truncating():
+    token = "ghp_" + "a1" * 18
+    body = "x" * 985 + " " + token
+    out = cap_replies([reply(body=body)])[0].body
+    assert "ghp_" not in out and len(out) <= 1000

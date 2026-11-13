@@ -40,7 +40,7 @@ def _consider(ctx, mode: str, ref, me: str) -> tuple[WorkItem | None, str | None
             return None, None
         if pr.is_cross_repo and not ctx.config.loop.review_forks:
             return None, "fork-based PR: not reviewed unattended (set loop.review_forks = true to include forks)"
-        verdict = review_verdict(pr, ctx.state, pr_activity(ctx, ref, pr))
+        verdict = review_verdict(pr, ctx.state, pr_activity(ctx, ref, pr, me))
         if verdict.kind == "replies":
             return None, verdict.reason
         if verdict.kind == "reviewed":

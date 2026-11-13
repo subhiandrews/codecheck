@@ -332,3 +332,17 @@ def test_workspace_survives_option_like_base_ref(tmp_path):
     ctx.provider.prs[pr.ref] = replace(pr, base_ref="--upload-pack=x")
     code, out = call(ctx, "workspace", "--pr", str(pr.ref))
     assert code == 0 and out["guidance"] is None
+
+
+def test_pr_activity_uses_given_identity_without_refetching(tmp_path):
+    from clihelp import make_ctx
+
+    from codecheck.commands._common import pr_activity
+
+    provider = FakeProvider()
+    pr = provider.add_pr()
+    ctx = make_ctx(tmp_path, tmp_path, provider=provider)
+    calls = []
+    provider.whoami = lambda: calls.append(1) or "me"
+    pr_activity(ctx, pr.ref, pr, "me")
+    assert calls == []
