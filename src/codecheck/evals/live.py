@@ -8,6 +8,7 @@ store or review bookkeeping. This costs real tokens; it is local developer tooli
 """
 
 import json
+import re
 from pathlib import Path, PurePosixPath
 
 from codecheck.commands.run_pr import parse_result
@@ -24,8 +25,15 @@ REVIEW_PROMPT = ("Use the code-check review-local skill. Run unattended: never a
                  "finish with one line summarizing the outcome.")
 PROBE_TIMEOUT = 60
 SEVERITIES = ("critical", "warning", "suggestion")
+# Variables that make git work on another repository than the one in its cwd, or inject config. Git exports several
+# of them to hooks (a pre-commit hook runs this eval), so they are unset for the setup and for the headless review:
+# otherwise the setup would commit into, and push from, the user's own repository.
+GIT_REPO_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+                 "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX", "GIT_CONFIG",
+                 "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_QUARANTINE_PATH")
+UNSET_GIT_REPO_VARS = tuple(a for name in GIT_REPO_VARS for a in ("-u", name))
 # Fixed identity and no user hooks or signing for the throwaway repositories, whatever the user's git config says.
-_GIT = ("git", "-c", "user.name=code-check eval", "-c", "user.email=eval@code-check.invalid",
+_GIT = ("env", *UNSET_GIT_REPO_VARS, "git", "-c", "user.name=code-check eval", "-c", "user.email=eval@code-check.invalid",
         "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "-c", "init.defaultBranch=main")
 
 
@@ -38,11 +46,22 @@ def plugin_root(env) -> Path:
 # --- snippets ----------------------------------------------------------------------------------------------------
 
 
+# Code points HFS+ ignores in names, so `.g\u200cit` is `.git` there (git's own core.protectHFS list).
+_HFS_IGNORED = re.compile("[\u200c-\u200f\u202a-\u202e\u206a-\u206f\ufeff]")
+
+
+def _is_git_dir_name(part: str) -> bool:
+    """`.git` however a filesystem may spell it: any case (APFS and NTFS default to case-insensitive), with
+    HFS-ignored characters or trailing dots and spaces (NTFS), or as an 8.3 short name like `GIT~1`."""
+    name = _HFS_IGNORED.sub("", part).lower().rstrip(". ")
+    return name == ".git" or re.fullmatch(r"git~\d+", name) is not None
+
+
 def _path_ok(rel: object) -> bool:
     if not isinstance(rel, str) or not rel or "\0" in rel or "\\" in rel:
         return False
     p = PurePosixPath(rel)
-    return not p.is_absolute() and all(part not in ("..", ".git") for part in p.parts)
+    return not p.is_absolute() and all(part != ".." and not _is_git_dir_name(part) for part in p.parts)
 
 
 def _category_ok(value: object) -> bool:
@@ -157,7 +176,7 @@ def _git(ctx, cwd: Path, *args: str) -> None:
 
 def _write_files(repo: Path, files: dict) -> None:
     for rel, text in files.items():
-        target = contained(repo, rel)
+        target = contained(repo, rel) if _path_ok(rel) else None
         if target is None:  # load_snippets already refused these; this also stops a symlink in the base
             raise CodeCheckError(f"snippet path {rel!r} escapes the repository")
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -187,7 +206,7 @@ def review_argv(ctx, workdir: Path) -> list[str]:
                # The throwaway repository's base is origin/main, whatever the user configured.
                "CODE_CHECK_REMOTE=origin", "CODE_CHECK_BASE_BRANCH=main"]
     # The prompt comes first: --allowedTools and --add-dir are variadic and would swallow a later positional.
-    return ["env", *isolate, _claude_bin(ctx), "-p", REVIEW_PROMPT, "--plugin-dir", str(root),
+    return ["env", *UNSET_GIT_REPO_VARS, *isolate, _claude_bin(ctx), "-p", REVIEW_PROMPT, "--plugin-dir", str(root),
             "--output-format", "json", "--permission-mode", cfg.permission_mode, "--permission-prompts", "none",
             "--add-dir", str(workdir), "--allowedTools", *cfg.review_allowed_tools]
 

@@ -10,7 +10,9 @@ from fakes import FakeRunner, HybridRunner
 from codecheck.errors import CodeCheckError
 from codecheck.evals.live import (
     DEFAULT_SNIPPETS,
+    GIT_REPO_VARS,
     REVIEW_PROMPT,
+    UNSET_GIT_REPO_VARS,
     claude_reachable,
     load_snippets,
     plugin_root,
@@ -47,7 +49,37 @@ def _seed_shadow(store_dir: Path, run_id: str = "abcdef123456", aggregator=None,
     store.save_raw(run_id, data)
 
 
-class ReviewingRunner(HybridRunner):
+def _command(argv) -> list[str]:
+    """argv without an `env` prefix (its `-u NAME` pairs and `NAME=value` assignments)."""
+    argv = list(argv)
+    if not argv or argv[0] != "env":
+        return argv
+    i = 1
+    while i < len(argv):
+        if argv[i] == "-u":
+            i += 2
+        elif "=" in argv[i] and not argv[i].startswith("-"):
+            i += 1
+        else:
+            break
+    return argv[i:]
+
+
+class LiveRunner(HybridRunner):
+    """Real git (also behind an `env` prefix, which then really runs); everything else scripted."""
+
+    def __init__(self, fake: FakeRunner) -> None:
+        super().__init__(fake)
+        self.git_calls: list[list[str]] = []
+
+    def run(self, args, *, input=None, cwd=None, timeout=None):
+        if _command(args)[:1] == ["git"]:
+            self.git_calls.append(list(args))
+            return self.real.run(args, input=input, cwd=cwd, timeout=timeout)
+        return self.fake.run(args, input=input, cwd=cwd, timeout=timeout)
+
+
+class ReviewingRunner(LiveRunner):
     """Real git; a fake `claude` that, for a review, leaves hand-off output where the env assignments point."""
 
     def __init__(self, fake: FakeRunner, findings: list[dict]) -> None:
@@ -55,7 +87,7 @@ class ReviewingRunner(HybridRunner):
         self.findings = findings
 
     def run(self, args, *, input=None, cwd=None, timeout=None):
-        if args and args[0] == "env":
+        if args and args[0] == "env" and _command(args)[:1] == ["claude"]:
             shadow = next(a.split("=", 1)[1] for a in args if a.startswith("CODE_CHECK_SHADOW__STORE="))
             _seed_shadow(Path(shadow), aggregator={"findings": self.findings, "dropped": []})
         return super().run(args, input=input, cwd=cwd, timeout=timeout)
@@ -149,21 +181,22 @@ def test_run_snippet_builds_isolated_argv(tmp_path):
     workdir.mkdir()
     fake = FakeRunner().on_prefix("env", stdout=OK)
     _seed_shadow(workdir / "shadow", aggregator={"findings": [FOUND], "dropped": []})
-    ctx = _ctx(tmp_path, HybridRunner(fake))
+    ctx = _ctx(tmp_path, LiveRunner(fake))
 
     out = run_snippet(ctx, SNIPPET, workdir)
 
     [call_] = fake.calls  # git ran for real; the only scripted command is the review
     argv = call_.argv
     w = str(workdir.resolve())
-    assert argv[:4] == ("env", f"CODE_CHECK_STATE_DIR={w}/state", f"CODE_CHECK_SHADOW__STORE={w}/shadow",
-                        "CODE_CHECK_SHADOW__HANDOFF=1")
+    n = len(UNSET_GIT_REPO_VARS)
+    assert argv[:n + 4] == ("env", *UNSET_GIT_REPO_VARS, f"CODE_CHECK_STATE_DIR={w}/state",
+                            f"CODE_CHECK_SHADOW__STORE={w}/shadow", "CODE_CHECK_SHADOW__HANDOFF=1")
     tools = ctx.config.run_pr.review_allowed_tools
     claude = argv[argv.index("claude"):]
     assert claude == ("claude", "-p", REVIEW_PROMPT, "--plugin-dir", str(REPO), "--output-format", "json",
                       "--permission-mode", "dontAsk", "--permission-prompts", "none", "--add-dir", w,
                       "--allowedTools", *tools)
-    assert all(a.startswith("CODE_CHECK_") for a in argv[1:argv.index("claude")])
+    assert all(a.startswith("CODE_CHECK_") for a in argv[n + 1:argv.index("claude")])
     # Nothing from the snippet reaches argv.
     text = " ".join(argv)
     for needle in ("tiny-bug", "calc", "new_mod", "return"):
@@ -188,7 +221,7 @@ def test_run_snippet_uses_claude_plugin_root_and_strips_worktree_root(tmp_path):
     workdir.mkdir()
     fake = FakeRunner().on_prefix("env", stdout=OK)
     _seed_shadow(workdir / "shadow", root="/wt/x", aggregator=[{**FOUND, "file": "/wt/x/pkg/calc.py"}])
-    ctx = _ctx(tmp_path, HybridRunner(fake), env={"CLAUDE_PLUGIN_ROOT": str(tmp_path / "plug")})
+    ctx = _ctx(tmp_path, LiveRunner(fake), env={"CLAUDE_PLUGIN_ROOT": str(tmp_path / "plug")})
     out = run_snippet(ctx, SNIPPET, workdir)
     argv = fake.calls[0].argv
     assert argv[argv.index("--plugin-dir") + 1] == str((tmp_path / "plug").resolve())
@@ -205,7 +238,7 @@ def test_run_snippet_without_handoff_output_fails_the_case(tmp_path):
     workdir.mkdir()
     fake = FakeRunner().on_prefix("env", stdout=OK)
     clean = {**SNIPPET, "expected": []}  # would pass vacuously on no findings
-    out = run_snippet(_ctx(tmp_path, HybridRunner(fake)), clean, workdir)
+    out = run_snippet(_ctx(tmp_path, LiveRunner(fake)), clean, workdir)
     assert out["result"]["passed"] is False and "no hand-off" in out["error"] and out["got"] == []
 
 
@@ -215,7 +248,7 @@ def test_run_snippet_reports_a_failed_claude_run(tmp_path):
     workdir.mkdir()
     fake = FakeRunner().on_prefix("env", stdout=json.dumps({"is_error": True, "result": "boom"}), returncode=1)
     _seed_shadow(workdir / "shadow", aggregator={"findings": [FOUND]})
-    out = run_snippet(_ctx(tmp_path, HybridRunner(fake)), SNIPPET, workdir)
+    out = run_snippet(_ctx(tmp_path, LiveRunner(fake)), SNIPPET, workdir)
     assert out["result"]["passed"] is False and out["claude"]["ok"] is False and "boom" in out["error"]
 
 
@@ -237,7 +270,8 @@ def test_live_cli_runs_each_snippet_once(tmp_path):
     reviews = [a for a in fake.argvs() if a[0] == "env"]
     assert len(reviews) == 2 and fake.argvs()[0] == PROBE
     # Each snippet got its own throwaway directory, removed afterwards.
-    dirs = {re.sub(r"/(state|shadow)$", "", a.split("=", 1)[1]) for r in reviews for a in r[1:3]}
+    dirs = {re.sub(r"/(state|shadow)$", "", a.split("=", 1)[1]) for r in reviews for a in r
+            if a.startswith(("CODE_CHECK_STATE_DIR=", "CODE_CHECK_SHADOW__STORE="))}
     assert len(dirs) == 2 and not any(Path(d).exists() for d in dirs)
 
     code, out = call(ctx, "eval", "--live", "--snippets", str(snippets), "--only", "tiny-bug")
@@ -261,3 +295,82 @@ def test_readme_documents_the_live_eval():
                  f"within {TOLERANCE}", f"{round(RECALL_BAR * 100)}%", '"calibrated": false', "CODE_CHECK_STATE_DIR",
                  "CODE_CHECK_SHADOW__STORE", "CODE_CHECK_SHADOW__HANDOFF=1", "case-insensitively"):
         assert text in section, text
+
+
+# --- isolation from the repository git may hand us (fix round 1) -------------------------------------------------
+
+
+def test_repo_selecting_git_vars_are_all_unset():
+    must = {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_NAMESPACE", "GIT_PREFIX"}
+    assert must <= set(GIT_REPO_VARS)
+    assert UNSET_GIT_REPO_VARS == tuple(a for v in GIT_REPO_VARS for a in ("-u", v))
+
+
+@pytest.mark.usefixtures("git_env")
+def test_every_git_setup_call_unsets_repo_vars(tmp_path):
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    runner = LiveRunner(FakeRunner().on_prefix("env", stdout=OK))
+    run_snippet(_ctx(tmp_path, runner), SNIPPET, workdir)
+    assert len(runner.git_calls) >= 6
+    for argv in runner.git_calls:
+        assert argv[:len(UNSET_GIT_REPO_VARS) + 2] == ["env", *UNSET_GIT_REPO_VARS, "git"], argv
+    [claude] = runner.fake.argvs()
+    assert claude[:len(UNSET_GIT_REPO_VARS) + 1] == ("env", *UNSET_GIT_REPO_VARS)
+
+
+@pytest.mark.usefixtures("git_env")
+def test_inherited_git_dir_leaves_the_decoy_repo_untouched(tmp_path, monkeypatch):
+    """A git hook exports GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE for the user's repository; the setup must ignore them."""
+    decoy_origin = tmp_path / "decoy-origin.git"
+    decoy = tmp_path / "decoy"
+    run = lambda cwd, *a: subprocess.run(["git", *a], cwd=cwd, check=True, capture_output=True, text=True).stdout
+    run(tmp_path, "init", "--quiet", "--bare", "-b", "main", str(decoy_origin))
+    run(tmp_path, "clone", "--quiet", str(decoy_origin), str(decoy))
+    (decoy / "mine.txt").write_text("user work\n")
+    run(decoy, "add", "mine.txt")
+    run(decoy, "commit", "--quiet", "-m", "user commit")
+    run(decoy, "push", "--quiet", "origin", "HEAD:main")
+    before = (run(decoy, "rev-parse", "HEAD"), run(decoy_origin, "rev-parse", "main"),
+              run(decoy, "status", "--porcelain"), sorted(p.name for p in decoy.iterdir()))
+
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    monkeypatch.setenv("GIT_DIR", str(decoy / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(decoy))
+    monkeypatch.setenv("GIT_INDEX_FILE", str(decoy / ".git" / "index"))
+    _seed_shadow(workdir / "shadow", aggregator={"findings": [FOUND]})
+    out = run_snippet(_ctx(tmp_path, LiveRunner(FakeRunner().on_prefix("env", stdout=OK))), SNIPPET, workdir)
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+        monkeypatch.delenv(name)
+
+    after = (run(decoy, "rev-parse", "HEAD"), run(decoy_origin, "rev-parse", "main"),
+             run(decoy, "status", "--porcelain"), sorted(p.name for p in decoy.iterdir()))
+    assert after == before
+    assert run(workdir / "repo", "show", "origin/main:pkg/calc.py") == SNIPPET["base"]["pkg/calc.py"]
+    assert out["result"]["passed"] is True
+
+
+@pytest.mark.parametrize("rel", [".GIT/config", ".Git/hooks/post-checkout", "sub/.gIt/config", ".git./config",
+                                 ".git /config", "GIT~1/config", "git~2/hooks/x", ".g\u200cit/config", ".git\ufeff/config"])
+def test_load_snippets_refuses_any_spelling_of_dot_git(tmp_path, rel):
+    _write_snippet(tmp_path, {**SNIPPET, "change": {rel: "[core]\n\tfsmonitor = touch pwned\n"}})
+    with pytest.raises(CodeCheckError, match="escape"):
+        load_snippets(tmp_path)
+
+
+def test_load_snippets_allows_names_that_only_look_like_dot_git(tmp_path):
+    files = {".github/workflows/ci.yml": "x", ".gitignore": "x", "gitops/a.py": "x", "my.git/a": "x"}
+    _write_snippet(tmp_path, {**SNIPPET, "change": files})
+    assert load_snippets(tmp_path)[0]["change"] == files
+
+
+@pytest.mark.usefixtures("git_env")
+def test_run_snippet_refuses_dot_git_even_without_load_snippets(tmp_path):
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    bad = {**SNIPPET, "change": {".GIT/config": "[core]\n\tfsmonitor = touch pwned\n"}}
+    with pytest.raises(CodeCheckError, match="escapes"):
+        run_snippet(_ctx(tmp_path, LiveRunner(FakeRunner())), bad, workdir)
+    assert not (workdir / "repo" / "pwned").exists()
