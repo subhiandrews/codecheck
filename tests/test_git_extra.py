@@ -3,6 +3,7 @@ import subprocess
 import pytest
 from gitutil import commit_file, make_origin_and_clone, sh
 
+from codecheck.errors import GitError
 from codecheck.runner import SubprocessRunner
 from codecheck.vcs.git import Git
 
@@ -40,3 +41,9 @@ def test_would_conflict(tmp_path):
     assert g.would_conflict("origin/main") is True
     commit_file(other, "other.txt", "x\n", "unrelated")
     sh(other, "push", "origin", "HEAD:main")
+
+
+def test_show_file_rejects_option_like_ref(tmp_path):
+    _, clone = make_origin_and_clone(tmp_path)
+    with pytest.raises(GitError):
+        Git(SubprocessRunner(), clone).show_file("--output=x", "CODE_CHECK.md")
