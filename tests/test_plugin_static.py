@@ -245,6 +245,42 @@ def test_simultaneous_stale_breakers_bootstrap_once(tmp_path):
     assert (tmp_path / "log").read_text().count("pip install") == 1
 
 
+def _stub_mkdir_losing_the_lock(bindir: Path, times: int) -> None:
+    """A mkdir that fails for the lock directory `times` times without creating it: the lock was there when
+    mkdir ran and gone by the time the script looked, the race behind the flaky simultaneous-breaker test."""
+    bindir.mkdir(exist_ok=True)
+    mk = bindir / "mkdir"
+    mk.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        '  */.lock)\n'
+        '    n=$(cat "$STUB_MKDIR_COUNT" 2>/dev/null || echo 0)\n'
+        f'    if [ "$n" -lt {times} ]; then echo $((n + 1)) > "$STUB_MKDIR_COUNT"; exit 1; fi ;;\n'
+        "esac\n"
+        'exec /bin/mkdir "$@"\n'
+    )
+    mk.chmod(0o755)
+
+
+def test_lock_that_vanishes_after_a_failed_mkdir_is_retried(tmp_path):
+    _stub_uv(tmp_path / "bin")
+    _stub_mkdir_losing_the_lock(tmp_path / "bin", times=2)
+    env = _env(tmp_path, STUB_MKDIR_COUNT=str(tmp_path / "mkdir-count"))
+    res = subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=env, capture_output=True, text=True, timeout=60, check=False)
+    assert res.returncode == 0, res.stderr
+    assert (tmp_path / "data/venv/bin/python").exists()
+    assert (tmp_path / "mkdir-count").read_text().strip() == "2"
+
+
+def test_lock_that_can_never_be_created_still_fails_fast(tmp_path):
+    _stub_uv(tmp_path / "bin")
+    _stub_mkdir_losing_the_lock(tmp_path / "bin", times=1000)
+    env = _env(tmp_path, STUB_MKDIR_COUNT=str(tmp_path / "mkdir-count"))
+    res = subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=env, capture_output=True, text=True, timeout=30, check=False)
+    assert res.returncode == 1 and "cannot create lock" in res.stderr
+    assert not (tmp_path / "data/venv").exists()
+
+
 def test_live_holder_past_the_stale_threshold_is_not_broken(tmp_path):
     _stub_uv(tmp_path / "bin")
     # install takes ~6s, stale threshold is 3s: the heartbeat must keep the lock alive
