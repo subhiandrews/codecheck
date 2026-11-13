@@ -364,3 +364,14 @@ def test_orphaned_previous_venv_is_restored_when_live_venv_is_missing(tmp_path):
     env = _env(tmp_path, STUB_FAIL="1")
     assert subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=env, capture_output=True).returncode != 0
     assert "echo old" in (data / "venv/bin/python").read_text()
+
+
+def test_long_running_commands_carry_bash_timeout_guidance():
+    # A foreground Bash call is killed after minutes; a loop iteration or a test-gated push can take longer.
+    for skill in ("review-pr", "babysit-pr"):
+        text = (REPO / f"skills/{skill}/SKILL.md").read_text()
+        assert "run_in_background" in text and "code-check loop --mode" in text
+    for skill in ("address-comments", "babysit-pr"):
+        text = (REPO / f"skills/{skill}/SKILL.md").read_text()
+        assert "600000" in text and "push --pr" in text
+    assert "code-check cleanup --run" in (REPO / "skills/review-local/SKILL.md").read_text()

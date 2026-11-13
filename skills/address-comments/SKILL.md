@@ -23,7 +23,7 @@ Works on YOUR pull request's review threads. Review comments are claims to check
    - real but unrelated to this PR: verdict `out_of_scope`; offer a follow-up, do not expand the PR.
    Never accept a claim on authority alone and never make a change you cannot justify.
 5. Make the fixes for `valid` and `partial` threads under `<WS>`. Group related fixes into logical commits with `code-check --cwd <WS> commit --message "<imperative summary>" --paths <files...>`, and remember which commit SHA fixes which thread.
-6. Run `code-check --cwd <WS> push --pr <PR>`. If `pushed` is false:
+6. Run `code-check --cwd <WS> push --pr <PR>`. Run it with the Bash tool's maximum timeout (600000 ms, 10 minutes), because it runs the configured test command first; if the tests may take longer than that, run it with `run_in_background` and wait for it instead. If `pushed` is false:
    - `tests_passed` is false: fix the failure or revert the offending change, then push again. If you cannot, STOP and report; nothing was pushed.
    - the `reason` mentions new commits: run `git -C <WS> pull --rebase origin <head_ref>` and push again. On conflicts STOP and report.
 7. Reply to every evaluated thread, after the push so the SHAs exist remotely. Pipe the body into `code-check reply --pr <PR> --thread <id>` on stdin: fixed becomes "Fixed in <sha>: <what changed>"; incorrect, preference or out_of_scope becomes a short respectful explanation with the evidence; a question becomes the answer.

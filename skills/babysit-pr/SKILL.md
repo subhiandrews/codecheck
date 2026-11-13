@@ -18,12 +18,12 @@ Keeps one of YOUR pull requests moving: review comments first, then failing CI.
    a. Run `code-check attempt --pr <PR> --check <name>`. If `exhausted` is true, record "needs a human" and move on.
    b. Run `code-check check-log --pr <PR> --check <name>` and diagnose from the log.
    c. Decide whether THIS PR caused the failure. It did if the failure points at files the PR changed or at tests those changes affect. It did not if the log shows infrastructure, network, timeout or runner errors, or a test in code the PR never touched that fails the same way on the base branch. If it did not, change nothing and record "unrelated or flaky".
-   d. If it did, fix it under `<WS>` (run `code-check workspace --pr <PR>` first if you do not have `<WS>` yet), commit with `code-check --cwd <WS> commit --message "fix(ci): <summary>" --paths <files...>`, then `code-check --cwd <WS> push --pr <PR>` (tests gate the push; handle a refused push as in address-comments).
+   d. If it did, fix it under `<WS>` (run `code-check workspace --pr <PR>` first if you do not have `<WS>` yet), commit with `code-check --cwd <WS> commit --message "fix(ci): <summary>" --paths <files...>`, then `code-check --cwd <WS> push --pr <PR>` with the Bash tool's maximum timeout of 600000 ms (tests gate the push; handle a slow test run and a refused push as in address-comments).
 4. Report ONE line: `<PR>: comments: <summary from address-comments>; CI: <n> fixed, <m> unrelated or flaky, <k> need a human`.
 
 ## Without an argument (queue mode)
 
-Run `code-check loop --mode babysit`. It handles each of your PRs with new comments or failing checks in its own headless process, one at a time (the per-iteration cap comes from configuration). If `skipped` is true, say the previous iteration is still running. Otherwise print one compact line per entry of `results`. Do not touch any PR yourself in this mode.
+Run `code-check loop --mode babysit` with the Bash tool's `run_in_background` option: an iteration runs up to `loop.max_prs_per_iteration` headless reviews of up to 30 minutes each, far longer than a foreground Bash call is allowed to take, and a killed iteration would leave work half done. Wait for the background command to finish, then read its JSON output. Never run a second `loop` while one is still running. It handles each of your PRs with new comments or failing checks in its own headless process, one at a time (the per-iteration cap comes from configuration). If `skipped` is true, say the previous iteration is still running. Otherwise print one compact line per entry of `results`. Do not touch any PR yourself in this mode.
 
 ## Rules
 

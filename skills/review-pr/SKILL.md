@@ -23,7 +23,7 @@ Reviews a teammate's PR (never your own) and posts a single review with inline c
 
 ## Without an argument (queue mode)
 
-Run `code-check loop --mode review`. It reviews each PR awaiting your review in its own headless process, one at a time (the per-iteration cap comes from configuration), so nothing accumulates in this session. If `skipped` is true, say the previous iteration is still running. Otherwise print one compact line per entry of `results` (`pr`, `ok`, `summary`). Do not review anything yourself in this mode.
+Run `code-check loop --mode review` with the Bash tool's `run_in_background` option: an iteration runs up to `loop.max_prs_per_iteration` headless reviews of up to 30 minutes each, far longer than a foreground Bash call is allowed to take, and a killed iteration would leave work half done. Wait for the background command to finish, then read its JSON output. Never run a second `loop` while one is still running. It reviews each PR awaiting your review in its own headless process, one at a time (the per-iteration cap comes from configuration), so nothing accumulates in this session. If `skipped` is true, say the previous iteration is still running. Otherwise print one compact line per entry of `results` (`pr`, `ok`, `summary`). Do not review anything yourself in this mode.
 
 ## Rules
 
