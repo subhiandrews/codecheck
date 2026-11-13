@@ -31,11 +31,20 @@ BREAK_STALE="${CODE_CHECK_BREAK_STALE_SECS:-60}"
 waited=0
 nobeat=0
 brk=0
+gone=0
 until claim "$LOCK" "$TOKEN"; do
   if [ ! -e "$LOCK" ]; then
-    echo "code-check: cannot create lock $LOCK (is $DATA writable?)" >&2
-    exit 1
+    # Our mkdir lost to a lock that has since vanished: its holder finished, or a stale-breaker removed it,
+    # between the mkdir and this test. That is a race to retry, not a failure. Only a data directory we cannot
+    # write to (or a mkdir that keeps failing without any lock in the way) is an error.
+    gone=$((gone + 1))
+    if [ ! -d "$DATA" ] || [ ! -w "$DATA" ] || [ "$gone" -gt 5 ]; then
+      echo "code-check: cannot create lock $LOCK (is $DATA writable?)" >&2
+      exit 1
+    fi
+    continue
   fi
+  gone=0
   waited=$((waited + 1))
   if [ "$waited" -gt "$WAIT_MAX" ]; then
     echo "code-check: timed out after ${WAIT_MAX}s waiting for another install; remove $LOCK if no install is running" >&2
