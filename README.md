@@ -11,7 +11,7 @@ Review code and deal with review comments on pull requests, from inside Claude C
 | `address-comments` | On your own PR: checks each unresolved thread critically, fixes what is valid, pushes back with evidence on what is not, pushes behind a test gate, replies, resolves fixed threads, re-requests review. |
 | `babysit-pr` | `address-comments` plus failing CI checks, across your PRs, designed to run under `/loop`. |
 
-Findings are **Critical**, **Warning** or **Suggestion** and are posted inline on the changed lines. A panel of reviewers works on each change: up to 15 language experts (only for languages present in the diff), an architecture reviewer, a pragmatic reviewer and a skeptic, with an optional slot for a "deep" reviewer backed by your own knowledge sources. An Opus aggregator verifies every Critical and Warning against the code before anything is posted.
+Findings are **Critical**, **Warning** or **Suggestion** and are posted inline on the changed lines. A panel of reviewers works on each change: up to 15 language experts (only for languages present in the diff), an architecture reviewer, a pragmatic reviewer and a skeptic, with an optional slot for a "deep" reviewer backed by your own knowledge sources and an opt-in security reviewer (see [Security review](#security-review)). An Opus aggregator verifies every Critical and Warning against the code before anything is posted.
 
 ```
 precheck (no LLM) → fetch latest base → context → reviewer panel (parallel) → ingest → aggregator → post (inline) → shadow record
@@ -109,6 +109,7 @@ auto_approve = false           # true: approve only when there are no Critical o
 max_files = 80                 # larger changes are split into chunks, never skipped
 max_chunk_chars = 120000
 max_inline_comments = 25       # the rest goes into the review summary
+security = false               # true: always include the security reviewer (see "Security review")
 ignore = ["**/*.lock", "dist/**"]   # plain glob patterns, see below
 
 [loop]
@@ -121,6 +122,7 @@ aggregator = "opus"
 language_experts = "haiku"
 reviewers = "sonnet"           # architect, pragmatist, skeptic
 deep = "sonnet"
+security = "opus"             # the opt-in security reviewer
 [models.per_language]          # for example: rust = "sonnet"
 
 [deep_reviewer]
@@ -155,9 +157,37 @@ After changing `[models]`, re-run the installer (`node installer/cli.js install`
 |---|---|
 | Aggregator | Opus |
 | Architect, pragmatist, skeptic | Sonnet |
+| Security reviewer (opt-in) | Opus |
 | 15 language experts | Haiku 4.5 |
 
-Haiku keeps the language-expert fan-out cheap, and the Opus aggregator verifies Critical and Warning findings before they are posted. The risk is recall: the aggregator cannot recover a bug that nobody reported. Use `models.per_language` to move a language up a tier, and use shadow data to see which ones need it.
+Haiku keeps the language-expert fan-out cheap, and the Opus aggregator verifies Critical and Warning findings before they are posted. The risk is recall: the aggregator cannot recover a bug that nobody reported. Use `models.per_language` to move a language up a tier, and use shadow data to see which ones need it. Opus is used for the aggregator and, only when you turn it on, the security reviewer.
+
+## Security review
+
+The security reviewer is an optional panel member. It is one agent per chunk (not per language) and it owns every changed file. It looks for what deterministic scanners miss: committed secrets and credentials, including custom formats, personal data (PII) in code, logs and fixtures, injection, authentication and access-control mistakes, unsafe deserialization, SSRF and path traversal, weak cryptography, insecure defaults, secrets in CI and configuration files, and risky dependency additions. Findings use the category `security`: a committed secret or PII is Critical, a vulnerability is a Warning (Critical when it is exploitable as written).
+
+It runs only when asked:
+
+- `/code-check:review-local security` and `/code-check:review-pr 123 security` (the `security` argument; with no PR, `review-pr` works the queue and configuration decides),
+- `code-check context --security`, and `code-check run-pr --security` (review mode only),
+- `review.security = true` in configuration, which also turns it on for `code-check loop --mode review`.
+
+`address-comments` and `babysit-pr` never run it.
+
+It uses `models.security`, default `"opus"`, because security recall matters more than token cost. Set `models.security = "sonnet"` to trade some recall for a lower cost. A repository's `.code-check.toml` may set `models.security` and `review.security`. Re-run `gen-agents` (or the installer) after changing the model.
+
+It is guidance on top of your scanners, not a replacement for them. Warnings about vulnerable dependencies come from the model's own knowledge, with no network lookups, and are worded as something to verify. Review comments are public, so the agents are told never to print a secret or PII value; they name the file, line and kind of value only. As a backstop, the text of every `security` finding is scrubbed of secret-looking values when findings are ingested.
+
+## CODE_CHECK.md
+
+Put a `CODE_CHECK.md` at the root of a repository to tell the reviewers what to look at and what to ignore, in plain prose. Every reviewer and the aggregator read it first when it exists (`context` copies it into the run directory), and `address-comments` and `babysit-pr` receive it as `guidance` from `code-check workspace`.
+
+- **Where it is read from.** PR runs read it from the **base branch**, never the PR head, so a PR cannot rewrite the rules it is judged by. Local runs read the file in your working tree.
+- **Size.** At most 16,000 characters. Longer files are cut and end with a visible truncation marker. `context` reports `guidance` as `{source, truncated}`; `workspace` includes the text as well.
+- **Missing is fine.** A missing, unreadable, non-UTF-8, whitespace-only or symlinked file is ignored, with no error and no warning.
+- **Limits.** Guidance cannot change the reviewers' output format, the severity scale or their rules, and it cannot switch off the security reviewer's rule about never printing secrets. Parts that try are ignored.
+
+This repository has its own `CODE_CHECK.md` as an example.
 
 ## Loops
 
