@@ -46,6 +46,15 @@ def test_repo_file_cannot_set_security_sensitive_keys(tmp_path, text, key):
         load_config(tmp_path / "repo", tmp_path / "home", {})
 
 
+def test_shadow_handoff_defaults_false_and_env_override(tmp_path):
+    assert load_config(tmp_path / "repo", tmp_path / "home", {}).shadow.handoff is False
+    cfg = load_config(tmp_path / "repo", tmp_path / "home", {"CODE_CHECK_SHADOW__HANDOFF": "1"})
+    assert cfg.shadow.handoff is True
+    write(tmp_path / "r2/.code-check.toml", "[shadow]\nhandoff = true\n")
+    with pytest.raises(ConfigError, match=r"shadow.*repository"):
+        load_config(tmp_path / "r2", tmp_path / "home", {})
+
+
 def test_user_file_and_env_may_set_security_sensitive_keys(tmp_path):
     home = tmp_path / "home"
     write(home / ".config/code-check/config.toml", '[run_pr]\nreview_allowed_tools = ["Read", "Write"]\n')
@@ -164,3 +173,17 @@ def test_user_file_may_turn_off_attribution_and_label(tmp_path):
 def test_label_names_are_validated(tmp_path, label):
     with pytest.raises(ConfigError, match="review.label"):
         load_config(tmp_path / "repo", tmp_path / "home", {"CODE_CHECK_REVIEW__LABEL": label})
+
+
+def test_build_context_creates_shadow_store_when_only_handoff_is_on(tmp_path):
+    from fakes import FakeProvider, FakeRunner
+
+    from codecheck.cli import build_context
+
+    env = {"CODE_CHECK_SHADOW__ENABLED": "0", "CODE_CHECK_SHADOW__HANDOFF": "1",
+           "CODE_CHECK_SHADOW__STORE": str(tmp_path / "s"), "CODE_CHECK_STATE_DIR": str(tmp_path / "st")}
+    runner = FakeRunner().on_prefix("git", returncode=1, stderr="not a repo")
+    ctx = build_context(tmp_path, env, tmp_path / "home", runner, FakeProvider())
+    assert ctx.shadow is not None
+    env["CODE_CHECK_SHADOW__HANDOFF"] = "0"
+    assert build_context(tmp_path, env, tmp_path / "home", runner, FakeProvider()).shadow is None

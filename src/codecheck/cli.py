@@ -79,7 +79,7 @@ def build_context(
         pass  # not inside a repository; commands that need one will say so
     config = load_config(cwd, home, env)
     provider = provider or get_provider(config.provider, runner, cwd)
-    shadow = ShadowStore(expand_path(config.shadow.store)) if config.shadow.enabled else None
+    shadow = ShadowStore(expand_path(config.shadow.store)) if config.shadow.enabled or config.shadow.handoff else None
     state = StateStore(expand_path(config.state_dir) / "state.json")
     return AppContext(config, runner, provider, git, state, shadow, cwd, env)
 

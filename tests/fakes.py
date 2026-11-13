@@ -79,6 +79,7 @@ class FakeProvider:
         self.requested: list[tuple[PRRef, list[str]]] = []
         self.labeled: list[tuple[PRRef, str]] = []
         self.label_error = False
+        self.private: bool | None = None
 
     def add_pr(self, number: int = 7, **over) -> PullRequest:
         ref = PRRef(self.repo, number)
@@ -106,6 +107,9 @@ class FakeProvider:
 
     def repo_from_remote(self, url):
         return self.repo
+
+    def repo_is_private(self, repo):
+        return self.private
 
     def clone_argv(self, repo, dest):
         return ["git", "clone", f"file:///fake/{repo}", dest]

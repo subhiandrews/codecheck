@@ -154,6 +154,13 @@ class GitHubProvider:
     def repo_from_remote(self, url: str) -> str | None:
         return parse_remote_url(url)
 
+    def repo_is_private(self, repo: str) -> bool | None:
+        try:
+            out = self._gh("repo", "view", _repo(repo), "--json", "isPrivate", "--jq", ".isPrivate").stdout.strip()
+        except ProviderError:
+            return None
+        return {"true": True, "false": False}.get(out)
+
     def clone_argv(self, repo: str, dest: str) -> list[str]:
         if dest.startswith("-"):
             raise ProviderError(f"invalid clone destination {dest!r}")
