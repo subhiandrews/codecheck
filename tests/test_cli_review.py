@@ -659,3 +659,80 @@ def test_precheck_pr_skips_approved_head(tmp_path):
     assert out["proceed"] is False and "already approved by bob" in out["reason"]
     _code, out = call(ctx, "precheck", "--mode", "pr", "--pr", str(pr.ref), "--force")
     assert out["proceed"] is True
+
+
+def _handoff(ctx):
+    from dataclasses import replace
+
+    ctx.config = replace(ctx.config, shadow=replace(ctx.config.shadow, handoff=True))
+
+
+def _human_thread():
+    from codecheck.models import Thread, ThreadComment
+
+    return Thread("T9", "app.py", 1, False, False, (ThreadComment(1, "alice", "why?", "2026-01-02T00:00:00Z"),))
+
+
+def _run_record(ctx, out):
+    return next(r for r in ctx.shadow.read(out["run_id"]) if r["type"] == "run")
+
+
+def test_context_blind_when_handoff_on(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path)
+    _handoff(ctx)
+    provider.threads[pr.ref] = [_human_thread()]
+    code, out = call(ctx, "context", "--mode", "pr", "--pr", str(pr.ref))
+    assert code == 0, out
+    assert not (Path(out["run_dir"]) / "existing-comments.md").exists()
+    assert provider.thread_calls == [] and provider.review_calls == []
+    assert out["handoff"] is True and out["blind"] is True
+    assert out["replies"] is None and out["existing_comments"] is None
+    meta = json.loads((Path(out["run_dir"]) / "context.json").read_text())
+    assert (meta["handoff"], meta["blind"], meta["repo_private"]) == (True, True, None)
+
+
+def test_context_unchanged_when_handoff_off(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path)
+    provider.threads[pr.ref] = [_human_thread()]
+    code, out = call(ctx, "context", "--mode", "pr", "--pr", str(pr.ref))
+    assert code == 0, out
+    new = {"handoff", "blind", "repo_private"}
+    meta = json.loads((Path(out["run_dir"]) / "context.json").read_text())
+    assert not new & out.keys() and not new & meta.keys() and not new & _run_record(ctx, out).keys()
+    assert provider.private_calls == [] and provider.thread_calls
+    assert "why?" in (Path(out["run_dir"]) / "existing-comments.md").read_text()
+
+
+def test_context_records_repo_private(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path)
+    _handoff(ctx)
+    provider.private = False
+    _code, out = call(ctx, "context", "--mode", "pr", "--pr", str(pr.ref))
+    rec = _run_record(ctx, out)
+    assert (rec["handoff"], rec["blind"], rec["repo_private"]) == (True, True, False)
+    assert provider.private_calls == [pr.ref.repo]
+
+
+def test_context_repo_private_lookup_failure_is_none(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path)
+    _handoff(ctx)
+
+    def boom(repo):
+        raise RuntimeError("x")
+
+    provider.repo_is_private = boom
+    _code, out = call(ctx, "context", "--mode", "pr", "--pr", str(pr.ref))
+    assert _run_record(ctx, out)["repo_private"] is None
+
+
+def test_context_local_mode_handoff_is_not_blind(tmp_path):
+    _, clone = make_origin_and_clone(tmp_path)
+    ctx = make_ctx(tmp_path, clone)
+    _handoff(ctx)
+    sh(clone, "checkout", "-b", "feat")
+    commit_file(clone, "n.py", "x = 1\n", "add n")
+    code, out = call(ctx, "context", "--mode", "local")
+    assert code == 0, out
+    assert out["handoff"] is True and out["blind"] is False
+    rec = _run_record(ctx, out)
+    assert rec["blind"] is False and rec["repo_private"] is None

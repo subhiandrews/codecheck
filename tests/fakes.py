@@ -80,6 +80,7 @@ class FakeProvider:
         self.labeled: list[tuple[PRRef, str]] = []
         self.label_error = False
         self.private: bool | None = None
+        self.private_calls: list = []
 
     def add_pr(self, number: int = 7, **over) -> PullRequest:
         ref = PRRef(self.repo, number)
@@ -109,6 +110,7 @@ class FakeProvider:
         return self.repo
 
     def repo_is_private(self, repo):
+        self.private_calls.append(repo)
         return self.private
 
     def clone_argv(self, repo, dest):
