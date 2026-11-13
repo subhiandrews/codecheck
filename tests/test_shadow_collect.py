@@ -2,13 +2,13 @@ import json
 import os
 
 import pytest
-
 from clihelp import call, make_ctx
+from fakes import FakeProvider
+
 from codecheck.models import PRRef, Thread, ThreadComment
 from codecheck.shadow.collect import collect_outcomes
 from codecheck.shadow.export import export_golden
 from codecheck.shadow.store import ShadowStore
-from fakes import FakeProvider
 
 RID = "abcdef012345"
 REF = PRRef("o/r", 7)
@@ -27,7 +27,7 @@ def tc(cid, author, body, reactions=()):
 
 
 def threads():
-    marker = lambda fid: f"**Warning**\n<!-- code-check:finding:{fid} -->"  # noqa: E731
+    marker = lambda fid: f"**Warning**\n<!-- code-check:finding:{fid} -->"
     return [
         Thread("T1", "a.py", 3, True, False, (tc(1, "me", marker("a" * 12), ["THUMBS_UP"]),)),
         Thread("T2", "a.py", 8, False, False, (tc(2, "me", marker("b" * 12)), tc(3, "alice", "this is not a bug"),
@@ -116,7 +116,7 @@ def _setup(tmp_path, thr):
 
 
 def test_forged_marker_in_message_or_by_human_does_not_misattribute(tmp_path):
-    marker = lambda fid: f"<!-- code-check:finding:{fid} -->"  # noqa: E731
+    marker = lambda fid: f"<!-- code-check:finding:{fid} -->"
     thr = [
         # our comment whose message embeds a forged marker for finding b; the real (trailing) marker is a
         Thread("T1", "a.py", 3, True, False, (tc(1, "me", f"**Warning**\n{marker('b' * 12)}\ntext\n{marker('a' * 12)}"),)),
@@ -135,7 +135,7 @@ def test_forged_marker_in_message_or_by_human_does_not_misattribute(tmp_path):
 
 
 def test_export_is_private_and_scrubbed(tmp_path):
-    shadow, provider = _setup(tmp_path / "s", threads())
+    shadow, _provider = _setup(tmp_path / "s", threads())
     shadow.append(RID, {"type": "human_comment", "thread_id": "T9", "path": "q.py", "line": 1, "author": "bob",
                         "body": "token ghp_" + "a" * 36, "matches_finding": None})
     out = tmp_path / "new" / "g.jsonl"
@@ -154,7 +154,7 @@ def test_record_verdict_whitelists_fields_and_checks_run(tmp_path):
     v = [{"thread_id": "T1", "verdict": "valid", "type": "run", "run_id": "x", "junk": 1, "reasoning": "r"}]
     code, out = call(ctx, "shadow", "record-verdict", "--run", RID, stdin=json.dumps(v))
     assert code == 0
-    rec = [r for r in ctx.shadow.read(RID) if r.get("thread_id") == "T1" and r["type"] == "verdict"][0]
+    rec = next(r for r in ctx.shadow.read(RID) if r.get("thread_id") == "T1" and r["type"] == "verdict")
     assert rec["run_id"] == RID and "junk" not in rec
     code, out = call(ctx, "shadow", "record-verdict", "--run", "../x", stdin="[]")
     assert code == 1
@@ -211,7 +211,7 @@ def test_multi_run_attribution_and_export_dedupe(tmp_path):
 
 
 def test_export_tolerates_malformed_records(tmp_path):
-    shadow, old, new = _two_runs(tmp_path)
+    shadow, _old, new = _two_runs(tmp_path)
     shadow.append(new, {"type": "finding", "file": "a.py"})  # no id
     shadow.append(new, {"type": "outcome", "thread_id": "T9"})  # no finding_id
     shadow.append(new, {"type": "human_comment", "thread_id": "T8", "path": "q", "author": "b", "body": "x"})

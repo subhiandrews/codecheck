@@ -3,7 +3,15 @@
 from collections.abc import Sequence
 from typing import Protocol
 
-from codecheck.models import Check, Decision, PostResult, PRRef, PullRequest, ReviewComment, Thread
+from codecheck.models import (
+    Check,
+    Decision,
+    PostResult,
+    PRRef,
+    PullRequest,
+    ReviewComment,
+    Thread,
+)
 
 
 class Provider(Protocol):

@@ -1,9 +1,9 @@
 import sys
 
 import pytest
+from fakes import FakeRunner
 
 from codecheck.runner import CommandError, SubprocessRunner, run_checked
-from fakes import FakeRunner
 
 
 def test_subprocess_runner_captures_output():

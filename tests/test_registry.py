@@ -1,9 +1,9 @@
 import pytest
+from fakes import FakeRunner
 
 from codecheck.errors import ConfigError
 from codecheck.providers import get_provider
 from codecheck.providers.github import GitHubProvider
-from fakes import FakeRunner
 
 
 def test_registry_returns_github_and_rejects_unknown():

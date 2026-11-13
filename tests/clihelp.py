@@ -3,13 +3,14 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
+from fakes import FakeProvider
+
 from codecheck.cli import AppContext, main
 from codecheck.config import Config, ShadowConfig
 from codecheck.core.state import StateStore
 from codecheck.runner import SubprocessRunner
 from codecheck.shadow.store import ShadowStore
 from codecheck.vcs.git import Git
-from fakes import FakeProvider
 
 
 def make_ctx(tmp_path, clone, *, provider=None, runner=None, **config_over) -> AppContext:

@@ -1,11 +1,11 @@
 import json
 
 import pytest
+from fakes import FakeRunner
 
 from codecheck.errors import ProviderError
 from codecheck.models import Decision, PRRef, ReviewComment, Thread, ThreadComment
 from codecheck.providers.github import RESOLVE_MUTATION, GitHubProvider
-from fakes import FakeRunner
 
 REF = PRRef("o/r", 7)
 REVIEWS = ("gh", "api", "repos/o/r/pulls/7/reviews", "--method", "POST", "--input", "-")

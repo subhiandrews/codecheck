@@ -61,7 +61,7 @@ def test_run_ids_runs_for_pr_and_diff(tmp_path):
     assert store.run_ids() == sorted([RID, "111111111111"])
     assert store.runs_for_pr("o/r#7") == [RID]
     assert "ghp_" not in store.read_diff(RID)
-    assert store.read(("2" * 12)) == [] and store.read_diff("2" * 12) == ""
+    assert store.read("2" * 12) == [] and store.read_diff("2" * 12) == ""
 
 
 @pytest.mark.parametrize("text", [

@@ -6,14 +6,14 @@ REF = PRRef("o/r", 7)
 
 
 def pr(**over):
-    base = dict(ref=REF, title="t", body="", author="alice", base_ref="main", head_ref="feat",
-                head_sha="abc123", is_draft=False, state="open", url="u")
+    base = {"ref": REF, "title": "t", "body": "", "author": "alice", "base_ref": "main", "head_ref": "feat",
+                "head_sha": "abc123", "is_draft": False, "state": "open", "url": "u"}
     return PullRequest(**{**base, **over})
 
 
 def test_pr_precheck_reasons(tmp_path):
     s = StateStore(tmp_path / "s.json")
-    kw = dict(ignore=("**/*.lock",), me="me")
+    kw = {"ignore": ("**/*.lock",), "me": "me"}
     assert not precheck_pr(pr(state="closed"), ["a.py"], s, **kw).proceed
     assert "draft" in precheck_pr(pr(is_draft=True), ["a.py"], s, **kw).reason
     assert "own PR" in precheck_pr(pr(author="me"), ["a.py"], s, **kw).reason
@@ -25,7 +25,7 @@ def test_pr_precheck_reasons(tmp_path):
 def test_pr_precheck_skips_already_reviewed_head_unless_forced(tmp_path):
     s = StateStore(tmp_path / "s.json")
     s.set(f"review:{REF}", "abc123")
-    kw = dict(ignore=(), me="me")
+    kw = {"ignore": (), "me": "me"}
     assert "already reviewed" in precheck_pr(pr(), ["a.py"], s, **kw).reason
     assert precheck_pr(pr(), ["a.py"], s, force=True, **kw).proceed
     assert precheck_pr(pr(head_sha="def456"), ["a.py"], s, **kw).proceed

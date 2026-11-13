@@ -3,11 +3,11 @@ import stat
 from pathlib import Path
 
 import pytest
-
 from clihelp import call, make_ctx, write_findings
-from codecheck.config import ReviewConfig
 from fakes import FakeProvider, FakeRunner
 from gitutil import make_origin_and_clone, push_branch, sh
+
+from codecheck.config import ReviewConfig
 
 pytestmark = pytest.mark.usefixtures("git_env")
 
@@ -40,7 +40,7 @@ def test_local_flow_and_unchanged_noop_and_seen_suppression(tmp_path):
     assert (Path(out["run_dir"]) / meta["files"][0]["patch_file"]).read_text().startswith("diff --git a/app.py")
 
     finding = {"file": "app.py", "line": 2, "severity": "warning", "category": "bug", "message": "y is unused"}
-    run_dir = finish_review(ctx, out, {"skeptic": [finding]}, {"findings": [{**finding, "reviewers": ["skeptic"]}], "dropped": []})
+    finish_review(ctx, out, {"skeptic": [finding]}, {"findings": [{**finding, "reviewers": ["skeptic"]}], "dropped": []})
     code, ing = call(ctx, "ingest", "--run", run_id)
     assert ing["incomplete"] is False and ing["valid"]["skeptic"] == 1
 
@@ -91,7 +91,7 @@ def test_pr_flow_posts_one_inline_review_and_marks_head(tmp_path):
     finish_review(ctx, out, per_member={"skeptic": [findings[0]]},
                   aggregated={"findings": findings, "dropped": [{"reason": "dup"}]})
     call(ctx, "ingest", "--run", out["run_id"])
-    code, res = call(ctx, "post", "--run", out["run_id"])
+    _code, res = call(ctx, "post", "--run", out["run_id"])
     assert res["posted"] and res["inline"] == 1 and res["unlisted"] == 1 and res["decision"] == "COMMENT"
     (review,) = provider.posted
     assert review["head_sha"] == pr.head_sha and len(review["comments"]) == 1
@@ -99,7 +99,7 @@ def test_pr_flow_posts_one_inline_review_and_marks_head(tmp_path):
     assert "code-check:finding:" in review["comments"][0].body
     assert "far away" in review["body"]  # un-anchorable finding is listed in the summary
     assert ctx.state.get(f"review:{pr.ref}") == pr.head_sha
-    code, again = call(ctx, "precheck", "--mode", "pr", "--pr", str(pr.ref))
+    _code, again = call(ctx, "precheck", "--mode", "pr", "--pr", str(pr.ref))
     assert again["proceed"] is False and "already reviewed" in again["reason"]
     assert "run_dir" in out and ctx.shadow.runs_for_pr(str(pr.ref)) == [out["run_id"]]
     kinds = {r["type"] for r in ctx.shadow.read(out["run_id"])}
@@ -127,10 +127,10 @@ def test_missing_or_invalid_reviewer_makes_review_incomplete_and_never_approves(
     write_findings(run_dir, {m: [] for m in members[2:]})  # architect + pragmatist never wrote a file
     (run_dir / "findings" / "skeptic.json").write_text("{not json")
     write_findings(run_dir, {"aggregator": {"findings": []}})
-    code, ing = call(ctx, "ingest", "--run", out["run_id"])
+    _code, ing = call(ctx, "ingest", "--run", out["run_id"])
     assert ing["incomplete"] is True
     assert set(ing["missing"]) == {"architect", "pragmatist"} and "skeptic" in ing["invalid"]
-    code, res = call(ctx, "post", "--run", out["run_id"])
+    _code, res = call(ctx, "post", "--run", out["run_id"])
     assert res["decision"] == "COMMENT" and res["incomplete"] is True
     assert "not approved" in provider.posted[0]["body"]
     assert ctx.state.get(f"review:{pr.ref}") is None  # a rerun on the same head is still allowed
@@ -141,24 +141,24 @@ def test_clean_complete_review_auto_approves_when_enabled(tmp_path):
     out = run_pr_context(ctx, pr)
     finish_review(ctx, out)
     call(ctx, "ingest", "--run", out["run_id"])
-    code, res = call(ctx, "post", "--run", out["run_id"])
+    _code, res = call(ctx, "post", "--run", out["run_id"])
     assert res["decision"] == "APPROVE" and provider.posted[0]["decision"].event == "APPROVE"
 
 
 def test_inline_comment_cap_overflows_into_the_summary(tmp_path):
-    ctx, provider, pr = pr_setup(tmp_path, review=ReviewConfig(max_inline_comments=1))
+    ctx, _provider, pr = pr_setup(tmp_path, review=ReviewConfig(max_inline_comments=1))
     out = run_pr_context(ctx, pr)
     two = [{"file": "app.py", "line": n, "severity": "warning", "category": "bug", "message": f"issue {n}"} for n in (1, 2)]
     finish_review(ctx, out, aggregated={"findings": two})
     call(ctx, "ingest", "--run", out["run_id"])
-    code, res = call(ctx, "post", "--run", out["run_id"])
+    _code, res = call(ctx, "post", "--run", out["run_id"])
     assert res["inline"] == 1 and res["unlisted"] == 1
 
 
 def test_refuses_to_review_own_pr_and_out_of_repo_pr(tmp_path):
     ctx, provider, pr = pr_setup(tmp_path)
     provider.me = "alice"  # alice authored the PR
-    code, out = call(ctx, "precheck", "--mode", "pr", "--pr", str(pr.ref))
+    _code, out = call(ctx, "precheck", "--mode", "pr", "--pr", str(pr.ref))
     assert out["proceed"] is False and "own PR" in out["reason"]
 
 
@@ -172,7 +172,7 @@ def test_bad_run_id_and_missing_inputs_are_json_errors(tmp_path):
 
 
 def test_cleanup_removes_the_worktree(tmp_path):
-    ctx, provider, pr = pr_setup(tmp_path)
+    ctx, _provider, pr = pr_setup(tmp_path)
     out = run_pr_context(ctx, pr)
     assert Path(out["root"]).exists()
     assert stat.S_IMODE((tmp_path / "state").stat().st_mode) == 0o700  # state_dir is owner-only
@@ -184,16 +184,16 @@ def test_cleanup_removes_the_worktree(tmp_path):
 
 
 def test_cleanup_keeps_the_run_dir_when_the_worktree_survives(tmp_path):
-    ctx, provider, pr = pr_setup(tmp_path)
+    ctx, _provider, pr = pr_setup(tmp_path)
     out = run_pr_context(ctx, pr)
     ctx.git.worktree_remove = lambda path: None  # removal silently failed
-    code, res = call(ctx, "cleanup", "--run", out["run_id"])
+    _code, res = call(ctx, "cleanup", "--run", out["run_id"])
     assert res == {"removed": False, "run_dir_removed": False} and Path(out["run_dir"]).exists()
 
 
 def test_sync_command_reports_freshness(tmp_path):
     _, clone = make_origin_and_clone(tmp_path)
-    code, out = call(make_ctx(tmp_path, clone), "sync")
+    _code, out = call(make_ctx(tmp_path, clone), "sync")
     assert out["fresh"] is True and out["base_ref"] == "origin/main" and out["warning"] is None
 
 
@@ -202,7 +202,7 @@ def test_doctor_reports_required_failures(tmp_path):
               .on("gh", "--version", stdout="gh version 2.60\n")
               .on("gh", "auth", "status", returncode=1, stderr="not logged in")
               .on("claude", "--version", stdout="1.0\n"))
-    code, out = call(make_ctx(tmp_path, tmp_path, runner=runner), "doctor")
+    _code, out = call(make_ctx(tmp_path, tmp_path, runner=runner), "doctor")
     by_name = {c["name"]: c for c in out["checks"]}
     assert out["ok"] is False and by_name["gh auth"]["ok"] is False and by_name["git"]["ok"] is True
 
@@ -217,7 +217,7 @@ def test_recorder_failure_never_changes_command_results(tmp_path, capsys):
         def save_diff(self, run_id, diff):
             raise OSError("disk full")
 
-    ctx, provider, pr = pr_setup(tmp_path)
+    ctx, _provider, pr = pr_setup(tmp_path)
     ctx.shadow = Broken(tmp_path / "shadow")
     out = run_pr_context(ctx, pr)
     finish_review(ctx, out)
@@ -229,7 +229,7 @@ def test_recorder_failure_never_changes_command_results(tmp_path, capsys):
 
 
 def test_finding_paths_escaping_the_repo_are_rejected(tmp_path):
-    ctx, provider, pr = pr_setup(tmp_path)
+    ctx, _provider, pr = pr_setup(tmp_path)
     out = run_pr_context(ctx, pr)
     bad = {"file": "../../etc/passwd", "line": 1, "severity": "warning", "category": "bug", "message": "x"}
     absolute = {**bad, "file": "/etc/passwd"}
@@ -257,7 +257,7 @@ def test_first_line_does_not_follow_symlinks_out_of_the_root(tmp_path):
 
 
 def test_corrupt_reviewer_file_after_post_does_not_break_the_post(tmp_path, capsys):
-    ctx, provider, pr = pr_setup(tmp_path)
+    ctx, _provider, pr = pr_setup(tmp_path)
     out = run_pr_context(ctx, pr)
     finish_review(ctx, out)
     call(ctx, "ingest", "--run", out["run_id"])
@@ -281,7 +281,7 @@ def test_unexpected_exceptions_become_one_json_error(tmp_path, capsys):
 
 
 def test_context_with_no_reviewable_files_leaves_no_worktree_or_run_dir(tmp_path):
-    ctx, provider, pr = pr_setup(tmp_path, review=ReviewConfig(ignore=("app.py",)))
+    ctx, _provider, pr = pr_setup(tmp_path, review=ReviewConfig(ignore=("app.py",)))
     code, out = call(ctx, "context", "--mode", "pr", "--pr", str(pr.ref))
     assert code == 1 and "no reviewable files" in out["error"]
     runs = ctx.run_dir("0" * 12).parent
@@ -292,14 +292,14 @@ def test_context_with_no_reviewable_files_leaves_no_worktree_or_run_dir(tmp_path
 
 
 def test_symlinked_reviewer_file_is_rejected_not_written_through(tmp_path):
-    ctx, provider, pr = pr_setup(tmp_path)
+    ctx, _provider, pr = pr_setup(tmp_path)
     out = run_pr_context(ctx, pr)
     members = out["panel"]["members"]
     write_findings(Path(out["run_dir"]), {m: [] for m in members[1:]})
     victim = tmp_path / "victim.txt"
     victim.write_text("keep me")
     (Path(out["run_dir"]) / "findings" / f"{members[0]}.json").symlink_to(victim)
-    code, ing = call(ctx, "ingest", "--run", out["run_id"])
+    _code, ing = call(ctx, "ingest", "--run", out["run_id"])
     assert members[0] in ing["invalid"] and ing["incomplete"] is True
     assert victim.read_text() == "keep me"
 
@@ -337,6 +337,6 @@ def test_repost_skips_findings_already_posted_inline_by_us(tmp_path):
     out2 = call(ctx, "context", "--mode", "pr", "--pr", str(pr.ref))[1]
     finish_review(ctx, out2, aggregated={"findings": [first, second]})
     call(ctx, "ingest", "--run", out2["run_id"])
-    code, res = call(ctx, "post", "--run", out2["run_id"])
+    _code, res = call(ctx, "post", "--run", out2["run_id"])
     assert res["posted"] and res["inline"] == 1 and res["already_posted"] == 1 and res["findings"] == 2
     assert [c.line for c in provider.posted[1]["comments"]] == [1]

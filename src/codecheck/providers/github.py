@@ -6,7 +6,16 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from codecheck.errors import ProviderError
-from codecheck.models import Check, Decision, PostResult, PRRef, PullRequest, ReviewComment, Thread, ThreadComment
+from codecheck.models import (
+    Check,
+    Decision,
+    PostResult,
+    PRRef,
+    PullRequest,
+    ReviewComment,
+    Thread,
+    ThreadComment,
+)
 from codecheck.runner import CommandResult, CommandRunner
 
 _REMOTE = re.compile(r"[:/]([^/:]+/[^/]+?)(?:\.git)?/?$")
@@ -77,7 +86,7 @@ def _thread(n: dict) -> Thread:
     return Thread(n["id"], n["path"], n.get("line") or n.get("originalLine"), n["isResolved"], n["isOutdated"], comments)
 
 
-_ANCHOR_REJECTED = re.compile(r"\b422\b|unprocessable|could not be resolved|pull_request_review_thread", re.I)
+_ANCHOR_REJECTED = re.compile(r"\b422\b|unprocessable|could not be resolved|pull_request_review_thread", re.IGNORECASE)
 
 
 def _anchor_rejected(stderr: str) -> bool:

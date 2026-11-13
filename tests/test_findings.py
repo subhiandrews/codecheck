@@ -2,7 +2,10 @@ from dataclasses import replace
 
 from codecheck.core.diffmap import parse_diff
 from codecheck.core.findings import (
-    attach_anchors, finding_id, merge_exact_duplicates, normalize_text, validate_findings,
+    attach_anchors,
+    finding_id,
+    merge_exact_duplicates,
+    validate_findings,
 )
 from codecheck.models import Finding, Severity
 

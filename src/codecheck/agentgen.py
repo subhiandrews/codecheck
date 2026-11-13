@@ -40,29 +40,37 @@ Severity: critical = will cause incorrect behavior, data loss, a security hole o
 ROLES: dict[str, tuple[str, str]] = {
     "architect": (
         "Architecture reviewer for code-check reviews. Use only when dispatched by a code-check skill.",
-        "You are the architecture reviewer. You own ALL changed files. Look at module boundaries, coupling and dependency direction, "
-        "changes to interfaces other code depends on, backwards compatibility, consistency with the conventions of the surrounding code, "
-        "and whether responsibilities landed in the right place. Read neighbouring modules and callers, not just the diff.",
+        (
+            "You are the architecture reviewer. You own ALL changed files. Look at module boundaries, coupling and dependency direction, "
+            "changes to interfaces other code depends on, backwards compatibility, consistency with the conventions of the surrounding code, "
+            "and whether responsibilities landed in the right place. Read neighbouring modules and callers, not just the diff."
+        ),
     ),
     "pragmatist": (
         "Pragmatic reviewer for code-check reviews. Use only when dispatched by a code-check skill.",
-        "You are the pragmatic reviewer. You own ALL changed files. Ask: is this proportionate to the problem, and would a sensible team merge it? "
-        "Flag over-engineering, speculative abstractions, scope creep, a much simpler obvious solution, and missing obvious basics. "
-        "Ignore nitpicks; prefer few, high-value findings.",
+        (
+            "You are the pragmatic reviewer. You own ALL changed files. Ask: is this proportionate to the problem, and would a sensible team merge it? "
+            "Flag over-engineering, speculative abstractions, scope creep, a much simpler obvious solution, and missing obvious basics. "
+            "Ignore nitpicks; prefer few, high-value findings."
+        ),
     ),
     "skeptic": (
         "Critical, skeptical reviewer for code-check reviews. Use only when dispatched by a code-check skill.",
-        "You are the skeptic. You own ALL changed files. Try to break the change: hidden assumptions, unhandled failure modes, concurrency and ordering, "
-        "error handling that swallows problems, input validation and security, resource leaks, and missing or weak tests. "
-        "Also look at what is NOT in the diff: callers that may now break and tests that should have changed.",
+        (
+            "You are the skeptic. You own ALL changed files. Try to break the change: hidden assumptions, unhandled failure modes, concurrency and ordering, "
+            "error handling that swallows problems, input validation and security, resource leaks, and missing or weak tests. "
+            "Also look at what is NOT in the diff: callers that may now break and tests that should have changed."
+        ),
     ),
 }
 
 DEEP = (
     "Deep reviewer slot for code-check reviews. Use only when dispatched by a code-check skill.",
-    "You are the deep reviewer. You may consult external knowledge sources available to you (MCP tools, memory, retrieval) to check the change against "
-    "organisational standards, past incidents and known pitfalls. If you have no such sources available, or any of them fail, write `[]` to your findings file and finish. "
-    "You must never fail the review.",
+    (
+        "You are the deep reviewer. You may consult external knowledge sources available to you (MCP tools, memory, retrieval) to check the change against "
+        "organisational standards, past incidents and known pitfalls. If you have no such sources available, or any of them fail, write `[]` to your findings file and finish. "
+        "You must never fail the review."
+    ),
 )
 
 AGGREGATOR = """\

@@ -1,10 +1,25 @@
 import json
 
-from codecheck.commands._common import check_finding_paths, finding_items, load_meta, read_json
+from codecheck.commands._common import (
+    check_finding_paths,
+    finding_items,
+    load_meta,
+    read_json,
+)
 from codecheck.core.diffmap import anchor_finding, parse_diff
-from codecheck.core.findings import attach_anchors, finding_id, merge_exact_duplicates, validate_findings
+from codecheck.core.findings import (
+    attach_anchors,
+    finding_id,
+    merge_exact_duplicates,
+    validate_findings,
+)
 from codecheck.core.policy import decide
-from codecheck.core.render import FINDING_MARKER, comment_body, render_local, summary_body
+from codecheck.core.render import (
+    FINDING_MARKER,
+    comment_body,
+    render_local,
+    summary_body,
+)
 from codecheck.errors import CodeCheckError
 from codecheck.models import PRRef, ReviewComment
 from codecheck.shadow.recorder import record_post

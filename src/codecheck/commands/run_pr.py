@@ -4,7 +4,12 @@ import time
 from codecheck.commands._common import safe_repo
 from codecheck.commands.workspace import managed_clone
 from codecheck.config import expand_path
-from codecheck.core.state import MAX_LOOP_FAILURES, WorkItem, mark_processed, record_failure
+from codecheck.core.state import (
+    MAX_LOOP_FAILURES,
+    WorkItem,
+    mark_processed,
+    record_failure,
+)
 from codecheck.errors import CodeCheckError
 from codecheck.runids import new_run_id
 
@@ -25,7 +30,7 @@ def parse_result(stdout: str, returncode: int, stderr: str) -> dict:
     try:
         data = json.loads(stdout)
         if not isinstance(data, dict):
-            raise ValueError("not an object")
+            raise TypeError("not an object")
     except (json.JSONDecodeError, TypeError, ValueError):
         text = stdout.strip() or stderr.strip()
         if returncode == 124:

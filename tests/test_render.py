@@ -1,10 +1,16 @@
-from codecheck.core.render import RUN_MARKER, comment_body, marker, render_local, summary_body
+from codecheck.core.render import (
+    RUN_MARKER,
+    comment_body,
+    marker,
+    render_local,
+    summary_body,
+)
 from codecheck.models import Decision, Finding, Severity
 
 
 def f(**over):
-    base = dict(file="a.py", line=3, severity=Severity.WARNING, category="bug", message="Off by one",
-                reviewers=("skeptic",))
+    base = {"file": "a.py", "line": 3, "severity": Severity.WARNING, "category": "bug", "message": "Off by one",
+                "reviewers": ("skeptic",)}
     return Finding(**{**base, **over})
 
 

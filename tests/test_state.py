@@ -8,8 +8,17 @@ import time
 import pytest
 
 from codecheck.core.state import (
-    MAX_LOOP_FAILURES, FileLock, StateStore, WorkItem, actionable_threads, babysit_work, ensure_private_dir,
-    local_fingerprint, mark_processed, record_failure, select_work,
+    MAX_LOOP_FAILURES,
+    FileLock,
+    StateStore,
+    WorkItem,
+    actionable_threads,
+    babysit_work,
+    ensure_private_dir,
+    local_fingerprint,
+    mark_processed,
+    record_failure,
+    select_work,
 )
 from codecheck.errors import CodeCheckError
 from codecheck.models import Check, PRRef, PullRequest, Thread, ThreadComment

@@ -1,7 +1,12 @@
 import json
 import shutil
 
-from codecheck.commands._common import check_finding_paths, finding_items, load_meta, write_json
+from codecheck.commands._common import (
+    check_finding_paths,
+    finding_items,
+    load_meta,
+    write_json,
+)
 from codecheck.core.findings import validate_findings
 
 NAME = "ingest"

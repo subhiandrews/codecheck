@@ -1,10 +1,10 @@
 import pytest
+from fakes import FakeRunner
+from gitutil import commit_file, make_origin_and_clone, sh
 
 from codecheck.errors import GitError
 from codecheck.runner import SubprocessRunner
 from codecheck.vcs.git import Git
-from fakes import FakeRunner
-from gitutil import commit_file, make_origin_and_clone, sh
 
 pytestmark = pytest.mark.usefixtures("git_env")
 

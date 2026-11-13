@@ -1,4 +1,11 @@
-from codecheck.core.panel import LANGUAGES, detect_language, filter_ignored, group_by_language, is_ignored, select_panel
+from codecheck.core.panel import (
+    LANGUAGES,
+    detect_language,
+    filter_ignored,
+    group_by_language,
+    is_ignored,
+    select_panel,
+)
 
 
 def test_fifteen_languages():

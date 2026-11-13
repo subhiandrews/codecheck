@@ -119,12 +119,12 @@ def test_session_start_hook_points_at_an_executable_script():
 
 @pytest.mark.parametrize("script", ["bin/code-check", "hooks/ensure-runtime.sh", "hooks/common.sh"])
 def test_shell_scripts_parse(script):
-    assert subprocess.run(["sh", "-n", str(REPO / script)]).returncode == 0
+    assert subprocess.run(["sh", "-n", str(REPO / script)], check=False).returncode == 0
 
 
 def test_wrapper_runs_the_cli_with_an_overridden_python(tmp_path):
     env = {**os.environ, "CODE_CHECK_PYTHON": sys.executable, "PYTHONPATH": str(REPO / "src")}
-    res = subprocess.run([str(REPO / "bin/code-check"), "--version"], env=env, capture_output=True, text=True)
+    res = subprocess.run([str(REPO / "bin/code-check"), "--version"], env=env, capture_output=True, text=True, check=False)
     assert res.returncode == 0 and res.stdout.strip() == f"code-check {__version__}"
 
 
@@ -135,7 +135,7 @@ def test_ensure_runtime_is_a_noop_when_current(tmp_path):
     py.chmod(py.stat().st_mode | stat.S_IXUSR)
     (tmp_path / "installed-version").write_text((REPO / "VERSION").read_text().strip())
     env = {**os.environ, "CODE_CHECK_HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}
-    res = subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=env, capture_output=True, text=True)
+    res = subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=env, capture_output=True, text=True, check=False)
     assert res.returncode == 0 and res.stdout == "" and res.stderr == ""
 
 
@@ -196,12 +196,12 @@ def _env(tmp_path, **extra):
 def test_failed_install_leaves_no_venv_and_is_retried(tmp_path):
     _stub_uv(tmp_path / "bin")
     script = str(REPO / "hooks/ensure-runtime.sh")
-    bad = subprocess.run([script], env=_env(tmp_path, STUB_FAIL="1"), capture_output=True, text=True)
+    bad = subprocess.run([script], env=_env(tmp_path, STUB_FAIL="1"), capture_output=True, text=True, check=False)
     assert bad.returncode != 0
     data = tmp_path / "data"
     assert not (data / "venv").exists() and not (data / "installed-version").exists()
     assert not (data / ".lock").exists()
-    good = subprocess.run([script], env=_env(tmp_path), capture_output=True, text=True)
+    good = subprocess.run([script], env=_env(tmp_path), capture_output=True, text=True, check=False)
     assert good.returncode == 0
     assert (data / "venv/bin/python").exists()
     assert (data / "installed-version").read_text() == (REPO / "VERSION").read_text().strip()
@@ -210,14 +210,14 @@ def test_failed_install_leaves_no_venv_and_is_retried(tmp_path):
 def test_wrapper_bootstraps_itself_and_rebootstraps_after_version_change(tmp_path):
     _stub_uv(tmp_path / "bin")
     env = _env(tmp_path)
-    first = subprocess.run([str(REPO / "bin/code-check"), "x"], env=env, capture_output=True, text=True)
+    first = subprocess.run([str(REPO / "bin/code-check"), "x"], env=env, capture_output=True, text=True, check=False)
     assert first.returncode == 0 and first.stdout.strip() == "ran -m codecheck x"
     installs = (tmp_path / "log").read_text().count("pip install")
     assert installs == 1
-    subprocess.run([str(REPO / "bin/code-check"), "y"], env=env, capture_output=True, text=True)
+    subprocess.run([str(REPO / "bin/code-check"), "y"], env=env, capture_output=True, text=True, check=False)
     assert (tmp_path / "log").read_text().count("pip install") == 1
     (tmp_path / "data/installed-version").write_text("0.0.0-old")
-    subprocess.run([str(REPO / "bin/code-check"), "z"], env=env, capture_output=True, text=True)
+    subprocess.run([str(REPO / "bin/code-check"), "z"], env=env, capture_output=True, text=True, check=False)
     assert (tmp_path / "log").read_text().count("pip install") == 2
 
 
@@ -232,7 +232,7 @@ def _make_lock(tmp_path, owner, beat):
 def test_stale_lock_is_broken(tmp_path):
     _stub_uv(tmp_path / "bin")
     _make_lock(tmp_path, "dead-1", 1_000_000_000)
-    res = subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=_env(tmp_path), capture_output=True, text=True)
+    res = subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=_env(tmp_path), capture_output=True, text=True, check=False)
     assert res.returncode == 0 and (tmp_path / "data/venv/bin/python").exists()
 
 
@@ -259,11 +259,11 @@ def test_live_holder_past_the_stale_threshold_is_not_broken(tmp_path):
 def test_failed_rebuild_keeps_the_previous_venv_and_marker(tmp_path):
     _stub_uv(tmp_path / "bin")
     script = str(REPO / "hooks/ensure-runtime.sh")
-    assert subprocess.run([script], env=_env(tmp_path)).returncode == 0
+    assert subprocess.run([script], env=_env(tmp_path), check=False).returncode == 0
     data = tmp_path / "data"
     (data / "installed-version").write_text("0.0.0-old")
     py_before = (data / "venv/bin/python").read_text()
-    bad = subprocess.run([script], env=_env(tmp_path, STUB_FAIL="1"), capture_output=True, text=True)
+    bad = subprocess.run([script], env=_env(tmp_path, STUB_FAIL="1"), capture_output=True, text=True, check=False)
     assert bad.returncode != 0
     assert (data / "venv/bin/python").read_text() == py_before
     assert (data / "installed-version").read_text() == "0.0.0-old"
@@ -275,7 +275,7 @@ def test_cleanup_does_not_remove_another_owners_lock(tmp_path):
     _stub_uv(tmp_path / "bin")
     # the stub steals the lock mid-install by replacing the owner token
     env = _env(tmp_path, STUB_STEAL_LOCK=str(tmp_path / "data/.lock/owner"))
-    res = subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=env, capture_output=True, text=True)
+    res = subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=env, capture_output=True, text=True, check=False)
     assert res.returncode != 0 and "lost the install lock" in res.stderr
     assert (tmp_path / "data/.lock/owner").read_text() == "someone-else"
     assert not (tmp_path / "data/venv").exists()
@@ -288,7 +288,7 @@ def test_unwritable_data_dir_fails_fast(tmp_path):
     data.chmod(0o555)
     try:
         res = subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=_env(tmp_path), capture_output=True,
-                             text=True, timeout=20)
+                             text=True, timeout=20, check=False)
     finally:
         data.chmod(0o755)
     assert res.returncode != 0 and "lock" in res.stderr
@@ -296,7 +296,7 @@ def test_unwritable_data_dir_fails_fast(tmp_path):
 
 def test_missing_home_and_data_fails_clearly(tmp_path):
     env = {"PATH": "/usr/bin:/bin"}
-    res = subprocess.run([str(REPO / "bin/code-check"), "--version"], env=env, capture_output=True, text=True)
+    res = subprocess.run([str(REPO / "bin/code-check"), "--version"], env=env, capture_output=True, text=True, check=False)
     assert res.returncode != 0 and "HOME" in res.stderr
 
 
@@ -330,7 +330,7 @@ def test_killed_holder_heartbeat_stops_and_next_run_recovers(tmp_path):
     time.sleep(2.5)
     assert (data / ".lock/beat").read_text() == beat, "heartbeat kept a dead holder's lock fresh"
     env2 = _env(tmp_path, CODE_CHECK_LOCK_STALE_SECS="3")
-    res = subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=env2, capture_output=True, text=True, timeout=60)
+    res = subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=env2, capture_output=True, text=True, timeout=60, check=False)
     assert res.returncode == 0 and (data / "venv/bin/python").exists()
     assert list(data.glob("venv.new.*")) == []
 
@@ -340,7 +340,7 @@ def test_dead_break_mutex_does_not_hang_the_waiter(tmp_path):
     lock = _make_lock(tmp_path, "dead-1", 1_000_000_000)
     (tmp_path / "data/.lock.break").mkdir()  # breaker died before doing anything
     env = _env(tmp_path, CODE_CHECK_LOCK_STALE_SECS="3", CODE_CHECK_BREAK_STALE_SECS="2")
-    res = subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=env, capture_output=True, text=True, timeout=60)
+    res = subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=env, capture_output=True, text=True, timeout=60, check=False)
     assert res.returncode == 0 and (tmp_path / "data/venv/bin/python").exists()
     assert not lock.exists() and not (tmp_path / "data/.lock.break").exists()
 
@@ -351,7 +351,7 @@ def test_wait_timeout_is_reachable_with_a_wedged_mutex(tmp_path):
     (tmp_path / "data/.lock.break").mkdir()
     env = _env(tmp_path, CODE_CHECK_LOCK_STALE_SECS="1", CODE_CHECK_BREAK_STALE_SECS="1000",
                CODE_CHECK_WAIT_MARGIN_SECS="4")
-    res = subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=env, capture_output=True, text=True, timeout=120)
+    res = subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=env, capture_output=True, text=True, timeout=120, check=False)
     assert res.returncode != 0 and "timed out" in res.stderr
 
 
@@ -362,7 +362,7 @@ def test_orphaned_previous_venv_is_restored_when_live_venv_is_missing(tmp_path):
     (data / "venv.old.999/bin/python").write_text("#!/bin/sh\necho old\n")
     (data / "venv.old.999/bin/python").chmod(0o755)
     env = _env(tmp_path, STUB_FAIL="1")
-    assert subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=env, capture_output=True).returncode != 0
+    assert subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=env, capture_output=True, check=False).returncode != 0
     assert "echo old" in (data / "venv/bin/python").read_text()
 
 

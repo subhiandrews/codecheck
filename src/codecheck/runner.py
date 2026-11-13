@@ -39,7 +39,7 @@ class SubprocessRunner:
         try:
             p = subprocess.run(
                 list(args), input=input, cwd=cwd, capture_output=True,
-                text=True, encoding="utf-8", errors="replace", timeout=timeout,
+                text=True, encoding="utf-8", errors="replace", timeout=timeout, check=False,
             )
         except FileNotFoundError as e:
             return CommandResult(127, "", str(e))

@@ -1,11 +1,11 @@
 import json
 
 import pytest
+from fakes import FakeRunner
 
 from codecheck.errors import ProviderError
 from codecheck.models import Check, PRRef
 from codecheck.providers.github import THREADS_QUERY, GitHubProvider, parse_remote_url
-from fakes import FakeRunner
 
 REF = PRRef("o/r", 7)
 

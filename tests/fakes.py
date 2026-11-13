@@ -44,7 +44,7 @@ class FakeRunner:
         return [c.argv for c in self.calls]
 
 
-from codecheck.models import Check, Decision, PostResult, PRRef, PullRequest, Thread  # noqa: E402
+from codecheck.models import Check, Decision, PostResult, PRRef, PullRequest, Thread
 
 
 class FakeProvider:
@@ -68,8 +68,8 @@ class FakeProvider:
 
     def add_pr(self, number: int = 7, **over) -> PullRequest:
         ref = PRRef(self.repo, number)
-        base = dict(ref=ref, title="t", body="b", author="alice", base_ref="main", head_ref="feature",
-                    head_sha="abc123", is_draft=False, state="open", url="u", is_cross_repo=False)
+        base = {"ref": ref, "title": "t", "body": "b", "author": "alice", "base_ref": "main", "head_ref": "feature",
+                    "head_sha": "abc123", "is_draft": False, "state": "open", "url": "u", "is_cross_repo": False}
         pr = PullRequest(**{**base, **over})
         self.prs[ref] = pr
         return pr

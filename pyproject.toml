@@ -10,7 +10,7 @@ requires-python = ">=3.14"
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "hypothesis>=6.100"]
+dev = ["pytest>=8", "hypothesis>=6.100", "ruff>=0.17"]
 
 [project.scripts]
 code-check = "codecheck.cli:main_entry"

@@ -64,7 +64,7 @@ def _iterate(args, ctx, lock: FileLock) -> dict:
         ref = PRRef.parse(item["pr"])
         try:
             results.append(run_one(ctx, args.mode, ref, item["fingerprint"], args.dry_run))
-        except Exception as e:  # one broken PR must never stop the rest of the iteration
+        except Exception as e:  # noqa: BLE001 - one broken PR must never stop the rest of the iteration
             extra = {} if args.dry_run else loop_bookkeeping(ctx, args.mode, ref, item["fingerprint"], False)
             results.append({"pr": item["pr"], "ok": False, "summary": f"error: {e}", **extra})
     return {"mode": args.mode, "processed": len(results), "considered": work["considered"],

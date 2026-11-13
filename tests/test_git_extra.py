@@ -1,10 +1,10 @@
 import subprocess
 
 import pytest
+from gitutil import commit_file, make_origin_and_clone, sh
 
 from codecheck.runner import SubprocessRunner
 from codecheck.vcs.git import Git
-from gitutil import commit_file, make_origin_and_clone, sh
 
 pytestmark = pytest.mark.usefixtures("git_env")
 
@@ -27,7 +27,7 @@ def test_worktree_add_branch_creates_a_real_branch(tmp_path):
 
 def test_would_conflict(tmp_path):
     origin, clone = make_origin_and_clone(tmp_path)
-    if subprocess.run(["git", "merge-tree", "--write-tree", "HEAD", "HEAD"], cwd=clone, capture_output=True).returncode != 0:
+    if subprocess.run(["git", "merge-tree", "--write-tree", "HEAD", "HEAD"], cwd=clone, capture_output=True, check=False).returncode != 0:
         pytest.skip("git too old for merge-tree --write-tree")
     g = Git(SubprocessRunner(), clone)
     sh(clone, "checkout", "-b", "feat")

@@ -1,5 +1,4 @@
 import shutil
-from pathlib import Path
 
 from codecheck.commands._common import first_line, local_key, safe_repo, write_json
 from codecheck.config import expand_path, model_for

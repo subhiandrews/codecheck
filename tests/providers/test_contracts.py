@@ -1,8 +1,8 @@
-import json
+
+from fakes import FakeProvider, FakeRunner
 
 from codecheck.models import PRRef
 from codecheck.providers.github import GitHubProvider
-from fakes import FakeProvider, FakeRunner
 from providers.contract import ProviderContract
 from providers.test_github_read import CHECKS_JSON, PR_JSON, node, page
 
