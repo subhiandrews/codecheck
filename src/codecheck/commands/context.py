@@ -6,7 +6,7 @@ from codecheck.config import expand_path, model_for
 from codecheck.core.chunk import chunk_files
 from codecheck.core.diffmap import parse_diff
 from codecheck.core.panel import detect_language, filter_ignored, select_panel
-from codecheck.core.state import local_fingerprint
+from codecheck.core.state import ensure_private_dir, local_fingerprint
 from codecheck.errors import CodeCheckError
 from codecheck.runids import new_run_id
 from codecheck.shadow.recorder import record_run
@@ -24,6 +24,7 @@ def add_arguments(p) -> None:
 
 def run(args, ctx) -> dict:
     run_id = new_run_id()
+    ensure_private_dir(expand_path(ctx.config.state_dir))
     run_dir = ctx.run_dir(run_id)
     (run_dir / "findings").mkdir(parents=True)
     try:

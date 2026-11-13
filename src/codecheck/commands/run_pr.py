@@ -3,7 +3,7 @@ import time
 
 from codecheck.commands._common import safe_repo
 from codecheck.commands.workspace import managed_clone
-from codecheck.core.state import WorkItem, mark_processed
+from codecheck.core.state import MAX_LOOP_FAILURES, WorkItem, mark_processed, record_failure
 from codecheck.errors import CodeCheckError
 from codecheck.runids import new_run_id
 
@@ -14,7 +14,8 @@ HELP = "Run one headless Claude process for one PR (review or babysit)"
 def add_arguments(p) -> None:
     p.add_argument("--mode", choices=("review", "babysit"), required=True)
     p.add_argument("--pr", required=True)
-    p.add_argument("--fingerprint", default=None, help="mark this work item processed when done")
+    p.add_argument("--fingerprint", default=None,
+                   help="loop bookkeeping: mark this work item processed on success (or after repeated failures)")
     p.add_argument("--dry-run", action="store_true")
 
 
@@ -49,19 +50,38 @@ def run_one(ctx, mode: str, ref, fingerprint: str | None = None, dry_run: bool =
         return {"pr": str(ref), "argv": argv}
     started = time.time()
     try:
-        cwd = ctx.git.cwd if safe_repo(ctx) == ref.repo else managed_clone(ctx, ref.repo).cwd
+        # Babysit edits code: never let an unattended run work in the user's own checkout, always in the
+        # managed clone (whose worktrees live under state_dir). A review only reads, so the user's clone is fine.
+        if mode == "review" and safe_repo(ctx) == ref.repo:
+            cwd = ctx.git.cwd
+        else:
+            cwd = managed_clone(ctx, ref.repo).cwd
         # input="" closes stdin: claude -p otherwise waits for it.
         res = ctx.runner.run(argv, cwd=cwd, timeout=cfg.timeout_seconds, input="")
         parsed = parse_result(res.stdout, res.returncode, res.stderr)
-    except Exception as e:  # noqa: BLE001 - report, and still mark processed below
+    except Exception as e:  # noqa: BLE001 - report, and still do the bookkeeping below
         parsed = {"ok": False, "summary": f"error: {type(e).__name__}: {e}"[:500], "cost": None, "usage": None}
     duration = round(time.time() - started, 1)
+    extra = {}
     if fingerprint:
-        mark_processed(ctx.state, mode, WorkItem(ref, fingerprint, ""))
+        extra = loop_bookkeeping(ctx, mode, ref, fingerprint, parsed["ok"])
     ctx.record(new_run_id(), {"type": "headless_run", "pr": str(ref), "mode": mode, "ok": parsed["ok"],
                               "cost_usd": parsed["cost"], "usage": parsed["usage"], "duration_s": duration})
     return {"pr": str(ref), "ok": parsed["ok"], "summary": parsed["summary"], "cost_usd": parsed["cost"],
-            "duration_s": duration}
+            "duration_s": duration, **extra}
+
+
+def loop_bookkeeping(ctx, mode: str, ref, fingerprint: str, ok: bool) -> dict:
+    """Success marks the loop item processed. A failure is retried on later iterations until it has failed
+    MAX_LOOP_FAILURES times for the same fingerprint. Never touches `review:<ref>`, which only `post` sets."""
+    item = WorkItem(ref, fingerprint, "")
+    if ok:
+        mark_processed(ctx.state, mode, item)
+        return {}
+    count, gave_up = record_failure(ctx.state, mode, item)
+    return {"failures": count, "gave_up": gave_up,
+            "retry": "no: waiting for a change on the PR" if gave_up
+            else f"yes: attempt {count} of {MAX_LOOP_FAILURES} failed"}
 
 
 def run(args, ctx) -> dict:

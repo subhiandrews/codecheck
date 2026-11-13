@@ -3,8 +3,11 @@ from pathlib import Path
 
 from codecheck.commands._common import contained, safe_repo
 from codecheck.config import expand_path
+from codecheck.core.state import ensure_private_dir
 from codecheck.errors import CodeCheckError
 from codecheck.vcs.git import Git
+
+CLONE_TIMEOUT_SECONDS = 900
 
 NAME = "workspace"
 HELP = "Return a safe directory to edit the PR branch in (in place, or an isolated worktree)"
@@ -15,13 +18,14 @@ def add_arguments(p) -> None:
 
 
 def managed_clone(ctx, repo: str) -> Git:
-    dest = expand_path(ctx.config.state_dir) / "repos" / repo.replace("/", "__")
+    dest = ensure_private_dir(expand_path(ctx.config.state_dir)) / "repos" / repo.replace("/", "__")
     if contained(dest.parent, dest.name) is None:
         raise CodeCheckError(f"unsafe repository name {repo!r}")
     if not dest.exists():
         dest.parent.mkdir(parents=True, exist_ok=True)
-        res = ctx.runner.run(ctx.provider.clone_argv(repo, str(dest)), cwd=ctx.cwd)
+        res = ctx.runner.run(ctx.provider.clone_argv(repo, str(dest)), cwd=ctx.cwd, timeout=CLONE_TIMEOUT_SECONDS)
         if res.returncode != 0:
+            shutil.rmtree(dest, ignore_errors=True)  # never leave a half-cloned repository to be reused
             raise CodeCheckError(f"could not clone {repo}: {res.stderr.strip()[:300]}")
     return Git(ctx.runner, dest)
 
@@ -43,7 +47,7 @@ def run(args, ctx) -> dict:
     refspec, local_ref = ctx.provider.fetch_refspec(ref)
     if not base.fetch(cfg.remote, refspec):
         raise CodeCheckError(f"could not fetch the head of {ref}")
-    state_dir = expand_path(cfg.state_dir)
+    state_dir = ensure_private_dir(expand_path(cfg.state_dir))
     name = f"addr-{ref.repo.replace('/', '__')}-{ref.number}"
     if contained(state_dir / "worktrees", name) is None:
         raise CodeCheckError(f"unsafe repository name {ref.repo!r}")

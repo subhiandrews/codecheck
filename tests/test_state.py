@@ -1,6 +1,17 @@
+import os
+import stat
+import subprocess
+import sys
+import threading
+import time
+
+import pytest
+
 from codecheck.core.state import (
-    FileLock, StateStore, WorkItem, actionable_threads, babysit_work, local_fingerprint, mark_processed, select_work,
+    MAX_LOOP_FAILURES, FileLock, StateStore, WorkItem, actionable_threads, babysit_work, ensure_private_dir,
+    local_fingerprint, mark_processed, record_failure, select_work,
 )
+from codecheck.errors import CodeCheckError
 from codecheck.models import Check, PRRef, PullRequest, Thread, ThreadComment
 
 REF = PRRef("o/r", 7)
@@ -130,3 +141,88 @@ def test_stale_reclaim_race_loser_does_not_take_fresh_lock(tmp_path):
     assert not list(tmp_path.glob("*.reclaim.*"))
     winner.release()
     assert not path.exists()
+
+
+def test_concurrent_writers_do_not_lose_updates(tmp_path):
+    path = tmp_path / "s" / "state.json"
+
+    def worker(n):
+        store = StateStore(path)
+        for _ in range(25):
+            store.incr("count")
+            store.set(f"w{n}", n)
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    s = StateStore(path)
+    assert s.get("count") == 100 and [s.get(f"w{n}") for n in range(4)] == [0, 1, 2, 3]
+    assert not (tmp_path / "s" / "state.json.lock").exists()
+
+
+def test_state_write_times_out_clearly_when_the_lock_is_held(tmp_path):
+    path = tmp_path / "state.json"
+    holder = FileLock(tmp_path / "state.json.lock")
+    assert holder.acquire()
+    with pytest.raises(CodeCheckError, match="locked"):
+        StateStore(path, lock_timeout=0.1).set("k", 1)
+    holder.release()
+    StateStore(path).set("k", 1)
+
+
+def _dead_pid() -> int:
+    p = subprocess.Popen([sys.executable, "-c", "pass"])
+    p.wait()
+    return p.pid
+
+
+def test_lock_held_by_a_dead_process_is_reclaimed_even_when_fresh(tmp_path):
+    path = tmp_path / "loop.lock"
+    path.write_text(f"{_dead_pid()}:x")
+    lock = FileLock(path)
+    assert lock.acquire() and path.read_text() == lock._token
+
+
+def test_lock_held_by_a_live_process_is_kept_until_the_age_limit(tmp_path):
+    path = tmp_path / "loop.lock"
+    path.write_text(f"{os.getpid()}:x")
+    old = time.time() - 3 * 3600
+    os.utime(path, (old, old))
+    assert not FileLock(path, stale_after=4 * 3600).acquire()
+    assert FileLock(path, stale_after=2 * 3600).acquire()
+
+
+def test_touch_and_keep_alive_refresh_only_our_own_lock(tmp_path):
+    path = tmp_path / "loop.lock"
+    a = FileLock(path)
+    assert not a.touch()  # not held
+    assert a.acquire()
+    os.utime(path, (1, 1))
+    assert a.touch() and path.stat().st_mtime > time.time() - 60
+    os.utime(path, (1, 1))
+    with a.keep_alive(interval=0.05):
+        time.sleep(0.3)
+    assert path.stat().st_mtime > time.time() - 60
+    path.write_text("other:token")
+    assert not a.touch()
+
+
+def test_record_failure_counts_per_fingerprint_and_gives_up(tmp_path):
+    s = StateStore(tmp_path / "s.json")
+    item = WorkItem(REF, "fp1", "")
+    results = [record_failure(s, "review", item) for _ in range(MAX_LOOP_FAILURES)]
+    assert results == [(1, False), (2, False), (MAX_LOOP_FAILURES, True)]
+    assert select_work([item], s, "review", 5) == []
+    assert s.get("review:o/r#7") is None  # loop bookkeeping never claims the head was reviewed
+    moved = WorkItem(REF, "fp2", "")
+    assert select_work([moved], s, "review", 5) == [moved]
+    assert record_failure(s, "review", moved) == (1, False)
+
+
+def test_state_dir_is_created_owner_only(tmp_path):
+    d = ensure_private_dir(tmp_path / "a" / "state")
+    assert stat.S_IMODE(d.stat().st_mode) == 0o700
+    StateStore(tmp_path / "b" / "state.json").set("k", 1)
+    assert stat.S_IMODE((tmp_path / "b").stat().st_mode) == 0o700

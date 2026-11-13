@@ -18,17 +18,27 @@ def run(args, ctx) -> dict:
     skipped: list[dict] = []
     refs = ctx.provider.list_prs(scope, repos)
     for ref in refs:
-        pr = ctx.provider.get_pr(ref)
-        if args.mode == "review":
-            if pr.state == "open" and not pr.is_draft and pr.author != me:
-                items.append(WorkItem(ref, pr.head_sha, "new head"))
-            continue
-        if pr.is_cross_repo:
-            skipped.append({"pr": str(ref), "reason": "fork-based PR: cannot push in Phase 1"})
-            continue
-        item = babysit_work(pr, ctx.provider.list_threads(ref), ctx.provider.get_checks(ref), me)
+        try:
+            item, skip = _consider(ctx, args.mode, ref, me)
+        except Exception as e:  # noqa: BLE001 - one broken PR must not abort the whole listing
+            item, skip = None, f"error: {type(e).__name__}: {e}"[:300]
+        if skip:
+            skipped.append({"pr": str(ref), "reason": skip})
         if item:
             items.append(item)
     chosen = select_work(items, ctx.state, args.mode, cfg.loop.max_prs_per_iteration)
     return {"items": [{"pr": str(i.ref), "fingerprint": i.fingerprint, "reason": i.reason} for i in chosen],
             "considered": len(refs), "skipped": skipped}
+
+
+def _consider(ctx, mode: str, ref, me: str) -> tuple[WorkItem | None, str | None]:
+    pr = ctx.provider.get_pr(ref)
+    if mode == "review":
+        if pr.state != "open" or pr.is_draft or pr.author == me:
+            return None, None
+        if ctx.state.get(f"review:{ref}") == pr.head_sha:
+            return None, None  # this head was already reviewed (by the loop or by hand)
+        return WorkItem(ref, pr.head_sha, "new head"), None
+    if pr.is_cross_repo:
+        return None, "fork-based PR: cannot push in Phase 1"
+    return babysit_work(pr, ctx.provider.list_threads(ref), ctx.provider.get_checks(ref), me), None

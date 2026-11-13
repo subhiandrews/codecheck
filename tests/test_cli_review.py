@@ -1,4 +1,5 @@
 import json
+import stat
 from pathlib import Path
 
 import pytest
@@ -57,6 +58,8 @@ def test_local_flow_and_unchanged_noop_and_seen_suppression(tmp_path):
     call(ctx, "ingest", "--run", out2["run_id"])
     code, res = call(ctx, "post", "--run", out2["run_id"])
     assert res["new_count"] == 0 and res["unchanged_count"] == 1
+    code, res = call(ctx, "cleanup", "--run", out2["run_id"])
+    assert res == {"removed": False, "run_dir_removed": True} and not Path(out2["run_dir"]).exists()
 
 
 def pr_setup(tmp_path, **config_over):
@@ -172,8 +175,20 @@ def test_cleanup_removes_the_worktree(tmp_path):
     ctx, provider, pr = pr_setup(tmp_path)
     out = run_pr_context(ctx, pr)
     assert Path(out["root"]).exists()
+    assert stat.S_IMODE((tmp_path / "state").stat().st_mode) == 0o700  # state_dir is owner-only
     code, res = call(ctx, "cleanup", "--run", out["run_id"])
     assert res["removed"] is True and not Path(out["root"]).exists()
+    assert res["run_dir_removed"] is True and not Path(out["run_dir"]).exists()
+    code, again = call(ctx, "cleanup", "--run", out["run_id"])
+    assert code == 1 and "unknown run" in again["error"]
+
+
+def test_cleanup_keeps_the_run_dir_when_the_worktree_survives(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path)
+    out = run_pr_context(ctx, pr)
+    ctx.git.worktree_remove = lambda path: None  # removal silently failed
+    code, res = call(ctx, "cleanup", "--run", out["run_id"])
+    assert res == {"removed": False, "run_dir_removed": False} and Path(out["run_dir"]).exists()
 
 
 def test_sync_command_reports_freshness(tmp_path):
