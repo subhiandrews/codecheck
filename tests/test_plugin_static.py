@@ -5,6 +5,7 @@ import re
 import stat
 import subprocess
 import sys
+import time
 import tomllib
 from pathlib import Path
 
@@ -176,8 +177,10 @@ def _stub_uv(bindir: Path) -> None:
         '  mkdir -p "$last/bin"\n'
         '  printf \'#!/bin/sh\\necho ran "$@"\\n\' > "$last/bin/python"\n'
         '  chmod +x "$last/bin/python"\n'
-        'elif [ "$1" = pip ] && [ -n "${STUB_FAIL:-}" ]; then\n'
-        "  exit 1\n"
+        'elif [ "$1" = pip ]; then\n'
+        '  [ -z "${STUB_SLEEP:-}" ] || sleep "$STUB_SLEEP"\n'
+        '  [ -z "${STUB_STEAL_LOCK:-}" ] || printf someone-else > "$STUB_STEAL_LOCK"\n'
+        '  [ -z "${STUB_FAIL:-}" ] || exit 1\n'
         "fi\n"
     )
     uv.chmod(0o755)
@@ -218,14 +221,77 @@ def test_wrapper_bootstraps_itself_and_rebootstraps_after_version_change(tmp_pat
     assert (tmp_path / "log").read_text().count("pip install") == 2
 
 
-def test_stale_lock_is_broken(tmp_path):
-    _stub_uv(tmp_path / "bin")
+def _make_lock(tmp_path, owner, beat):
     lock = tmp_path / "data/.lock"
     lock.mkdir(parents=True)
-    old = 1_000_000_000
-    os.utime(lock, (old, old))
+    (lock / "owner").write_text(owner)
+    (lock / "beat").write_text(str(beat))
+    return lock
+
+
+def test_stale_lock_is_broken(tmp_path):
+    _stub_uv(tmp_path / "bin")
+    _make_lock(tmp_path, "dead-1", 1_000_000_000)
     res = subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=_env(tmp_path), capture_output=True, text=True)
     assert res.returncode == 0 and (tmp_path / "data/venv/bin/python").exists()
+
+
+def test_simultaneous_stale_breakers_bootstrap_once(tmp_path):
+    _stub_uv(tmp_path / "bin")
+    _make_lock(tmp_path, "dead-1", 1_000_000_000)
+    env = _env(tmp_path, STUB_SLEEP="1")
+    procs = [subprocess.Popen([str(REPO / "hooks/ensure-runtime.sh")], env=env) for _ in range(5)]
+    assert [p.wait(timeout=60) for p in procs] == [0] * 5
+    assert (tmp_path / "log").read_text().count("pip install") == 1
+
+
+def test_live_holder_past_the_stale_threshold_is_not_broken(tmp_path):
+    _stub_uv(tmp_path / "bin")
+    # install takes ~6s, stale threshold is 3s: the heartbeat must keep the lock alive
+    env = _env(tmp_path, STUB_SLEEP="6", CODE_CHECK_LOCK_STALE_SECS="3")
+    procs = [subprocess.Popen([str(REPO / "hooks/ensure-runtime.sh")], env=env)]
+    time.sleep(1)
+    procs.append(subprocess.Popen([str(REPO / "hooks/ensure-runtime.sh")], env=env))
+    assert [p.wait(timeout=60) for p in procs] == [0, 0]
+    assert (tmp_path / "log").read_text().count("pip install") == 1
+
+
+def test_failed_rebuild_keeps_the_previous_venv_and_marker(tmp_path):
+    _stub_uv(tmp_path / "bin")
+    script = str(REPO / "hooks/ensure-runtime.sh")
+    assert subprocess.run([script], env=_env(tmp_path)).returncode == 0
+    data = tmp_path / "data"
+    (data / "installed-version").write_text("0.0.0-old")
+    py_before = (data / "venv/bin/python").read_text()
+    bad = subprocess.run([script], env=_env(tmp_path, STUB_FAIL="1"), capture_output=True, text=True)
+    assert bad.returncode != 0
+    assert (data / "venv/bin/python").read_text() == py_before
+    assert (data / "installed-version").read_text() == "0.0.0-old"
+    assert not (data / ".lock").exists()
+    assert [p.name for p in data.iterdir() if ".new." in p.name or ".old." in p.name] == []
+
+
+def test_cleanup_does_not_remove_another_owners_lock(tmp_path):
+    _stub_uv(tmp_path / "bin")
+    # the stub steals the lock mid-install by replacing the owner token
+    env = _env(tmp_path, STUB_STEAL_LOCK=str(tmp_path / "data/.lock/owner"))
+    res = subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=env, capture_output=True, text=True)
+    assert res.returncode != 0 and "lost the install lock" in res.stderr
+    assert (tmp_path / "data/.lock/owner").read_text() == "someone-else"
+    assert not (tmp_path / "data/venv").exists()
+
+
+def test_unwritable_data_dir_fails_fast(tmp_path):
+    _stub_uv(tmp_path / "bin")
+    data = tmp_path / "data"
+    data.mkdir()
+    data.chmod(0o555)
+    try:
+        res = subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=_env(tmp_path), capture_output=True,
+                             text=True, timeout=20)
+    finally:
+        data.chmod(0o755)
+    assert res.returncode != 0 and "lock" in res.stderr
 
 
 def test_missing_home_and_data_fails_clearly(tmp_path):
