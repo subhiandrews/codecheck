@@ -96,7 +96,7 @@ code-check doctor                         # prerequisites
 
 Settings are layered, highest precedence first: environment (`CODE_CHECK_<SECTION>__<KEY>`, for example `CODE_CHECK_REVIEW__AUTO_APPROVE=true`), your `~/.config/code-check/config.toml`, the repository's `.code-check.toml`, then the defaults below. Your own settings therefore win over a repository's. Unknown keys and wrong types in files are errors.
 
-A repository's `.code-check.toml` may **not** set the security-sensitive keys `state_dir`, anything under `[run_pr]` or `[shadow]`, `review.auto_approve`, `loop.review_forks`, `address.test_command` or `deep_reviewer.command`: a repository you review is not trusted to choose what an unattended run may do or execute, where state is written, or whether reviews approve. Such a key in the repository file is an error that names the key; set it in your user file or the environment instead. Model names must match `[A-Za-z0-9._:[\]-]+`, `run_pr.permission_mode` must be one of `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`, and allowed-tool entries and prompts must not start with `-`.
+A repository's `.code-check.toml` may **not** set the security-sensitive keys `state_dir`, anything under `[run_pr]` or `[shadow]`, `review.auto_approve`, `review.attribution`, `review.label`, `loop.review_forks`, `address.test_command` or `deep_reviewer.command`: a repository you review is not trusted to choose what an unattended run may do or execute, where state is written, or whether reviews approve. Such a key in the repository file is an error that names the key; set it in your user file or the environment instead. Model names must match `[A-Za-z0-9._:[\]-]+`, `run_pr.permission_mode` must be one of `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`, and allowed-tool entries and prompts must not start with `-`.
 
 ```toml
 provider = "github"            # only GitHub in Phase 1
@@ -110,6 +110,8 @@ max_files = 80                 # larger changes are split into chunks, never ski
 max_chunk_chars = 120000
 max_inline_comments = 25       # the rest goes into the review summary
 security = false               # true: always include the security reviewer (see "Security review")
+attribution = true             # one credit line (tool, licence, repo link) in the review summary, never in inline comments
+label = "code-check"           # label added to reviewed PRs; "" disables it
 ignore = ["**/*.lock", "dist/**"]   # plain glob patterns, see below
 
 [loop]

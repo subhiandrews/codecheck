@@ -136,3 +136,31 @@ def test_security_model_name_is_validated(tmp_path):
 def test_model_for_security():
     from codecheck.config import ModelsConfig
     assert model_for(ModelsConfig(security="sonnet"), "security") == "sonnet"
+
+
+def test_attribution_defaults(tmp_path):
+    cfg = load_config(tmp_path / "repo", tmp_path / "home", {})
+    assert cfg.review.attribution is True and cfg.review.label == "code-check"
+
+
+@pytest.mark.parametrize("text,key", [
+    ("[review]\nattribution = false\n", "review.attribution"),
+    ('[review]\nlabel = "x"\n', "review.label"),
+])
+def test_repo_file_cannot_disable_attribution_or_pick_label(tmp_path, text, key):
+    write(tmp_path / "repo/.code-check.toml", text)
+    with pytest.raises(ConfigError, match=rf"{key}.*repository"):
+        load_config(tmp_path / "repo", tmp_path / "home", {})
+
+
+def test_user_file_may_turn_off_attribution_and_label(tmp_path):
+    home = tmp_path / "home"
+    write(home / ".config/code-check/config.toml", '[review]\nattribution = false\nlabel = ""\n')
+    cfg = load_config(tmp_path / "repo", home, {})
+    assert cfg.review.attribution is False and cfg.review.label == ""
+
+
+@pytest.mark.parametrize("label", ["--foo", "a\nb", "x" * 51, "-x"])
+def test_label_names_are_validated(tmp_path, label):
+    with pytest.raises(ConfigError, match="review.label"):
+        load_config(tmp_path / "repo", tmp_path / "home", {"CODE_CHECK_REVIEW__LABEL": label})

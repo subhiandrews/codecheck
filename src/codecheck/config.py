@@ -17,6 +17,8 @@ from codecheck.errors import ConfigError
 class ReviewConfig:
     auto_approve: bool = False
     security: bool = False
+    attribution: bool = True  # one credit line in the review summary; user-only
+    label: str = "code-check"  # label added to reviewed PRs, "" disables; user-only
     max_files: int = 80
     max_chunk_chars: int = 120_000
     max_inline_comments: int = 25
@@ -99,10 +101,11 @@ class Config:
 _FREEFORM = {("models", "per_language")}
 # Keys (or whole tables) a repository's .code-check.toml may not set.
 REPO_FORBIDDEN = {
-    ("state_dir",), ("run_pr",), ("shadow",), ("review", "auto_approve"), ("loop", "review_forks"),
+    ("state_dir",), ("run_pr",), ("shadow",), ("review", "auto_approve"), ("review", "attribution"), ("review", "label"), ("loop", "review_forks"),
     ("address", "test_command"), ("deep_reviewer", "command"),
 }
 MODEL_NAME = re.compile(r"[A-Za-z0-9._:\[\]-]+")
+LABEL_NAME = re.compile(r"[A-Za-z0-9._ :-]{1,50}")
 # Values accepted by `claude --permission-mode` (Task 1 spike).
 PERMISSION_MODES = ("acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")
 _TRUE = {"1", "true", "yes", "on"}
@@ -232,6 +235,9 @@ def validate(cfg: Config) -> Config:
     for key, value in named.items():
         if not isinstance(value, str) or not MODEL_NAME.fullmatch(value):
             raise ConfigError(f"config key {key} is not a valid model name: {value!r}")
+    label = cfg.review.label
+    if label and (label.startswith("-") or not LABEL_NAME.fullmatch(label)):
+        raise ConfigError(f"config key review.label is not a valid label name: {label!r}")
     r = cfg.run_pr
     for key in ("review_allowed_tools", "babysit_allowed_tools"):
         for tool in getattr(r, key):
