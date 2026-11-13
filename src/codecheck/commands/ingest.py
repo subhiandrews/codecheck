@@ -20,6 +20,10 @@ def run(args, ctx) -> dict:
     missing: list[str] = []
     for member in meta["panel"]["members"]:
         path = fdir / f"{member}.json"
+        if path.is_symlink():
+            path.unlink()
+            invalid[member] = [f"{member}: findings file was a symlink; rejected"]
+            continue
         if not path.exists():
             missing.append(member)
             continue
@@ -32,6 +36,7 @@ def run(args, ctx) -> dict:
             continue
         findings, errors = validate_findings(finding_items(raw), reviewer=member, root=meta["root"])
         findings, errors = check_finding_paths(findings, errors, meta["root"], member)
+        path.unlink()  # never write through a symlink planted by a reviewer
         path.write_text(json.dumps([f.to_dict() for f in findings], indent=2), encoding="utf-8")
         valid[member] = len(findings)
         if errors:

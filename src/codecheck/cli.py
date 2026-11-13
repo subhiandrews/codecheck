@@ -105,6 +105,12 @@ def main(argv: Sequence[str] | None = None, *, ctx: AppContext | None = None, ou
     except CodeCheckError as e:
         print(json.dumps({"error": str(e)}), file=out)
         return 1
+    except Exception as e:  # noqa: BLE001 - keep the one-JSON-document contract
+        import traceback
+
+        traceback.print_exc(file=sys.stderr)
+        print(json.dumps({"error": f"unexpected {type(e).__name__}: {e}"}), file=out)
+        return 1
     print(json.dumps(result, indent=2, ensure_ascii=False), file=out)
     return 0
 

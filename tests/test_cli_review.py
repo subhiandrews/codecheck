@@ -239,3 +239,64 @@ def test_first_line_does_not_follow_symlinks_out_of_the_root(tmp_path):
     (root / "link").symlink_to(tmp_path / "secret")
     assert first_line(root, "link") == ""
     assert first_line(root, "../secret") == ""
+
+
+def test_corrupt_reviewer_file_after_post_does_not_break_the_post(tmp_path, capsys):
+    ctx, provider, pr = pr_setup(tmp_path)
+    out = run_pr_context(ctx, pr)
+    finish_review(ctx, out)
+    call(ctx, "ingest", "--run", out["run_id"])
+    (Path(out["run_dir"]) / "findings" / "skeptic.json").write_text("{corrupt")
+    (Path(out["run_dir"]) / "findings" / "architect.json").unlink()
+    code, res = call(ctx, "post", "--run", out["run_id"])
+    assert code == 0 and res["posted"] is True
+    assert ctx.state.get(f"review:{pr.ref}") == pr.head_sha
+    assert "shadow recording failed" in capsys.readouterr().err
+
+
+def test_unexpected_exceptions_become_one_json_error(tmp_path, capsys):
+    _, clone = make_origin_and_clone(tmp_path)
+    ctx = make_ctx(tmp_path, clone)
+    run_dir = ctx.run_dir("0123456789ab")
+    run_dir.mkdir(parents=True)
+    (run_dir / "context.json").write_text("{not json")
+    code, out = call(ctx, "ingest", "--run", "0123456789ab")
+    assert code == 1 and "JSONDecodeError" in out["error"]
+    assert "Traceback" in capsys.readouterr().err
+
+
+def test_context_with_no_reviewable_files_leaves_no_worktree_or_run_dir(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path, review=ReviewConfig(ignore=("app.py",)))
+    code, out = call(ctx, "context", "--mode", "pr", "--pr", str(pr.ref))
+    assert code == 1 and "no reviewable files" in out["error"]
+    runs = ctx.run_dir("0" * 12).parent
+    assert not runs.exists() or list(runs.iterdir()) == []
+    wt = tmp_path / "state" / "worktrees"
+    assert not wt.exists() or list(wt.iterdir()) == []
+    assert len(sh(ctx.cwd, "worktree", "list").strip().splitlines()) == 1
+
+
+def test_symlinked_reviewer_file_is_rejected_not_written_through(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path)
+    out = run_pr_context(ctx, pr)
+    members = out["panel"]["members"]
+    write_findings(Path(out["run_dir"]), {m: [] for m in members[1:]})
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep me")
+    (Path(out["run_dir"]) / "findings" / f"{members[0]}.json").symlink_to(victim)
+    code, ing = call(ctx, "ingest", "--run", out["run_id"])
+    assert members[0] in ing["invalid"] and ing["incomplete"] is True
+    assert victim.read_text() == "keep me"
+
+
+def test_draft_pr_is_never_posted_to(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path)
+    out = run_pr_context(ctx, pr)
+    finish_review(ctx, out)
+    call(ctx, "ingest", "--run", out["run_id"])
+    from dataclasses import replace
+
+    provider.prs[pr.ref] = replace(pr, is_draft=True)
+    code, res = call(ctx, "post", "--run", out["run_id"])
+    assert code == 0 and res["posted"] is False and res["draft"] is True
+    assert provider.posted == [] and ctx.state.get(f"review:{pr.ref}") is None

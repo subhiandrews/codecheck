@@ -65,6 +65,8 @@ def run(args, ctx) -> dict:
     pr = ctx.provider.get_pr(ref)
     if pr.author == ctx.provider.whoami():
         raise CodeCheckError("refusing to post a review on your own PR")
+    if pr.is_draft:
+        return {"posted": False, "draft": True, "reason": "PR is a draft; draft PRs are never posted to"}
     if pr.head_sha != meta["head_sha"]:
         return {"posted": False, "stale": True,
                 "reason": f"PR head moved ({meta['head_sha'][:8]} -> {pr.head_sha[:8]}); re-run the review"}
@@ -83,8 +85,9 @@ def run(args, ctx) -> dict:
     if not incomplete:
         ctx.state.set(f"review:{ref}", pr.head_sha)
     if ctx.shadow is not None:
-        ctx.guarded(record_post, ctx.shadow, meta, reviewer_findings=_reviewer_findings(run_dir, ingest, meta), findings=findings,
-                    inline_ids={finding_id(f) for f, _ in inline}, decision=decision, incomplete=incomplete, dropped=dropped)
+        ctx.guarded(lambda: record_post(
+            ctx.shadow, meta, reviewer_findings=_reviewer_findings(run_dir, ingest, meta), findings=findings,
+            inline_ids={finding_id(f) for f, _ in inline}, decision=decision, incomplete=incomplete, dropped=dropped))
     return {"posted": True, "degraded": result.degraded, "inline": len(comments), "unlisted": len(not_inline),
             "findings": len(findings), "decision": decision.event, "reason": decision.reason,
             "incomplete": incomplete, "failed_reviewers": failed, "base_warning": meta.get("base_warning"),

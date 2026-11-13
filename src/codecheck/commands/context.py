@@ -23,10 +23,18 @@ def add_arguments(p) -> None:
 
 
 def run(args, ctx) -> dict:
-    cfg = ctx.config
     run_id = new_run_id()
     run_dir = ctx.run_dir(run_id)
     (run_dir / "findings").mkdir(parents=True)
+    try:
+        return _build(args, ctx, run_id, run_dir)
+    except BaseException:
+        shutil.rmtree(run_dir, ignore_errors=True)  # no half-built run without context.json
+        raise
+
+
+def _build(args, ctx, run_id, run_dir) -> dict:
+    cfg = ctx.config
     meta: dict = {"run_id": run_id, "mode": args.mode, "skill": args.skill or ("review-local" if args.mode == "local" else "review-pr")}
 
     if args.mode == "local":
@@ -51,7 +59,6 @@ def run(args, ctx) -> dict:
         diff = ctx.git.diff(f"{sync.base_ref}...{local_ref}")
         root = expand_path(cfg.state_dir) / "worktrees" / run_id
         root.parent.mkdir(parents=True, exist_ok=True)
-        ctx.git.worktree_add(root, local_ref)
         meta.update(root=str(root), head_sha=ctx.git.rev_parse(local_ref), pr=str(ref), repo=ref.repo,
                     title=pr.title, description=(pr.body or "")[:4000], fingerprint=None, local_key=None, worktree=True)
 
@@ -59,6 +66,8 @@ def run(args, ctx) -> dict:
     reviewable = filter_ignored(list(parsed), cfg.review.ignore)
     if not reviewable:
         raise CodeCheckError("no reviewable files; run `code-check precheck` first")
+    if meta["worktree"]:
+        ctx.git.worktree_add(root, local_ref)
     (run_dir / "diff.patch").write_text(diff, encoding="utf-8")
     files = []
     for idx, path in enumerate(reviewable):
