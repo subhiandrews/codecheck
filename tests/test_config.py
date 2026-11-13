@@ -108,3 +108,29 @@ def test_model_for_per_language_override(tmp_path):
     assert model_for(cfg.models, "language_expert", "go") == "haiku"
     assert model_for(cfg.models, "aggregator") == "opus"
     assert model_for(cfg.models, "reviewers") == "sonnet"
+
+
+def test_security_defaults(tmp_path):
+    cfg = load_config(tmp_path / "repo", tmp_path / "home", {})
+    assert cfg.models.security == "opus"
+    assert cfg.review.security is False
+
+
+def test_security_settable_from_repo_file(tmp_path):
+    repo = tmp_path / "repo"
+    write(repo / ".code-check.toml", '[models]\nsecurity = "sonnet"\n[review]\nsecurity = true\n')
+    cfg = load_config(repo, tmp_path / "home", {})
+    assert cfg.models.security == "sonnet"
+    assert cfg.review.security is True
+
+
+def test_security_model_name_is_validated(tmp_path):
+    home = tmp_path / "home"
+    write(home / ".config/code-check/config.toml", '[models]\nsecurity = "bad name!"\n')
+    with pytest.raises(ConfigError, match="models.security"):
+        load_config(tmp_path / "repo", home, {})
+
+
+def test_model_for_security():
+    from codecheck.config import ModelsConfig
+    assert model_for(ModelsConfig(security="sonnet"), "security") == "sonnet"
