@@ -340,3 +340,24 @@ def test_repost_skips_findings_already_posted_inline_by_us(tmp_path):
     _code, res = call(ctx, "post", "--run", out2["run_id"])
     assert res["posted"] and res["inline"] == 1 and res["already_posted"] == 1 and res["findings"] == 2
     assert [c.line for c in provider.posted[1]["comments"]] == [1]
+
+
+def test_context_security_flag_adds_member_and_model(tmp_path):
+    _, clone = make_origin_and_clone(tmp_path)
+    ctx = make_ctx(tmp_path, clone)
+    sh(clone, "checkout", "-b", "feat")
+    (clone / "app.py").write_text("x = 1\n")
+
+    def run(c, *extra):
+        _, out = call(c, "context", "--mode", "local", *extra)
+        meta = json.loads((Path(out["run_dir"]) / "context.json").read_text())
+        return out["panel"]["members"], meta["models"]
+
+    members, models = run(ctx)
+    assert "security" not in members and "security" not in models
+    members, models = run(ctx, "--security")
+    assert members == ["architect", "pragmatist", "skeptic", "security", "lang-python"]
+    assert models["security"] == "opus"
+    cfg_ctx = make_ctx(tmp_path, clone, review=ReviewConfig(security=True))
+    members, models = run(cfg_ctx)
+    assert "security" in members and models["security"] == "opus"

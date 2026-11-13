@@ -18,6 +18,7 @@ HELP = "Build the review bundle (diff, per-file patches, panel) for a run"
 def add_arguments(p) -> None:
     p.add_argument("--mode", choices=("local", "pr"), required=True)
     p.add_argument("--pr")
+    p.add_argument("--security", action="store_true", help="include the security reviewer")
     p.add_argument("--skill", default=None, help="recorded in shadow data")
 
 
@@ -80,13 +81,16 @@ def _build(args, ctx, run_id, run_dir) -> dict:
     first_lines = {p: first_line(root, p) for p in reviewable}
     deep_cmd = cfg.deep_reviewer.command.split()
     deep_available = bool(cfg.deep_reviewer.enabled and deep_cmd and shutil.which(deep_cmd[0]))
-    panel = select_panel(reviewable, first_lines, deep_enabled=cfg.deep_reviewer.enabled, deep_available=deep_available)
+    panel = select_panel(reviewable, first_lines, deep_enabled=cfg.deep_reviewer.enabled, deep_available=deep_available,
+                         security=args.security or cfg.review.security)
     languages: dict[str, list[str]] = {}
     for f in files:
         if f["language"]:
             languages.setdefault(f["language"], []).append(f["path"])
     models = {m: model_for(cfg.models, "reviewers") for m in panel.core}
     models |= {f"lang-{lang}": model_for(cfg.models, "language_expert", lang) for lang in panel.languages}
+    if panel.security:
+        models["security"] = model_for(cfg.models, "security")
     if panel.deep:
         models["deep-reviewer"] = model_for(cfg.models, "deep")
     chunks = chunk_files({f["path"]: f["chars"] for f in files}, max_files=cfg.review.max_files,

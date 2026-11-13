@@ -15,7 +15,7 @@ def frontmatter(text: str) -> dict:
 def test_one_expert_per_language_and_all_files_present():
     assert set(LANGUAGE_FOCUS) == set(LANGUAGES)
     files = render_all(ModelsConfig())
-    assert len(files) == 20
+    assert len(files) == 21
     assert {f"lang-{lang}.md" for lang in LANGUAGES} <= set(files)
     assert {"architect.md", "pragmatist.md", "skeptic.md", "aggregator.md", "deep-reviewer.md"} <= set(files)
 
@@ -52,3 +52,18 @@ def test_committed_agents_match_generator_output():
     expected = render_all(ModelsConfig())
     committed = {p.name: p.read_text() for p in (REPO / "agents").glob("*.md")}
     assert committed == expected, "agents/ is stale: run `code-check gen-agents --out agents`"
+
+
+def test_security_agent_uses_the_security_model_and_has_its_own_focus():
+    files = render_all(ModelsConfig())
+    assert frontmatter(files["security.md"])["model"] == "opus"
+    assert frontmatter(render_all(ModelsConfig(security="sonnet"))["security.md"])["model"] == "sonnet"
+    for name in ("architect.md", "pragmatist.md", "skeptic.md"):
+        assert frontmatter(files[name])["model"] == "sonnet"
+    assert "senior security reviewer" in files["security.md"] and "category `security`" in files["security.md"]
+
+
+def test_security_agent_forbids_echoing_secrets():
+    body = render_all(ModelsConfig())["security.md"].lower()
+    assert "you must never print a secret or pii value in `message` or `suggestion`" in body
+    assert "never quote, echo or partially reproduce the value itself" in body

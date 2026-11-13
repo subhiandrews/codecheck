@@ -64,6 +64,20 @@ ROLES: dict[str, tuple[str, str]] = {
     ),
 }
 
+SECURITY = (
+    "Security reviewer for code-check reviews. Use only when dispatched by a code-check skill.",
+    (
+        "You are a senior security reviewer. You own ALL changed files. Look for what deterministic scanners miss, reading surrounding code to confirm each claim. Focus on: "
+        "committed secrets and credentials (API keys, tokens, private keys, passwords, connection strings), including unfamiliar or custom formats that pattern scanners would not recognise; "
+        "personal data (PII) in code, logs, fixtures and sample data; injection (SQL, command, template, XSS); authentication, authorization and access-control mistakes; "
+        "unsafe deserialization; SSRF and path traversal; weak cryptography or randomness; insecure defaults; secrets in CI and configuration files; "
+        "and risky or known-vulnerable dependency additions (word these as something to verify, never as established fact).\n\n"
+        "Use category `security` for every finding. A committed secret or PII is `critical`. A vulnerability is `warning`, or `critical` when it is exploitable as written.\n\n"
+        "Review comments are posted publicly, so you must never print a secret or PII value in `message` or `suggestion`. "
+        "Name only the file, the line and the kind of value (for example, \"an AWS access key\"), and never quote, echo or partially reproduce the value itself."
+    ),
+)
+
 DEEP = (
     "Deep reviewer slot for code-check reviews. Use only when dispatched by a code-check skill.",
     (
@@ -105,6 +119,8 @@ def render_all(models: ModelsConfig) -> dict[str, str]:
         files[f"{name}.md"] = render_agent(
             name, f"{display} language expert for code-check reviews. Use only when dispatched by a code-check skill.",
             model_for(models, "language_expert", lang), body)
+    description, focus = SECURITY
+    files["security.md"] = render_agent("security", description, model_for(models, "security"), f"{focus}\n\n{COMMON}")
     description, focus = DEEP
     files["deep-reviewer.md"] = render_agent("deep-reviewer", description, model_for(models, "deep"), f"{focus}\n\n{COMMON}")
     files["aggregator.md"] = render_agent(
