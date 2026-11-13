@@ -6,13 +6,9 @@ from codecheck.commands._common import (
     load_meta,
     read_json,
 )
-from codecheck.core.diffmap import anchor_finding, parse_diff
-from codecheck.core.findings import (
-    attach_anchors,
-    finding_id,
-    merge_exact_duplicates,
-    validate_findings,
-)
+from codecheck.core.diffmap import parse_diff
+from codecheck.core.findings import finding_id, validate_findings
+from codecheck.core.pipeline import finalize_findings, plan_review
 from codecheck.core.policy import decide
 from codecheck.core.render import (
     FINDING_MARKER,
@@ -66,8 +62,7 @@ def run(args, ctx) -> dict:
     if errors:
         raise CodeCheckError("aggregator output invalid: " + "; ".join(errors[:5]))
     diff_files = parse_diff((run_dir / "diff.patch").read_text(encoding="utf-8"))
-    findings = merge_exact_duplicates(attach_anchors(findings, diff_files))
-    findings.sort(key=lambda f: (-f.severity.rank, f.file, f.line))
+    findings = finalize_findings(findings, diff_files)
     failed = sorted([*ingest["missing"], *ingest["invalid"]])
     incomplete = bool(ingest["incomplete"])
 
@@ -93,17 +88,9 @@ def run(args, ctx) -> dict:
                 "reason": f"PR head moved ({meta['head_sha'][:8]} -> {pr.head_sha[:8]}); re-run the review"}
     decision = decide(findings, auto_approve=cfg.review.auto_approve, is_draft=pr.is_draft, incomplete=incomplete)
     already = _already_posted(ctx.provider.list_threads(ref), me)
-    anchored, unlisted, repeated = [], [], 0
-    for f in findings:
-        if finding_id(f) in already:
-            repeated += 1  # posted inline by an earlier run: do not post it again
-            continue
-        a = anchor_finding(diff_files, f.file, f.line)
-        (anchored if a else unlisted).append((f, a))
-    cap = cfg.review.max_inline_comments
-    inline, overflow = anchored[:cap], anchored[cap:]
+    plan = plan_review(findings, diff_files, already=already, cap=cfg.review.max_inline_comments)
+    inline, not_inline, repeated = plan.inline, plan.not_inline, plan.repeated
     comments = [ReviewComment(a.path, a.line, a.side, comment_body(f, finding_id(f), relocated=a.relocated)) for f, a in inline]
-    not_inline = [f for f, _ in unlisted] + [f for f, _ in overflow]
     body = summary_body(meta["run_id"], findings, not_inline, decision,
                         base_warning=meta.get("base_warning"), failed_reviewers=failed,
                         attribution=cfg.review.attribution)
