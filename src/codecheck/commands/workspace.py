@@ -14,7 +14,7 @@ def add_arguments(p) -> None:
     p.add_argument("--pr", required=True)
 
 
-def _managed_clone(ctx, repo: str) -> Git:
+def managed_clone(ctx, repo: str) -> Git:
     dest = expand_path(ctx.config.state_dir) / "repos" / repo.replace("/", "__")
     if contained(dest.parent, dest.name) is None:
         raise CodeCheckError(f"unsafe repository name {repo!r}")
@@ -39,7 +39,7 @@ def run(args, ctx) -> dict:
         if ctx.git.is_dirty():
             raise CodeCheckError("working tree has uncommitted changes; commit or stash them first")
         return {"path": str(ctx.git.cwd), "created": False}
-    base = ctx.git if here == ref.repo else _managed_clone(ctx, ref.repo)
+    base = ctx.git if here == ref.repo else managed_clone(ctx, ref.repo)
     refspec, local_ref = ctx.provider.fetch_refspec(ref)
     if not base.fetch(cfg.remote, refspec):
         raise CodeCheckError(f"could not fetch the head of {ref}")

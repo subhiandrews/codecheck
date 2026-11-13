@@ -117,3 +117,17 @@ class FakeProvider:
 
     def get_check_log(self, ref, check):
         return self.logs.get(check.name, "")
+
+
+class HybridRunner:
+    """Real git, scripted everything else."""
+
+    def __init__(self, fake: FakeRunner) -> None:
+        from codecheck.runner import SubprocessRunner
+
+        self.fake = fake
+        self.real = SubprocessRunner()
+
+    def run(self, args, *, input=None, cwd=None, timeout=None):
+        target = self.real if args and args[0] == "git" else self.fake
+        return target.run(args, input=input, cwd=cwd, timeout=timeout)
