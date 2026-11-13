@@ -30,12 +30,13 @@ _SHA = re.compile(r"[0-9A-Fa-f]{1,64}")
 _DIGITS = re.compile(r"[0-9]+")
 _LOG_TAIL_CHARS = 20_000
 
+# GitHub rejects a query whose requested nodes (the product of the nested `first:` values) exceed 500,000.
 THREADS_QUERY = (
     "query($owner:String!,$name:String!,$number:Int!,$after:String){"
     "repository(owner:$owner,name:$name){pullRequest(number:$number){"
-    "reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} "
+    "reviewThreads(first:50,after:$after){pageInfo{hasNextPage endCursor} "
     "nodes{id isResolved isOutdated path line originalLine "
-    "comments(first:100){nodes{databaseId author{login} body createdAt reactions(first:50){nodes{content}}}}}}}}}"
+    "comments(first:100){nodes{databaseId author{login} body createdAt reactions(first:20){nodes{content}}}}}}}}}"
 )
 RESOLVE_MUTATION = "mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}"
 
