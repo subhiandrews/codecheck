@@ -10,6 +10,13 @@
             "command": "D=\"${CLAUDE_PROJECT_DIR:-.}\"; R=\"$D/.venv/bin/ruff\"; if [ ! -x \"$R\" ]; then echo \"ruff not found at $R (pip install -e '.[dev]'); skipping lint\" >&2; exit 0; fi; cd \"$D\" && \"$R\" check . >&2 || { echo 'ruff check failed: fix the findings above before committing' >&2; exit 2; }",
             "timeout": 60,
             "statusMessage": "Running ruff check..."
+          },
+          {
+            "type": "command",
+            "if": "Bash(git commit*)",
+            "command": "D=\"${CLAUDE_PROJECT_DIR:-.}\"; E=\"$D/node_modules/.bin/eslint\"; if [ ! -x \"$E\" ]; then echo \"eslint not found at $E (npm ci); skipping lint\" >&2; exit 0; fi; cd \"$D\" && \"$E\" . >&2 || { echo 'eslint failed: fix the findings above before committing' >&2; exit 2; }",
+            "timeout": 60,
+            "statusMessage": "Running eslint..."
           }
         ]
       }
