@@ -23,7 +23,7 @@ Reviews a teammate's PR (never your own) and posts a single review with inline c
 5. Dispatch one Agent call with `subagent_type` `code-check:aggregator` and the prompt `RUN_DIR=<run_dir>`.
 6. Run `code-check post --run <run_id>`. If `stale` is true the PR moved while you were reviewing: clean up (step 7) and run this skill once more from step 1; if it is stale a second time, stop and report that.
 7. Always run `code-check cleanup --run <run_id>`, even when an earlier step failed.
-8. Report ONE line: `<PR>: <decision>, <inline> inline comments, <unlisted> in the summary`, plus `(incomplete: <failed_reviewers>)` when applicable.
+8. Report ONE line: `<PR>: <decision>, <inline> inline comments, <unlisted> in the summary`, plus `(incomplete: <failed_reviewers>)` when applicable, and `(ignored guidance: <reasons>)` when any subagent's final `done:` line contains `ignored guidance: ...`.
 
 ## Without an argument (queue mode)
 

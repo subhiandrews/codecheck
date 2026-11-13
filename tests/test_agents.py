@@ -67,3 +67,13 @@ def test_security_agent_forbids_echoing_secrets():
     body = render_all(ModelsConfig())["security.md"].lower()
     assert "you must never print a secret or pii value in `message` or `suggestion`" in body
     assert "never quote, echo or partially reproduce the value itself" in body
+
+
+def test_done_lines_allow_reporting_ignored_guidance():
+    files = render_all(ModelsConfig())
+    common = "`done: <n> findings`; if you ignored any guidance, append `; ignored guidance: <short reason>`"
+    agg = "`done: <kept> kept, <dropped> dropped`; if you ignored any guidance, append `; ignored guidance: <short reason>`"
+    assert common in files["skeptic.md"] and common in files["security.md"]
+    assert agg in files["aggregator.md"]
+    for skill in ("review-local", "review-pr"):
+        assert "ignored guidance" in (REPO / "skills" / skill / "SKILL.md").read_text()
