@@ -139,3 +139,42 @@ def test_scrub_text_is_fast_on_pathological_input(text):
     start = time.perf_counter()
     scrub_text(text)
     assert time.perf_counter() - start < 2.0
+
+
+@pytest.mark.parametrize("n", [600, 5000])
+@pytest.mark.parametrize("fmt", ['password: "{}" tail', '{{"api_key": "{}"}} tail', "secret = '{}' tail"])
+def test_long_quoted_secret_fully_removed(n, fmt):
+    secret = ("xyzQ" * n)[:n] + "ENDMARK"
+    out = scrub_text(fmt.format(secret))
+    assert "xyz" not in out and "ENDMARK" not in out and "[REDACTED]" in out
+
+
+@pytest.mark.parametrize("n", [5000, 20000])
+def test_long_pem_block_fully_removed(n):
+    body = ("MIIEvQIBADANBgkqhkiG9w0B" * (n // 24 + 1))[:n]
+    out = scrub_text(f"before\n-----BEGIN PRIVATE KEY-----\n{body}\n-----END PRIVATE KEY-----\nafter")
+    assert "MIIE" not in out and out.startswith("before") and out.endswith("after")
+
+
+def test_pem_without_end_redacted_to_end_of_text():
+    out = scrub_text("keep\n-----BEGIN RSA PRIVATE KEY-----\nMIIEsecretbody\nmore")
+    assert out == "keep\n[REDACTED]"
+
+
+def test_long_jwt_segment_fully_removed():
+    seg = "A1b2" * 750
+    jwt = f"eyJhbGciOiJIUzI1NiJ9.{seg}.sig"
+    out = scrub_text(f"x {jwt} y")
+    assert "A1b2" not in out and "sig" not in out and out == "x [REDACTED] y"
+
+
+def test_long_keyword_suffix_still_matched():
+    assert "val" not in scrub_text("secret" + "x" * 100 + "=val123456")
+
+
+def test_million_char_inputs_fast():
+    import time
+    for text in ("-----BEGIN PRIVATE KEY-----" * 40_000, "a" * 1_000_000, "token" * 200_000, "eyJ-" * 250_000):
+        start = time.perf_counter()
+        scrub_text(text)
+        assert time.perf_counter() - start < 2.0
