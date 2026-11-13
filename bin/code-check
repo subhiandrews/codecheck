@@ -1,9 +1,9 @@
 #!/bin/sh
 set -eu
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DATA="${CODE_CHECK_HOME:-${CLAUDE_PLUGIN_DATA:-$HOME/.local/share/code-check}}"
-PY="${CODE_CHECK_PYTHON:-$DATA/venv/bin/python}"
-if [ ! -x "$PY" ]; then
-  "$ROOT/hooks/ensure-runtime.sh" >&2
+if [ -n "${CODE_CHECK_PYTHON:-}" ]; then
+  exec "$CODE_CHECK_PYTHON" -m codecheck "$@"
 fi
-exec "$PY" -m codecheck "$@"
+. "$(dirname "$0")/../hooks/common.sh"
+# Cheap and idempotent: only does work when the venv is missing or the version changed.
+"$ROOT/hooks/ensure-runtime.sh" >&2
+exec "$VENV/bin/python" -m codecheck "$@"
