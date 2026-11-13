@@ -1,4 +1,3 @@
-import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -6,7 +5,7 @@ import pytest
 
 from clihelp import call, make_ctx
 from codecheck.config import AddressConfig
-from codecheck.models import Check, PRRef, Thread, ThreadComment
+from codecheck.models import Check, Thread, ThreadComment
 from fakes import FakeProvider
 from gitutil import commit_file, make_origin_and_clone, push_branch, sh
 
@@ -216,3 +215,60 @@ def test_threads_survives_shadow_failure(tmp_path):
     ctx.shadow.append = lambda *a, **k: (_ for _ in ()).throw(OSError("disk full"))
     code, out = call(ctx, "threads", "--pr", str(pr.ref))
     assert code == 0 and [t["id"] for t in out["threads"]] == ["T1"]
+
+
+def _to_worktree(ctx, provider, pr, clone):
+    sh(clone, "checkout", "main")
+    return Path(call(ctx, "workspace", "--pr", str(pr.ref))[1]["path"])
+
+
+def test_workspace_rerun_preserves_uncommitted_and_unpushed_work(tmp_path):
+    ctx, provider, pr, clone, origin = own_pr_setup(tmp_path)
+    wt = _to_worktree(ctx, provider, pr, clone)
+    (wt / "app.py").write_text("edited = 1\n")
+    code, out = call(ctx, "workspace", "--pr", str(pr.ref))
+    assert code == 1 and "uncommitted" in out["error"]
+    assert (wt / "app.py").read_text() == "edited = 1\n"
+    sh(wt, "commit", "-am", "local")
+    local = sh(wt, "rev-parse", "HEAD").strip()
+    code, out = call(ctx, "workspace", "--pr", str(pr.ref))
+    assert code == 1 and "local commits" in out["error"]
+    assert sh(wt, "rev-parse", "HEAD").strip() == local
+
+
+def test_push_refuses_closed_pr_wrong_repo_and_unexpected_branch(tmp_path):
+    ctx, provider, pr, clone, origin = own_pr_setup(tmp_path)
+    provider.prs[pr.ref] = replace(pr, state="merged")
+    code, out = call(ctx, "push", "--pr", str(pr.ref))
+    assert out["pushed"] is False and "merged" in out["reason"]
+    provider.prs[pr.ref] = pr
+    other = replace(pr.ref, repo="o/elsewhere")
+    provider.prs[other] = replace(pr, ref=other)
+    code, out = call(ctx, "push", "--pr", str(other))
+    assert out["pushed"] is False and "not o/elsewhere" in out["reason"]
+    sh(clone, "checkout", "-b", "random")
+    code, out = call(ctx, "push", "--pr", str(pr.ref))
+    assert out["pushed"] is False and "not the PR branch" in out["reason"]
+    assert sh(origin, "rev-parse", "feature").strip() == pr.head_sha
+
+
+def test_resolve_requires_commit_on_pr_head(tmp_path):
+    ctx, provider, pr, clone, origin = own_pr_setup(tmp_path)
+    provider.threads[pr.ref] = [thread("T1")]
+    commit_file(clone, "fix.txt", "f\n", "fix")
+    sha = sh(clone, "rev-parse", "HEAD").strip()
+    code, out = call(ctx, "resolve", "--pr", str(pr.ref), "--thread", "T1", "--commit", sha)
+    assert out["resolved"] is False and "not on the PR head" in out["reason"] and provider.resolved == []
+    sh(clone, "push", "origin", "HEAD:feature")
+    code, out = call(ctx, "resolve", "--pr", str(pr.ref), "--thread", "T1", "--commit", sha)
+    assert out["resolved"] is True and provider.resolved == ["T1"]
+
+
+def test_commit_from_subdirectory_uses_cwd_relative_paths(tmp_path):
+    ctx, provider, pr, clone, _ = own_pr_setup(tmp_path)
+    (clone / "sub").mkdir()
+    (clone / "sub" / "x.txt").write_text("x")
+    ctx.git = type(ctx.git)(ctx.runner, clone / "sub")
+    code, out = call(ctx, "commit", "--message", "m", "--paths", "x.txt")
+    assert code == 0 and "sub/x.txt" in sh(clone, "show", "--name-only", "--format=", "HEAD")
+    assert call(ctx, "commit", "--message", "m", "--paths", "../../outside")[0] == 1

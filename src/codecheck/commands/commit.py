@@ -1,5 +1,9 @@
+import os
+from pathlib import Path
+
 from codecheck.commands._common import contained
 from codecheck.errors import CodeCheckError
+from codecheck.vcs.git import Git
 
 NAME = "commit"
 HELP = "Commit the given paths (explicit paths only)"
@@ -11,8 +15,12 @@ def add_arguments(p) -> None:
 
 
 def run(args, ctx) -> dict:
-    root = ctx.git.toplevel()
+    root = ctx.git.toplevel().resolve()
+    rel_paths = []
     for path in args.paths:
-        if contained(root, path) is None:
+        # Paths are relative to the cwd (as the caller sees them); pass them to git relative to the toplevel.
+        target = contained(root, os.path.relpath(Path(ctx.git.cwd).resolve() / path, root)) if path and not Path(path).is_absolute() else None
+        if target is None:
             raise CodeCheckError(f"path {path!r} escapes the repository")
-    return {"sha": ctx.git.commit(args.message, args.paths)}
+        rel_paths.append(str(target.relative_to(root)))
+    return {"sha": Git(ctx.runner, root).commit(args.message, rel_paths)}

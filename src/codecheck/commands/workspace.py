@@ -48,9 +48,24 @@ def run(args, ctx) -> dict:
     if contained(state_dir / "worktrees", name) is None:
         raise CodeCheckError(f"unsafe repository name {ref.repo!r}")
     path = state_dir / "worktrees" / name
+    branch = f"code-check/pr-{ref.number}"
     if path.exists():
+        # Never destroy work: only recreate a clean worktree that is not ahead of the PR head.
+        wt = Git(ctx.runner, path)
+        try:
+            on_branch = wt.current_branch() == branch
+            dirty = wt.is_dirty()
+            behind_only = wt.is_ancestor("HEAD", local_ref)
+        except CodeCheckError:
+            raise CodeCheckError(f"{path} exists but is not a usable worktree; remove it by hand") from None
+        if not on_branch:
+            raise CodeCheckError(f"{path} exists but is not on {branch}; refusing to replace it")
+        if dirty:
+            raise CodeCheckError(f"worktree {path} has uncommitted changes; commit or discard them first")
+        if not behind_only:
+            raise CodeCheckError(f"worktree {path} has local commits not in the PR head; push or discard them first")
         base.worktree_remove(path)
         shutil.rmtree(path, ignore_errors=True)
     path.parent.mkdir(parents=True, exist_ok=True)
-    base.worktree_add_branch(path, f"code-check/pr-{ref.number}", local_ref)
+    base.worktree_add_branch(path, branch, local_ref)
     return {"path": str(path), "created": True, "git_dir": str(Path(base.cwd))}

@@ -1,5 +1,6 @@
 import shlex
 
+from codecheck.commands._common import safe_repo
 from codecheck.errors import CodeCheckError
 
 NAME = "push"
@@ -16,6 +17,13 @@ def run(args, ctx) -> dict:
     pr = ctx.provider.get_pr(ref)
     if pr.is_cross_repo:
         raise CodeCheckError("fork-based PR: pushing to the contributor's fork is not supported in Phase 1")
+    if pr.state != "open":
+        return {"pushed": False, "reason": f"PR is {pr.state}; not pushing"}
+    if safe_repo(ctx) != ref.repo:
+        return {"pushed": False, "reason": f"this checkout is not {ref.repo}; use `workspace` first"}
+    branch = ctx.git.current_branch()
+    if branch not in (pr.head_ref, f"code-check/pr-{ref.number}"):
+        return {"pushed": False, "reason": f"checked-out branch {branch!r} is not the PR branch; use `workspace` first"}
     if ctx.git.is_dirty():
         raise CodeCheckError("uncommitted changes present; commit or discard them before pushing")
     tests_passed = None
