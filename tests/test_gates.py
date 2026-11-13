@@ -228,3 +228,86 @@ def test_claude_settings_has_gates_hook():
     last = hooks[2]
     assert last["if"] == "Bash(git commit*)" and last["timeout"] == 900
     assert "scripts/gates.sh" in last["command"] and '"$G" --if-no-git-hook' in last["command"]
+
+
+def test_gates_work_when_repo_path_has_a_space(tmp_path, git_env, monkeypatch):
+    for var in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE", "CODE_CHECK_BIN"):
+        monkeypatch.delenv(var, raising=False)
+    repo = tmp_path / "My Code" / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    git(repo, "init", "-q")
+    shutil.copy2(REPO / "scripts/gates.sh", repo / "scripts/gates.sh")
+    shutil.copy2(REPO / "scripts/gate-paths.txt", repo / "scripts/gate-paths.txt")
+    py = repo / ".venv/bin/python"
+    py.parent.mkdir(parents=True)
+    py.write_text('#!/bin/sh\necho "$@" >> "$FAKE_LOG"\necho \'{"passed": true}\'\n')
+    py.chmod(0o755)
+    monkeypatch.setenv("FAKE_LOG", str(tmp_path / "log"))
+    res = subprocess.run([str(repo / "scripts/gates.sh")], cwd=repo, capture_output=True, text=True, check=False)
+    assert res.returncode == 0, res.stderr
+    assert (tmp_path / "log").read_text().split("\n")[0] == "-m codecheck eval --replay"
+
+
+def _fake(sandbox, body):
+    Path(os.environ["CODE_CHECK_BIN"]).write_text("#!/bin/sh\n" + body)
+
+
+def test_gates_ignore_stderr_warning_on_passing_run(sandbox):
+    _fake(sandbox, "echo 'warning: shadow recording failed: x' >&2\necho '{\"passed\": true}'\n")
+    sandbox.stage("README.md")
+    res = run_gates(sandbox)
+    assert res.returncode == 0, res.stderr
+
+
+def test_gates_show_stderr_on_failing_run(sandbox):
+    _fake(sandbox, "echo 'warning: shadow recording failed: x' >&2\necho '{\"passed\": false}'\n")
+    sandbox.stage("README.md")
+    res = run_gates(sandbox)
+    assert res.returncode != 0
+    assert "shadow recording failed" in res.stderr and '"passed": false' in res.stderr
+
+
+def _commit_base(box):
+    box.stage("base.txt", "agents/x.md")
+    git(box.repo, "commit", "-qm", "base", "--no-verify")
+    box.log.unlink(missing_ok=True)
+
+
+def test_claude_hook_mode_counts_unstaged_tracked_changes(sandbox):
+    _commit_base(sandbox)
+    (sandbox.repo / "agents/x.md").write_text("changed\n")
+    assert run_gates(sandbox, "--if-no-git-hook").returncode == 0
+    assert sandbox.calls() == ["eval --replay", "eval --live --if-reachable"]
+
+
+def test_claude_hook_mode_counts_untracked_gated_files(sandbox):
+    _commit_base(sandbox)
+    (sandbox.repo / "skills").mkdir()
+    (sandbox.repo / "skills/new.md").write_text("n\n")
+    assert run_gates(sandbox, "--if-no-git-hook").returncode == 0
+    assert sandbox.calls() == ["eval --replay", "eval --live --if-reachable"]
+
+
+def test_normal_mode_ignores_unstaged_changes(sandbox):
+    _commit_base(sandbox)
+    (sandbox.repo / "agents/x.md").write_text("changed\n")
+    (sandbox.repo / "skills").mkdir()
+    (sandbox.repo / "skills/new.md").write_text("n\n")
+    assert run_gates(sandbox).returncode == 0
+    assert sandbox.calls() == ["eval --replay"]
+    sandbox.log.unlink()
+    git(sandbox.repo, "add", "agents/x.md")
+    assert run_gates(sandbox).returncode == 0
+    assert sandbox.calls() == ["eval --replay", "eval --live --if-reachable"]
+
+
+def test_claude_hook_mode_without_head_does_not_crash(sandbox):
+    (sandbox.repo / "README.md").write_text("r\n")
+    res = run_gates(sandbox, "--if-no-git-hook")
+    assert res.returncode == 0, res.stderr
+    assert sandbox.calls() == ["eval --replay"]
+    sandbox.log.unlink()
+    (sandbox.repo / "agents").mkdir()
+    (sandbox.repo / "agents/y.md").write_text("y\n")
+    assert run_gates(sandbox, "--if-no-git-hook").returncode == 0
+    assert sandbox.calls() == ["eval --replay", "eval --live --if-reachable"]

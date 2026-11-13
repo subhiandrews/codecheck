@@ -12,43 +12,63 @@ set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT" || exit 1
 
+CLAUDE_HOOK=0
 if [ "${1:-}" = "--if-no-git-hook" ]; then
   if [ "$(git config core.hooksPath 2>/dev/null)" = ".githooks" ]; then
     exit 0
   fi
+  CLAUDE_HOOK=1
 fi
 
+# BIN is an array so a repository path containing spaces survives; only the
+# user-supplied CODE_CHECK_BIN override is word-split (it may carry arguments).
 if [ -n "${CODE_CHECK_BIN:-}" ]; then
-  BIN="$CODE_CHECK_BIN"
+  read -r -a BIN <<< "$CODE_CHECK_BIN"
 else
   if [ ! -x "$ROOT/.venv/bin/python" ]; then
     echo "$ROOT/.venv/bin/python not found (pip install -e '.[dev]'); skipping eval gates" >&2
     exit 0
   fi
-  BIN="$ROOT/.venv/bin/python -m codecheck"
+  BIN=("$ROOT/.venv/bin/python" -m codecheck)
 fi
 
-# Print the failing output and exit 1 unless the JSON on stdin says passed: true.
-check_passed() {
-  local label="$1" out="$2"
+ERRFILE="$(mktemp "${TMPDIR:-/tmp}/code-check-gates.XXXXXX")" || exit 1
+trap 'rm -f "$ERRFILE"' EXIT
+trap 'exit 130' INT TERM HUP
+
+# run_gate LABEL ARGS...: stdout (the JSON) is parsed, stderr is kept apart so a
+# warning on a passing run cannot fail it; both are shown on failure.
+run_gate() {
+  local label="$1" out
+  shift
+  out="$("${BIN[@]}" "$@" 2>"$ERRFILE")"
   if printf '%s' "$out" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("passed") is True else 1)' 2>/dev/null; then
     return 0
   fi
   echo "$label failed:" >&2
   printf '%s\n' "$out" >&2
+  cat "$ERRFILE" >&2
   return 1
 }
 
-# $BIN is deliberately unquoted: it may be a command plus arguments.
-# shellcheck disable=SC2086
-out="$($BIN eval --replay 2>&1)"
-check_passed "eval --replay" "$out" || exit 1
+run_gate "eval --replay" eval --replay || exit 1
+
+# Changed paths, listed once. The git hook runs after staging, so the index is
+# authoritative. The Claude hook runs before the commit command (which may still
+# `git add` or use -a), so it also counts unstaged and untracked changes; that is
+# deliberately conservative: it can run the live gate extra, never skip it.
+changed="$(git diff --cached --name-only --no-renames 2>/dev/null)"
+if [ "$CLAUDE_HOOK" = 1 ]; then
+  changed="$changed
+$(git diff --name-only --no-renames HEAD 2>/dev/null || true)
+$(git ls-files --others --exclude-standard 2>/dev/null || true)"
+fi
 
 gated=0
 if [ -f "$ROOT/scripts/gate-paths.txt" ]; then
   while IFS= read -r pattern; do
     [ -n "$pattern" ] || continue
-    if git diff --cached --name-only | grep -Eq -- "$pattern"; then
+    if grep -Eq -- "$pattern" <<< "$changed"; then
       gated=1
       break
     fi
@@ -56,8 +76,6 @@ if [ -f "$ROOT/scripts/gate-paths.txt" ]; then
 fi
 
 if [ "$gated" = 1 ]; then
-  # shellcheck disable=SC2086
-  out="$($BIN eval --live --if-reachable 2>&1)"
-  check_passed "eval --live" "$out" || exit 1
+  run_gate "eval --live" eval --live --if-reachable || exit 1
 fi
 exit 0

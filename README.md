@@ -315,7 +315,7 @@ Matching is tolerant, because live reviews vary from run to run. A reported find
 
 ## Development
 
-Run `scripts/install-git-hooks.sh` once to enable the checked-in pre-commit hook (`git config core.hooksPath .githooks`; this is repository-level config, so it applies to all worktrees). The hook runs ruff and eslint, then `scripts/gates.sh`: `code-check eval --replay` always, and `code-check eval --live --if-reachable` only when the staged files touch review behaviour (the patterns in `scripts/gate-paths.txt`). The live gate skips, and does not block the commit, when no model is reachable. Commits made by Claude Code run the same gates through `.claude/settings.json`, unless the git hook is installed (then the hook runs them once).
+Run `scripts/install-git-hooks.sh` once to enable the checked-in pre-commit hook (`git config core.hooksPath .githooks`; this is repository-level config, so it applies to all worktrees). The hook runs ruff and eslint, then `scripts/gates.sh`: `code-check eval --replay` always, and `code-check eval --live --if-reachable` only when the staged files touch review behaviour (the patterns in `scripts/gate-paths.txt`). The live gate skips, and does not block the commit, when no model is reachable. Commits made by Claude Code run the same gates through `.claude/settings.json`, unless the git hook is installed (then the hook runs them once). Because the Claude hook runs before the commit command, it also counts unstaged and untracked changes when deciding on the live gate; `git -C <other worktree> commit` is not covered by it.
 
 ## Extending
 
