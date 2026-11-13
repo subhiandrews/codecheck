@@ -427,3 +427,27 @@ def test_symlinked_guidance_in_local_mode_is_not_copied(tmp_path):
     code, out = call(ctx, "context", "--mode", "local")
     assert code == 0 and out["guidance"] is None
     assert not (Path(out["run_dir"]) / "CODE_CHECK.md").exists()
+
+
+def test_posted_comment_has_no_secret_and_no_corrupted_suggestion(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path)
+    out = run_pr_context(ctx, pr)
+    findings = [
+        {"file": "app.py", "line": 1, "severity": "critical", "category": "security",
+         "message": "key AKIAIOSFODNN7EXAMPLE is committed", "suggestion": "KEY = AKIAIOSFODNN7EXAMPLE",
+         "reviewers": ["security"]},
+        {"file": "app.py", "line": 2, "severity": "warning", "category": "security",
+         "message": "read the key from the environment", "suggestion": 'API_KEY = os.environ["API_KEY"]',
+         "reviewers": ["security"]},
+    ]
+    finish_review(ctx, out, aggregated={"findings": findings, "dropped": []})
+    call(ctx, "ingest", "--run", out["run_id"])
+    call(ctx, "post", "--run", out["run_id"])
+    (review,) = provider.posted
+    assert len(review["comments"]) == 2
+    for c in review["comments"]:
+        assert "AKIAIOSFODNN7EXAMPLE" not in c.body
+        assert '[REDACTED]"' not in c.body and "= [REDACTED]" not in c.body
+        assert "```suggestion" not in c.body
+    assert "key [REDACTED] is committed" in review["comments"][0].body
+    assert "(code suggestion withheld: it looked like it contained a secret)" in review["comments"][1].body

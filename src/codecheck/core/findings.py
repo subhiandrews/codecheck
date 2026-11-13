@@ -7,6 +7,8 @@ from codecheck.core.diffmap import FileDiff
 from codecheck.models import Finding, Severity
 from codecheck.shadow.scrub import scrub_text
 
+_WITHHELD_NOTE = " (code suggestion withheld: it looked like it contained a secret)"
+
 
 def normalize_text(text: str) -> str:
     return " ".join(text.lower().split())
@@ -55,10 +57,13 @@ def validate_findings(raw: object, *, reviewer: str, root: str | None = None) ->
             errors.extend(f"{where}: {p}" for p in problems)
             continue
         message, category = message.strip(), category.strip()
-        if category.casefold() == "security":
-            # Backstop: comments are public, so never let an echoed secret through.
-            message = scrub_text(message)
-            suggestion = scrub_text(suggestion) if suggestion is not None else None
+        # Backstop: comments are public, so never let an echoed secret through.
+        message = scrub_text(message)
+        if suggestion is not None and scrub_text(suggestion) != suggestion:
+            # Scrubbing rewrites code (`X = os.environ["X"]` becomes garbage), so withhold instead.
+            suggestion = None
+            if _WITHHELD_NOTE not in message:
+                message += _WITHHELD_NOTE
         supplied = item.get("reviewers")
         who = tuple(supplied) if isinstance(supplied, list) and supplied and all(isinstance(r, str) for r in supplied) else (reviewer,)
         findings.append(
