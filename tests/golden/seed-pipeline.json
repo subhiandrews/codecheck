@@ -1,0 +1,150 @@
+{
+  "version": 1,
+  "case_id": "seed-pipeline",
+  "repo": "example/shop",
+  "pr": 1,
+  "head_sha": "0000000000000000000000000000000000000001",
+  "diff": "diff --git a/shop/stock.py b/shop/stock.py\nindex 1111111..2222222 100644\n--- a/shop/stock.py\n+++ b/shop/stock.py\n@@ -10,3 +10,6 @@ def restock(levels, item, amount):\n     if amount < 0:\n         return levels\n     levels.setdefault(item, 0)\n+    current = levels.get(item)\n+    levels[item] = current + amount\n+    return levels\n",
+  "reviewer_outputs": {
+    "pragmatist": [
+      {
+        "file": "shop/stock.py",
+        "line": 14,
+        "severity": "critical",
+        "category": "logic",
+        "message": "levels.get(item) is None for an item that was never stocked, so the addition raises TypeError.",
+        "reviewers": [
+          "pragmatist"
+        ]
+      },
+      {
+        "file": "shop/stock.py",
+        "line": 10,
+        "severity": "suggestion",
+        "category": "design",
+        "message": "Negative amounts are ignored silently; raising ValueError would let callers notice.",
+        "reviewers": [
+          "pragmatist"
+        ]
+      }
+    ],
+    "skeptic": [
+      {
+        "file": "shop/stock.py",
+        "line": 14,
+        "severity": "warning",
+        "category": "logic",
+        "message": "levels.get(item) is None for an item that was never stocked, so the addition raises TypeError.",
+        "reviewers": [
+          "skeptic"
+        ]
+      },
+      {
+        "file": "shop/stock.py",
+        "line": 40,
+        "severity": "warning",
+        "category": "logic",
+        "message": "reset_all still adds to levels[item] without a default, the same failure as in restock.",
+        "reviewers": [
+          "skeptic"
+        ]
+      }
+    ]
+  },
+  "aggregator": {
+    "findings": [
+      {
+        "file": "shop/stock.py",
+        "line": 14,
+        "severity": "warning",
+        "category": "logic",
+        "message": "levels.get(item) is None for an item that was never stocked, so the addition raises TypeError.",
+        "reviewers": [
+          "skeptic"
+        ]
+      },
+      {
+        "file": "shop/stock.py",
+        "line": 14,
+        "severity": "critical",
+        "category": "logic",
+        "message": "levels.get(item) is None for an item that was never stocked, so the addition raises TypeError.",
+        "reviewers": [
+          "pragmatist"
+        ]
+      },
+      {
+        "file": "shop/stock.py",
+        "line": 40,
+        "severity": "warning",
+        "category": "logic",
+        "message": "reset_all still adds to levels[item] without a default, the same failure as in restock.",
+        "reviewers": [
+          "skeptic"
+        ]
+      },
+      {
+        "file": "shop/stock.py",
+        "line": 10,
+        "severity": "suggestion",
+        "category": "design",
+        "message": "Negative amounts are ignored silently; raising ValueError would let callers notice.",
+        "reviewers": [
+          "pragmatist"
+        ]
+      }
+    ],
+    "dropped": []
+  },
+  "expected_posted": [
+    {
+      "file": "shop/stock.py",
+      "line": 14,
+      "category": "logic",
+      "severity": "critical",
+      "inline": true
+    },
+    {
+      "file": "shop/stock.py",
+      "line": 40,
+      "category": "logic",
+      "severity": "warning",
+      "inline": false
+    },
+    {
+      "file": "shop/stock.py",
+      "line": 10,
+      "category": "design",
+      "severity": "suggestion",
+      "inline": true
+    }
+  ],
+  "expected_decision": "COMMENT",
+  "labels": [
+    {
+      "id": "38825ba81c00",
+      "file": "shop/stock.py",
+      "line": 14,
+      "severity": "warning",
+      "label": "expected"
+    },
+    {
+      "id": "9fb41eef4c27",
+      "file": "shop/stock.py",
+      "line": 40,
+      "severity": "warning",
+      "label": "expected"
+    },
+    {
+      "id": "32856c9b5b21",
+      "file": "shop/stock.py",
+      "line": 10,
+      "severity": "suggestion",
+      "label": "expected"
+    }
+  ],
+  "misses": [],
+  "signals": null,
+  "label_status": "confirmed",
+  "repo_private": false
+}

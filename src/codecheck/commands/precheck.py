@@ -1,6 +1,7 @@
-from codecheck.commands._common import local_key, pr_activity
+from codecheck.commands._common import approval_skip, local_key, pr_activity
 from codecheck.core.diffmap import parse_diff
 from codecheck.core.precheck import (
+    PrecheckResult,
     cap_replies,
     cheap_skip,
     precheck_local,
@@ -33,6 +34,9 @@ def run(args, ctx) -> dict:
         files = ctx.provider.list_changed_files(ref)
         me = ctx.provider.whoami()
         skip = cheap_skip(pr, files, ignore=cfg.review.ignore, me=me)
+        approved = None if skip or args.force else approval_skip(ctx, ref, pr)
+        if approved:
+            skip = PrecheckResult(False, approved)
         res = skip or precheck_pr(pr, files, ctx.state, ignore=cfg.review.ignore, me=me, force=args.force,
                                   activity=None if args.force else pr_activity(ctx, ref, pr, me))
         shown = cap_replies(res.replies)

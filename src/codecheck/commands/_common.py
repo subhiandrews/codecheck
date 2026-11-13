@@ -1,7 +1,8 @@
 import json
 from pathlib import Path
 
-from codecheck.core.precheck import fetch_activity
+from codecheck.core.paths import check_finding_paths, contained, finding_items  # noqa: F401 - re-exported
+from codecheck.core.precheck import approved_by, fetch_activity
 from codecheck.errors import CodeCheckError
 
 
@@ -33,15 +34,6 @@ def safe_repo(ctx) -> str:
         return ctx.git.cwd.name
 
 
-def contained(root: Path | str, rel: str) -> Path | None:
-    """Resolve `rel` under `root`; None if it is absolute or escapes (via `..` or a symlink)."""
-    if not rel or Path(rel).is_absolute() or "\0" in rel:
-        return None
-    base = Path(root).resolve()
-    target = (base / rel).resolve()
-    return target if target.is_relative_to(base) else None
-
-
 def first_line(root: Path, rel: str) -> str:
     target = contained(root, rel)
     if target is None:
@@ -53,24 +45,14 @@ def first_line(root: Path, rel: str) -> str:
         return ""
 
 
-def check_finding_paths(findings, errors, root, who):
-    """Drop findings whose (untrusted) file path escapes the repo root; report each as an error."""
-    kept = []
-    errors = list(errors)
-    for f in findings:
-        if contained(root, f.file) is None:
-            errors.append(f"{who}: finding path {f.file!r} escapes the repository")
-        else:
-            kept.append(f)
-    return kept, errors
-
-
-def finding_items(raw):
-    return raw["findings"] if isinstance(raw, dict) and "findings" in raw else raw
-
-
 def pr_activity(ctx, ref, pr, me: str | None = None):
     """Our latest review and replies on our threads, fetched only when they could change the verdict."""
     me = me or ctx.provider.whoami()
     return fetch_activity(pr, ctx.state, me, lambda: ctx.provider.list_reviews(ref),
                           lambda: ctx.provider.list_threads(ref, reactions=False))
+
+
+def approval_skip(ctx, ref, pr) -> str | None:
+    """Why to skip a PR that someone already approved at its current head, else None."""
+    who = approved_by(ctx.provider.list_reviews(ref), pr.head_sha)
+    return f"already approved by {who}" if who else None

@@ -11,6 +11,8 @@ jobs:
       - run: pip install -e '.[dev]'
       - run: ruff check .
       - run: pytest -q
+      - name: replay the golden cases
+        run: python -m codecheck eval --replay | python -c 'import json,sys; r=json.load(sys.stdin); print(json.dumps(r, indent=2)); sys.exit(0 if r["passed"] else 1)'
   node:
     runs-on: ubuntu-latest
     steps:

@@ -46,6 +46,8 @@ def _build(args, ctx, run_id, run_dir) -> dict:
     replies = None
     existing_comments = None
     existing_comments_error = None
+    handoff = cfg.shadow.handoff
+    blind = args.mode == "pr" and handoff
     meta: dict = {"run_id": run_id, "mode": args.mode, "skill": args.skill or ("review-local" if args.mode == "local" else "review-pr")}
 
     if args.mode == "local":
@@ -70,6 +72,8 @@ def _build(args, ctx, run_id, run_dir) -> dict:
             raise CodeCheckError(f"could not fetch the head of {ref}")
         diff = ctx.git.diff(f"{sync.base_ref}...{local_ref}")
         try:
+            if blind:
+                raise _Blind
             threads = ctx.provider.list_threads(ref, reactions=False)
             me = ctx.provider.whoami()
             act = review_activity(ctx.provider.list_reviews(ref), threads, me)
@@ -81,6 +85,8 @@ def _build(args, ctx, run_id, run_dir) -> dict:
             capped = cap_replies(act.replies)
             if capped:
                 replies = {"threads": len({r.thread_id for r in capped}), "comments": len(capped)}
+        except _Blind:
+            pass  # hand-off runs withhold human comments so the reviewers stay independent of them
         except Exception as e:  # noqa: BLE001 - reviewing without the comments beats not reviewing, whatever the response looked like
             existing_comments_error = str(e)[:300]
         guidance = from_base(ctx.git, sync.base_ref)  # base branch only: a PR cannot change the rules it is judged by
@@ -101,6 +107,8 @@ def _build(args, ctx, run_id, run_dir) -> dict:
     meta["replies"] = replies
     meta["existing_comments"] = existing_comments
     meta["existing_comments_error"] = existing_comments_error
+    if handoff:
+        meta.update(handoff=True, blind=blind, repo_private=_repo_private(ctx, meta["repo"]) if blind else None)
     (run_dir / "diff.patch").write_text(diff, encoding="utf-8")
     files = []
     for idx, path in enumerate(reviewable):
@@ -132,7 +140,21 @@ def _build(args, ctx, run_id, run_dir) -> dict:
     write_json(run_dir / "context.json", meta)
     if ctx.shadow is not None:
         ctx.guarded(record_run, ctx.shadow, meta, diff, cfg)
-    return {"run_id": run_id, "run_dir": str(run_dir), "root": meta["root"], "mode": args.mode,
+    out = {"run_id": run_id, "run_dir": str(run_dir), "root": meta["root"], "mode": args.mode,
             "base_warning": sync.warning, "files": len(files), "chunks": chunks, "panel": meta["panel"],
             "guidance": meta["guidance"], "replies": replies, "existing_comments": existing_comments,
             "existing_comments_error": existing_comments_error}
+    if handoff:
+        out.update(handoff=True, blind=blind)
+    return out
+
+
+class _Blind(Exception):
+    pass
+
+
+def _repo_private(ctx, repo) -> bool | None:
+    try:
+        return ctx.provider.repo_is_private(repo)
+    except Exception:  # noqa: BLE001 - a failed lookup is just unknown
+        return None

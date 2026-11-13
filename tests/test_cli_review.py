@@ -3,7 +3,14 @@ import stat
 from pathlib import Path
 
 import pytest
-from clihelp import call, make_ctx, write_findings
+from clihelp import (
+    call,
+    finish_review,
+    make_ctx,
+    pr_setup,
+    run_pr_context,
+    write_findings,
+)
 from fakes import FakeProvider, FakeRunner
 from gitutil import commit_file, make_origin_and_clone, push_branch, sh
 
@@ -11,15 +18,6 @@ from codecheck.config import ReviewConfig
 from codecheck.core.render import ATTRIBUTION
 
 pytestmark = pytest.mark.usefixtures("git_env")
-
-
-def finish_review(ctx, out, per_member=None, aggregated=None):
-    """Simulate the agents: every panel member writes a findings file, then the aggregator writes its own."""
-    run_dir = Path(out["run_dir"])
-    members = out["panel"]["members"]
-    write_findings(run_dir, {m: (per_member or {}).get(m, []) for m in members})
-    write_findings(run_dir, {"aggregator": aggregated if aggregated is not None else {"findings": [], "dropped": []}})
-    return run_dir
 
 
 def test_local_flow_and_unchanged_noop_and_seen_suppression(tmp_path):
@@ -61,24 +59,6 @@ def test_local_flow_and_unchanged_noop_and_seen_suppression(tmp_path):
     assert res["new_count"] == 0 and res["unchanged_count"] == 1
     code, res = call(ctx, "cleanup", "--run", out2["run_id"])
     assert res == {"removed": False, "run_dir_removed": True} and not Path(out2["run_dir"]).exists()
-
-
-def pr_setup(tmp_path, **config_over):
-    origin, clone = make_origin_and_clone(tmp_path)
-    sha = push_branch(tmp_path, origin, "feature", {"app.py": "x = 1\ny = 2\n"})
-    provider = FakeProvider()
-    pr = provider.add_pr(head_ref="feature", head_sha=sha)
-    provider.files[pr.ref] = ["app.py"]
-    ctx = make_ctx(tmp_path, clone, provider=provider, **config_over)
-    return ctx, provider, pr
-
-
-def run_pr_context(ctx, pr):
-    code, out = call(ctx, "precheck", "--mode", "pr", "--pr", str(pr.ref))
-    assert out["proceed"], out
-    code, out = call(ctx, "context", "--mode", "pr", "--pr", str(pr.ref))
-    assert code == 0, out
-    return out
 
 
 def test_pr_flow_posts_one_inline_review_and_marks_head(tmp_path):
@@ -648,3 +628,91 @@ def test_precheck_pr_asks_whoami_once(tmp_path):
     provider.whoami = lambda: calls.append(1) or real()
     call(ctx, "precheck", "--mode", "pr", "--pr", str(pr.ref))
     assert len(calls) == 1
+
+
+def test_precheck_pr_skips_approved_head(tmp_path):
+    from codecheck.models import Review
+
+    ctx, provider, pr = pr_setup(tmp_path)
+    provider.reviews[pr.ref] = [Review("bob", pr.head_sha, "2026-01-01T00:00:00Z", "APPROVED")]
+    _code, out = call(ctx, "precheck", "--mode", "pr", "--pr", str(pr.ref))
+    assert out["proceed"] is False and "already approved by bob" in out["reason"]
+    _code, out = call(ctx, "precheck", "--mode", "pr", "--pr", str(pr.ref), "--force")
+    assert out["proceed"] is True
+
+
+def _handoff(ctx):
+    from dataclasses import replace
+
+    ctx.config = replace(ctx.config, shadow=replace(ctx.config.shadow, handoff=True))
+
+
+def _human_thread():
+    from codecheck.models import Thread, ThreadComment
+
+    return Thread("T9", "app.py", 1, False, False, (ThreadComment(1, "alice", "why?", "2026-01-02T00:00:00Z"),))
+
+
+def _run_record(ctx, out):
+    return next(r for r in ctx.shadow.read(out["run_id"]) if r["type"] == "run")
+
+
+def test_context_blind_when_handoff_on(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path)
+    _handoff(ctx)
+    provider.threads[pr.ref] = [_human_thread()]
+    code, out = call(ctx, "context", "--mode", "pr", "--pr", str(pr.ref))
+    assert code == 0, out
+    assert not (Path(out["run_dir"]) / "existing-comments.md").exists()
+    assert provider.thread_calls == [] and provider.review_calls == []
+    assert out["handoff"] is True and out["blind"] is True
+    assert out["replies"] is None and out["existing_comments"] is None
+    meta = json.loads((Path(out["run_dir"]) / "context.json").read_text())
+    assert (meta["handoff"], meta["blind"], meta["repo_private"]) == (True, True, None)
+
+
+def test_context_unchanged_when_handoff_off(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path)
+    provider.threads[pr.ref] = [_human_thread()]
+    code, out = call(ctx, "context", "--mode", "pr", "--pr", str(pr.ref))
+    assert code == 0, out
+    new = {"handoff", "blind", "repo_private"}
+    meta = json.loads((Path(out["run_dir"]) / "context.json").read_text())
+    assert not new & out.keys() and not new & meta.keys() and not new & _run_record(ctx, out).keys()
+    assert provider.private_calls == [] and provider.thread_calls
+    assert "why?" in (Path(out["run_dir"]) / "existing-comments.md").read_text()
+
+
+def test_context_records_repo_private(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path)
+    _handoff(ctx)
+    provider.private = False
+    _code, out = call(ctx, "context", "--mode", "pr", "--pr", str(pr.ref))
+    rec = _run_record(ctx, out)
+    assert (rec["handoff"], rec["blind"], rec["repo_private"]) == (True, True, False)
+    assert provider.private_calls == [pr.ref.repo]
+
+
+def test_context_repo_private_lookup_failure_is_none(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path)
+    _handoff(ctx)
+
+    def boom(repo):
+        raise RuntimeError("x")
+
+    provider.repo_is_private = boom
+    _code, out = call(ctx, "context", "--mode", "pr", "--pr", str(pr.ref))
+    assert _run_record(ctx, out)["repo_private"] is None
+
+
+def test_context_local_mode_handoff_is_not_blind(tmp_path):
+    _, clone = make_origin_and_clone(tmp_path)
+    ctx = make_ctx(tmp_path, clone)
+    _handoff(ctx)
+    sh(clone, "checkout", "-b", "feat")
+    commit_file(clone, "n.py", "x = 1\n", "add n")
+    code, out = call(ctx, "context", "--mode", "local")
+    assert code == 0, out
+    assert out["handoff"] is True and out["blind"] is False
+    rec = _run_record(ctx, out)
+    assert rec["blind"] is False and rec["repo_private"] is None

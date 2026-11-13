@@ -1,4 +1,4 @@
-from codecheck.commands._common import pr_activity
+from codecheck.commands._common import approval_skip, pr_activity
 from codecheck.core.precheck import review_verdict
 from codecheck.core.state import WorkItem, babysit_work, select_work
 
@@ -45,6 +45,10 @@ def _consider(ctx, mode: str, ref, me: str) -> tuple[WorkItem | None, str | None
             return None, verdict.reason
         if verdict.kind == "reviewed":
             return None, None  # this head was already reviewed (by the loop or by hand)
+        # Only a PR that would become work costs the extra `list_reviews` call of the approval check.
+        approved = approval_skip(ctx, ref, pr)
+        if approved:
+            return None, approved
         return WorkItem(ref, pr.head_sha, "new head"), None
     if pr.is_cross_repo:
         return None, "fork-based PR: cannot push in Phase 1"

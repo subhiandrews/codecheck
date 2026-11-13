@@ -4,6 +4,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from fakes import FakeProvider
+from gitutil import make_origin_and_clone, push_branch
 
 from codecheck.cli import AppContext, main
 from codecheck.config import Config, ShadowConfig
@@ -40,3 +41,30 @@ def call(ctx, *argv: str, stdin: str | None = None):
 def write_findings(run_dir, mapping: dict) -> None:
     for member, content in mapping.items():
         (Path(run_dir) / "findings" / f"{member}.json").write_text(json.dumps(content))
+
+
+def finish_review(ctx, out, per_member=None, aggregated=None):
+    """Simulate the agents: every panel member writes a findings file, then the aggregator writes its own."""
+    run_dir = Path(out["run_dir"])
+    members = out["panel"]["members"]
+    write_findings(run_dir, {m: (per_member or {}).get(m, []) for m in members})
+    write_findings(run_dir, {"aggregator": aggregated if aggregated is not None else {"findings": [], "dropped": []}})
+    return run_dir
+
+
+def pr_setup(tmp_path, **config_over):
+    origin, clone = make_origin_and_clone(tmp_path)
+    sha = push_branch(tmp_path, origin, "feature", {"app.py": "x = 1\ny = 2\n"})
+    provider = FakeProvider()
+    pr = provider.add_pr(head_ref="feature", head_sha=sha)
+    provider.files[pr.ref] = ["app.py"]
+    ctx = make_ctx(tmp_path, clone, provider=provider, **config_over)
+    return ctx, provider, pr
+
+
+def run_pr_context(ctx, pr):
+    code, out = call(ctx, "precheck", "--mode", "pr", "--pr", str(pr.ref))
+    assert out["proceed"], out
+    code, out = call(ctx, "context", "--mode", "pr", "--pr", str(pr.ref))
+    assert code == 0, out
+    return out

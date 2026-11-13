@@ -79,6 +79,15 @@ def test_list_prs_builds_search_with_repos():
         gh.list_prs("bogus", [])
 
 
+def test_repo_is_private_reads_gh_output_and_returns_none_on_failure():
+    argv = ("gh", "repo", "view", "o/r", "--json", "isPrivate", "--jq", ".isPrivate")
+    assert GitHubProvider(FakeRunner().on(*argv, stdout="true\n")).repo_is_private("o/r") is True
+    assert GitHubProvider(FakeRunner().on(*argv, stdout="false\n")).repo_is_private("o/r") is False
+    assert GitHubProvider(FakeRunner().on(*argv, returncode=1, stderr="boom")).repo_is_private("o/r") is None
+    assert GitHubProvider(FakeRunner().on(*argv, stdout="weird")).repo_is_private("o/r") is None
+    assert GitHubProvider(FakeRunner()).repo_is_private("--bad/x") is None
+
+
 def test_clone_argv():
     assert GitHubProvider(FakeRunner()).clone_argv("o/r", "/d") == ["gh", "repo", "clone", "o/r", "/d"]
 

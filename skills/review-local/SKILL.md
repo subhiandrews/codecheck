@@ -22,7 +22,8 @@ Reviews the current branch against `<remote>/<base>` (fetched first) and prints 
 4. Run `code-check ingest --run <run_id>`. If `incomplete` is true, remember which reviewers failed and continue.
 5. Dispatch one Agent call with `subagent_type` `code-check:aggregator` and the prompt `RUN_DIR=<run_dir>`.
 6. Run `code-check post --run <run_id>` and show its `text` field to the user verbatim. If `incomplete` is true, add one line naming `failed_reviewers`. If any subagent's final `done:` line contains `ignored guidance: ...`, add one line relaying those reasons.
-7. Run `code-check cleanup --run <run_id>` to remove the run directory, even when an earlier step failed.
+7. If the `context` output contains `handoff: true`, run `code-check handoff --run <run_id>` and ignore its output; otherwise skip this step.
+8. Run `code-check cleanup --run <run_id>` to remove the run directory, even when an earlier step failed.
 
 ## Rules
 

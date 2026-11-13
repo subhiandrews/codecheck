@@ -16,7 +16,12 @@ Python 3.14 (CI asserts >= 3.14.10). The venv lives in the repo at `.venv`.
 node --test tests-node/*.test.js                 # installer tests (Node >= 20)
 .venv/bin/python -m codecheck <subcommand>       # run the CLI (also: bin/code-check wrapper)
 .venv/bin/python -m codecheck gen-agents --out agents   # regenerate agents/*.md
+.venv/bin/python -m codecheck eval --replay      # deterministic golden-set replay (prints JSON with `passed`)
+.venv/bin/python -m codecheck eval --live [--if-reachable]   # live snippet eval (needs a reachable model)
+scripts/install-git-hooks.sh                     # opt in: git config core.hooksPath .githooks
 ```
+
+**Commit gates.** `scripts/gates.sh` runs `eval --replay` always and `eval --live --if-reachable` only when a staged file matches a pattern in `scripts/gate-paths.txt` (review-behaviour paths); the live gate skips, never blocks, when no model is reachable. `.githooks/pre-commit` runs ruff, eslint and the gates. `scripts/install-git-hooks.sh` sets `core.hooksPath`, which is repository-level config shared by every worktree, so it is a deliberate user step and nothing here runs it. The Claude hook in `.claude/settings.json` runs `scripts/gates.sh --if-no-git-hook`, which exits at once when the git hook is installed so a commit does not run the gates twice. That hook runs before the commit command, so its gated set is the union of staged, unstaged tracked and untracked paths (it may run the live gate extra, never skips it); `git -C <other worktree> commit` is out of scope for it. `CODE_CHECK_BIN` overrides the CLI the gates call; it is a command line (word-split, may carry arguments), not a path, so a path with spaces cannot be used there. On success `gates.sh` prints one `gates: ...` summary line to stderr. The live gate can take up to about 2 x `run_pr.timeout_seconds` plus a probe, while the Claude hook has a 900 s timeout and Claude Code may let the commit through when a hook times out: the git `pre-commit` hook is the authoritative gate, the Claude hook a convenience for people who have not installed it. CI runs `eval --replay` too.
 
 `.venv/bin/ruff check .` must pass (default rules, no config file; ruff is in the `dev` extra). A project hook in `.claude/settings.json` runs it before any `git commit` Claude runs and blocks the commit on failure. Every CLI subcommand prints exactly one JSON document on stdout; errors are JSON too (a catch-all in `cli.py`).
 

@@ -52,6 +52,7 @@ class DeepReviewerConfig:
 class ShadowConfig:
     enabled: bool = True
     store: str = "~/.local/share/code-check/shadow"
+    handoff: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -23,6 +23,7 @@ def record_run(shadow: ShadowStore, meta: Mapping, diff: str, cfg: Config) -> No
         "head_sha": meta.get("head_sha"), "mode": meta.get("mode"), "panel": list(meta["panel"]["members"]),
         "models": dict(meta.get("models", {})), "tool_version": __version__, "config_hash": config_hash(cfg),
         "tokens": None,
+        **({k: meta.get(k) for k in ("handoff", "blind", "repo_private")} if "handoff" in meta else {}),
     })
     if diff:
         shadow.save_diff(run_id, diff)
