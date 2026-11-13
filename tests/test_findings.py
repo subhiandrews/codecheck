@@ -107,3 +107,20 @@ def test_non_security_finding_text_is_not_scrubbed():
 def test_security_finding_without_suggestion_still_validates():
     findings, _ = validate_findings([{k: v for k, v in _SEC.items() if k != "suggestion"}], reviewer="r")
     assert findings[0].suggestion is None
+
+
+import pytest
+
+
+@pytest.mark.parametrize("cat", ["Security", " SECURITY "])
+def test_security_scrub_ignores_category_case_and_padding(cat):
+    findings, _ = validate_findings([{**_SEC, "category": cat}], reviewer="r")
+    assert findings[0].message == "key is [REDACTED] in config"
+    assert findings[0].suggestion == "rotate [REDACTED] now"
+
+
+@pytest.mark.parametrize("cat", ["insecurity", "bug"])
+def test_scrub_match_is_exact_not_substring(cat):
+    findings, _ = validate_findings([{**_SEC, "category": cat}], reviewer="r")
+    assert findings[0].message == "key is AKIAIOSFODNN7EXAMPLE in config"
+    assert findings[0].suggestion == "rotate AKIAIOSFODNN7EXAMPLE now"

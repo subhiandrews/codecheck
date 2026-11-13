@@ -55,7 +55,7 @@ def validate_findings(raw: object, *, reviewer: str, root: str | None = None) ->
             errors.extend(f"{where}: {p}" for p in problems)
             continue
         message, category = message.strip(), category.strip()
-        if category == "security":
+        if category.casefold() == "security":
             # Backstop: comments are public, so never let an echoed secret through.
             message = scrub_text(message)
             suggestion = scrub_text(suggestion) if suggestion is not None else None
