@@ -9,7 +9,7 @@ WANT="$(cat "$ROOT/VERSION" 2>/dev/null || echo dev)"
 STALE="${CODE_CHECK_LOCK_STALE_SECS:-1800}"
 HEARTBEAT=$((STALE / 3))
 [ "$HEARTBEAT" -ge 1 ] || HEARTBEAT=1
-WAIT_MAX=$((STALE + 60))
+WAIT_MAX=$((STALE + ${CODE_CHECK_WAIT_MARGIN_SECS:-60}))
 
 current() {
   [ -x "$VENV/bin/python" ] && [ "$(cat "$DATA/installed-version" 2>/dev/null || echo none)" = "$WANT" ]
@@ -22,43 +22,54 @@ LOCK="$DATA/.lock"
 TOKEN="$$-$(date +%s)"
 owns_lock() { [ "$(cat "$LOCK/owner" 2>/dev/null || true)" = "$TOKEN" ]; }
 
+BREAK_STALE="${CODE_CHECK_BREAK_STALE_SECS:-60}"
 waited=0
+nobeat=0
+brk=0
 until mkdir "$LOCK" 2>/dev/null; do
   if [ ! -e "$LOCK" ]; then
     echo "code-check: cannot create lock $LOCK (is $DATA writable?)" >&2
     exit 1
   fi
-  seen="$(cat "$LOCK/owner" 2>/dev/null || true)"
-  beat="$(cat "$LOCK/beat" 2>/dev/null || true)"
-  case "$beat" in
-    ''|*[!0-9]*) ;;
-    *)
-      if [ $(( $(date +%s) - beat )) -gt "$STALE" ]; then
-        # Breaking is serialized by a short-lived break lock; under it the lock is re-read and
-        # removed only if it is still the exact stale one we saw, so a fresh lock is never removed.
-        if mkdir "$LOCK.break" 2>/dev/null; then
-          date +%s > "$LOCK.break/t"
-          if [ "$(cat "$LOCK/owner" 2>/dev/null || true)" = "$seen" ] && [ "$(cat "$LOCK/beat" 2>/dev/null || true)" = "$beat" ]; then
-            rm -rf "$LOCK"
-          fi
-          rm -rf "$LOCK.break"
-        else
-          bt="$(cat "$LOCK.break/t" 2>/dev/null || true)"
-          case "$bt" in
-            ''|*[!0-9]*) ;;
-            *) [ $(( $(date +%s) - bt )) -le 60 ] || rm -rf "$LOCK.break" ;;
-          esac
-          sleep 1
-        fi
-        continue
-      fi
-      ;;
-  esac
-  current && exit 0
   waited=$((waited + 1))
   if [ "$waited" -gt "$WAIT_MAX" ]; then
     echo "code-check: timed out after ${WAIT_MAX}s waiting for another install; remove $LOCK if no install is running" >&2
     exit 1
+  fi
+  current && exit 0
+  # The break mutex is held only for milliseconds; one that persists is from a dead breaker.
+  if [ -d "$LOCK.break" ]; then
+    brk=$((brk + 1))
+    if [ "$brk" -gt "$BREAK_STALE" ]; then
+      if mv "$LOCK.break" "$LOCK.break.dead.$$" 2>/dev/null; then rm -rf "$LOCK.break.dead.$$"; fi
+      brk=0
+    fi
+  else
+    brk=0
+  fi
+  seen="$(cat "$LOCK/owner" 2>/dev/null || true)"
+  beat="$(cat "$LOCK/beat" 2>/dev/null || true)"
+  stale=0
+  case "$beat" in
+    ''|*[!0-9]*)
+      # No readable heartbeat: treat as dead once it has stayed that way longer than the threshold.
+      nobeat=$((nobeat + 1))
+      [ "$nobeat" -le "$STALE" ] || stale=1
+      ;;
+    *)
+      nobeat=0
+      [ $(( $(date +%s) - beat )) -le "$STALE" ] || stale=1
+      ;;
+  esac
+  if [ "$stale" = 1 ] && mkdir "$LOCK.break" 2>/dev/null; then
+    # Under the break mutex, remove the lock only if it is still the exact stale one we saw,
+    # so a fresh lock is never removed.
+    if [ "$(cat "$LOCK/owner" 2>/dev/null || true)" = "$seen" ] && [ "$(cat "$LOCK/beat" 2>/dev/null || true)" = "$beat" ]; then
+      rm -rf "$LOCK"
+    fi
+    rm -rf "$LOCK.break"
+    nobeat=0
+    continue
   fi
   sleep 1
 done
@@ -79,19 +90,28 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 1' INT TERM HUP
 
+P=$$
 (
-  while :; do
+  while kill -0 "$P" 2>/dev/null; do
     sleep "$HEARTBEAT"
+    kill -0 "$P" 2>/dev/null || exit 0
     owns_lock || exit 0
     date +%s > "$LOCK/beat"
   done
 ) >/dev/null 2>&1 &
 HBPID=$!
 
+# We hold the lock: leftovers belong to dead runs. Restore an orphaned previous venv if the
+# live one is missing, drop everything else.
+for o in "$VENV".old.*; do
+  [ -e "$o" ] || continue
+  if [ ! -e "$VENV" ]; then mv "$o" "$VENV" 2>/dev/null || true; else rm -rf "$o"; fi
+done
+rm -rf "$VENV".new.* 2>/dev/null || true
+
 # Another process may have finished while we waited.
 current && exit 0
 
-rm -rf "$VENV".new.* "$VENV".old.* 2>/dev/null || true
 if command -v uv >/dev/null 2>&1; then
   uv venv --python 3.14 "$NEW" >&2
   uv pip install --python "$NEW/bin/python" --quiet "$ROOT" >&2

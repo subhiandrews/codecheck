@@ -306,3 +306,61 @@ def test_concurrent_bootstraps_install_once(tmp_path):
     procs = [subprocess.Popen([str(REPO / "hooks/ensure-runtime.sh")], env=env) for _ in range(4)]
     assert [p.wait(timeout=60) for p in procs] == [0, 0, 0, 0]
     assert (tmp_path / "log").read_text().count("pip install") == 1
+
+
+def _wait_for(pred, timeout=15):
+    end = time.time() + timeout
+    while time.time() < end:
+        if pred():
+            return True
+        time.sleep(0.2)
+    return False
+
+
+def test_killed_holder_heartbeat_stops_and_next_run_recovers(tmp_path):
+    _stub_uv(tmp_path / "bin")
+    env = _env(tmp_path, STUB_SLEEP="40", CODE_CHECK_LOCK_STALE_SECS="3")
+    data = tmp_path / "data"
+    proc = subprocess.Popen([str(REPO / "hooks/ensure-runtime.sh")], env=env)
+    assert _wait_for(lambda: list(data.glob("venv.new.*")) and (data / ".lock/beat").exists())
+    proc.kill()
+    proc.wait()
+    time.sleep(3)  # heartbeat interval is 1s; it must notice the parent is gone
+    beat = (data / ".lock/beat").read_text()
+    time.sleep(2.5)
+    assert (data / ".lock/beat").read_text() == beat, "heartbeat kept a dead holder's lock fresh"
+    env2 = _env(tmp_path, CODE_CHECK_LOCK_STALE_SECS="3")
+    res = subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=env2, capture_output=True, text=True, timeout=60)
+    assert res.returncode == 0 and (data / "venv/bin/python").exists()
+    assert list(data.glob("venv.new.*")) == []
+
+
+def test_dead_break_mutex_does_not_hang_the_waiter(tmp_path):
+    _stub_uv(tmp_path / "bin")
+    lock = _make_lock(tmp_path, "dead-1", 1_000_000_000)
+    (tmp_path / "data/.lock.break").mkdir()  # breaker died before doing anything
+    env = _env(tmp_path, CODE_CHECK_LOCK_STALE_SECS="3", CODE_CHECK_BREAK_STALE_SECS="2")
+    res = subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=env, capture_output=True, text=True, timeout=60)
+    assert res.returncode == 0 and (tmp_path / "data/venv/bin/python").exists()
+    assert not lock.exists() and not (tmp_path / "data/.lock.break").exists()
+
+
+def test_wait_timeout_is_reachable_with_a_wedged_mutex(tmp_path):
+    _stub_uv(tmp_path / "bin")
+    _make_lock(tmp_path, "dead-1", 1_000_000_000)
+    (tmp_path / "data/.lock.break").mkdir()
+    env = _env(tmp_path, CODE_CHECK_LOCK_STALE_SECS="1", CODE_CHECK_BREAK_STALE_SECS="1000",
+               CODE_CHECK_WAIT_MARGIN_SECS="4")
+    res = subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=env, capture_output=True, text=True, timeout=120)
+    assert res.returncode != 0 and "timed out" in res.stderr
+
+
+def test_orphaned_previous_venv_is_restored_when_live_venv_is_missing(tmp_path):
+    _stub_uv(tmp_path / "bin")
+    data = tmp_path / "data"
+    (data / "venv.old.999/bin").mkdir(parents=True)
+    (data / "venv.old.999/bin/python").write_text("#!/bin/sh\necho old\n")
+    (data / "venv.old.999/bin/python").chmod(0o755)
+    env = _env(tmp_path, STUB_FAIL="1")
+    assert subprocess.run([str(REPO / "hooks/ensure-runtime.sh")], env=env, capture_output=True).returncode != 0
+    assert "echo old" in (data / "venv/bin/python").read_text()
