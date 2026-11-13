@@ -307,3 +307,20 @@ def test_review_loop_skips_fork_prs_unless_enabled(tmp_path):
     ctx.config = replace(ctx.config, loop=replace(ctx.config.loop, review_forks=True))
     out = call(ctx, "loop", "--mode", "review")[1]
     assert [r["pr"] for r in out["results"]] == [str(refs[0])]
+
+
+def test_run_pr_security_flag_extends_the_review_prompt(tmp_path):
+    ctx, _provider, _fake, refs, _ = setup(tmp_path)
+    base = ("Use the code-check review-pr skill on o/r#1. Run unattended: never ask questions; "
+            "finish with one line summarizing the outcome.")
+    plain = call(ctx, "run-pr", "--mode", "review", "--pr", str(refs[0]), "--dry-run")[1]["argv"]
+    sec = call(ctx, "run-pr", "--mode", "review", "--pr", str(refs[0]), "--security", "--dry-run")[1]["argv"]
+    assert plain[2] == base
+    assert sec[2] == base + " Pass the security argument."
+
+
+def test_run_pr_security_flag_is_review_only(tmp_path):
+    ctx, _provider, fake, refs, _ = setup(tmp_path)
+    code, out = call(ctx, "run-pr", "--mode", "babysit", "--pr", str(refs[0]), "--security", "--dry-run")
+    assert code != 0 and "review mode only" in json.dumps(out)
+    assert claude_calls(fake) == []

@@ -408,3 +408,14 @@ def test_long_running_commands_carry_bash_timeout_guidance():
         text = (REPO / f"skills/{skill}/SKILL.md").read_text()
         assert "600000" in text and "push --pr" in text
     assert "code-check cleanup --run" in (REPO / "skills/review-local/SKILL.md").read_text()
+
+
+def test_security_argument_is_documented_and_wired():
+    for name, mode in (("review-local", "local"), ("review-pr", "pr")):
+        text = (REPO / f"skills/{name}/SKILL.md").read_text()
+        spans = [s for s in SPAN.findall(text) if s.startswith("code-check context --mode " + mode)]
+        assert spans and all(invocation_errors(s) == [] for s in spans)
+        assert "`--security`" in text
+        assert "security" in frontmatter(text)["argument-hint"]
+    for name in ("address-comments", "babysit-pr"):
+        assert "guidance" in (REPO / f"skills/{name}/SKILL.md").read_text()

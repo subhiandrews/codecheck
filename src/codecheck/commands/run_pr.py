@@ -22,6 +22,7 @@ def add_arguments(p) -> None:
     p.add_argument("--pr", required=True)
     p.add_argument("--fingerprint", default=None,
                    help="loop bookkeeping: mark this work item processed on success (or after repeated failures)")
+    p.add_argument("--security", action="store_true", help="review mode only: also run the security reviewer")
     p.add_argument("--dry-run", action="store_true")
 
 
@@ -43,13 +44,18 @@ def parse_result(stdout: str, returncode: int, stderr: str) -> dict:
             "cost": data.get("total_cost_usd"), "usage": data.get("usage")}
 
 
-def run_one(ctx, mode: str, ref, fingerprint: str | None = None, dry_run: bool = False) -> dict:
+def run_one(ctx, mode: str, ref, fingerprint: str | None = None, dry_run: bool = False,
+            security: bool = False) -> dict:
+    if security and mode != "review":
+        raise CodeCheckError("--security applies to review mode only")
     cfg = ctx.config.run_pr
     if ref.repo.startswith("-"):
         raise CodeCheckError(f"unsafe repository name {ref.repo!r}")
     template = cfg.review_prompt if mode == "review" else cfg.babysit_prompt
     tools = cfg.review_allowed_tools if mode == "review" else cfg.babysit_allowed_tools
     prompt = template.format(ref=ref)
+    if security:
+        prompt += " Pass the security argument."
     # argv values must never be read as options by claude.
     if prompt.lstrip().startswith("-") or any(t.lstrip().startswith("-") or not t.strip() for t in tools):
         raise CodeCheckError("run_pr prompt and allowed tools must not start with '-'")
@@ -100,4 +106,4 @@ def loop_bookkeeping(ctx, mode: str, ref, fingerprint: str, ok: bool) -> dict:
 
 
 def run(args, ctx) -> dict:
-    return run_one(ctx, args.mode, ctx.resolve_ref(args.pr), args.fingerprint, args.dry_run)
+    return run_one(ctx, args.mode, ctx.resolve_ref(args.pr), args.fingerprint, args.dry_run, args.security)
