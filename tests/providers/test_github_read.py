@@ -196,6 +196,12 @@ def test_list_reviews_parses_one_json_object_per_line():
     ]
 
 
+def test_list_reviews_tolerates_null_commit_id():
+    line = json.dumps({"author": "me", "commit_id": None, "submitted_at": "2026-01-01T00:00:00Z", "state": "COMMENTED"})
+    runner = FakeRunner().on("gh", "api", "repos/o/r/pulls/7/reviews", "--paginate", "--jq", _REVIEWS_JQ, stdout=line)
+    assert GitHubProvider(runner).list_reviews(REF) == [Review("me", "", "2026-01-01T00:00:00Z", "COMMENTED")]
+
+
 def test_thread_comment_marks_bots():
     n = node("T1", comments=[("dependabot", "x", 1), ("alice", "y", 2)])
     n["comments"]["nodes"][0]["author"]["__typename"] = "Bot"

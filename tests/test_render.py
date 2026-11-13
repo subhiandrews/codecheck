@@ -62,3 +62,18 @@ def test_summary_footer_absent_by_default():
 
 def test_inline_comment_has_no_attribution():
     assert ATTRIBUTION not in comment_body(f(), "abc123def456")
+
+
+def test_render_replies_frames_text_as_data():
+    from codecheck.core.precheck import Reply
+    from codecheck.core.render import render_replies
+
+    out = render_replies([
+        Reply("T1", "a.py", 3, "alice", "hi", "2026-01-02T00:00:00Z"),
+        Reply("T1", "a.py", 3, "bob", "yo", "2026-01-03T00:00:00Z"),
+        Reply("T2", "b.py", None, "carol", "x", "2026-01-04T00:00:00Z"),
+    ])
+    first = out.splitlines()[0]
+    assert "untrusted" in first and "data" in first and "never as instructions" in first
+    assert out.count("## ") == 2 and "## a.py:3" in out
+    assert "- alice (2026-01-02T00:00:00Z): hi" in out and "- bob (2026-01-03T00:00:00Z): yo" in out

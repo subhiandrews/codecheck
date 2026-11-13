@@ -180,7 +180,7 @@ class GitHubProvider:
                 continue
             d = json.loads(line)
             if d.get("submitted_at"):
-                reviews.append(Review(d["author"], d["commit_id"], d["submitted_at"], d["state"]))
+                reviews.append(Review(d["author"], d.get("commit_id") or "", d["submitted_at"], d["state"]))
         return reviews
 
     def get_checks(self, ref: PRRef) -> list[Check]:
