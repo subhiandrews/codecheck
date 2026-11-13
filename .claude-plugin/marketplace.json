@@ -1,0 +1,12 @@
+{
+  "name": "code-check",
+  "owner": { "name": "subhiandrews" },
+  "plugins": [
+    {
+      "name": "code-check",
+      "source": "./",
+      "version": "0.1.0",
+      "description": "Review code and address review comments on pull requests with a deterministic CLI and a panel of reviewer agents."
+    }
+  ]
+}

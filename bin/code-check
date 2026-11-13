@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+if [ -n "${CODE_CHECK_PYTHON:-}" ]; then
+  exec "$CODE_CHECK_PYTHON" -m codecheck "$@"
+fi
+. "$(dirname "$0")/../hooks/common.sh"
+# Cheap and idempotent: only does work when the venv is missing or the version changed.
+"$ROOT/hooks/ensure-runtime.sh" >&2
+exec "$VENV/bin/python" -m codecheck "$@"
