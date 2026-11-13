@@ -194,6 +194,20 @@ def test_list_work_skips_approved_pr(tmp_path):
     assert out["skipped"] == [{"pr": str(pr.ref), "reason": "already approved by bob"}]
 
 
+def test_list_work_checks_approval_only_for_prs_it_would_review(tmp_path):
+    # An already-reviewed head costs only the `list_reviews` call `pr_activity` makes; the approval check is skipped.
+    _origin, clone = make_origin_and_clone(tmp_path)
+    provider = FakeProvider()
+    provider.me = "me"
+    pr = provider.add_pr(1, head_sha="sha1")
+    provider.reviews[pr.ref] = [Review("me", "sha1", "2026-01-01T00:00:00Z", "COMMENTED")]
+    provider.listing["review-requested"] = [pr.ref]
+    ctx = make_ctx(tmp_path, clone, provider=provider)
+    _code, out = call(ctx, "list-work", "--mode", "review")
+    assert out["items"] == [] and out["skipped"] == []
+    assert provider.review_calls == [pr.ref]
+
+
 def test_list_work_babysit_mode_uses_threads_and_checks_and_skips_forks(tmp_path):
     _origin, clone = make_origin_and_clone(tmp_path)
     provider = FakeProvider()
