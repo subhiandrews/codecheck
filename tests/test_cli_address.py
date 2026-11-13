@@ -181,6 +181,19 @@ def test_list_work_review_mode_filters_and_caps(tmp_path):
     assert str(refs[2]) in [i["pr"] for i in call(ctx, "list-work", "--mode", "review")[1]["items"]]
 
 
+def test_list_work_skips_approved_pr(tmp_path):
+    _origin, clone = make_origin_and_clone(tmp_path)
+    provider = FakeProvider()
+    provider.me = "me"
+    pr = provider.add_pr(1, head_sha="sha1")
+    provider.reviews[pr.ref] = [Review("bob", "sha1", "2026-01-01T00:00:00Z", "APPROVED")]
+    provider.listing["review-requested"] = [pr.ref]
+    ctx = make_ctx(tmp_path, clone, provider=provider)
+    _code, out = call(ctx, "list-work", "--mode", "review")
+    assert out["items"] == []
+    assert out["skipped"] == [{"pr": str(pr.ref), "reason": "already approved by bob"}]
+
+
 def test_list_work_babysit_mode_uses_threads_and_checks_and_skips_forks(tmp_path):
     _origin, clone = make_origin_and_clone(tmp_path)
     provider = FakeProvider()

@@ -43,6 +43,20 @@ def review_activity(reviews: Sequence[Review], threads: Sequence[Thread], me: st
     return Activity(last, tuple(replies))
 
 
+def approved_by(reviews: Sequence[Review], head_sha: str) -> str | None:
+    """A reviewer whose latest approving/blocking/dismissing review is an approval of this head."""
+    latest: dict[str, Review] = {}
+    for r in reviews:
+        if r.state not in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED") or not r.submitted_at:
+            continue  # comments do not change a verdict; pending reviews have no submit time
+        if r.author not in latest or r.submitted_at >= latest[r.author].submitted_at:
+            latest[r.author] = r
+    for author in sorted(latest):
+        if latest[author].state == "APPROVED" and latest[author].commit_id == head_sha:
+            return author
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class Verdict:
     kind: str  # "new" | "retry" | "replies" | "reviewed"

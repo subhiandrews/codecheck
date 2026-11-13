@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from codecheck.core.precheck import fetch_activity
+from codecheck.core.precheck import approved_by, fetch_activity
 from codecheck.errors import CodeCheckError
 
 
@@ -74,3 +74,9 @@ def pr_activity(ctx, ref, pr, me: str | None = None):
     me = me or ctx.provider.whoami()
     return fetch_activity(pr, ctx.state, me, lambda: ctx.provider.list_reviews(ref),
                           lambda: ctx.provider.list_threads(ref, reactions=False))
+
+
+def approval_skip(ctx, ref, pr) -> str | None:
+    """Why to skip a PR that someone already approved at its current head, else None."""
+    who = approved_by(ctx.provider.list_reviews(ref), pr.head_sha)
+    return f"already approved by {who}" if who else None

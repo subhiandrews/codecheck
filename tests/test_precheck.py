@@ -1,6 +1,7 @@
 from codecheck.core.precheck import (
     Activity,
     Reply,
+    approved_by,
     cap_replies,
     cheap_skip,
     fetch_activity,
@@ -219,3 +220,22 @@ def test_force_skips_replies_verdict(tmp_path):
     kw = {"ignore": (), "me": "me"}
     assert not precheck_pr(pr(), ["a.py"], s, activity=act, **kw).proceed
     assert precheck_pr(pr(), ["a.py"], s, activity=act, force=True, **kw).proceed
+
+
+def test_approved_by_rules():
+    def rv(author, commit, at, state):
+        return Review(author, commit, at, state)
+
+    assert approved_by([rv("bob", "h", "2026-01-01T00:00:00Z", "APPROVED")], "h") == "bob"
+    assert approved_by([rv("bob", "old", "2026-01-01T00:00:00Z", "APPROVED")], "h") is None
+    assert approved_by([rv("bob", "h", "2026-01-01T00:00:00Z", "APPROVED"),
+                        rv("bob", "h", "2026-01-02T00:00:00Z", "CHANGES_REQUESTED")], "h") is None
+    assert approved_by([rv("bob", "h", "2026-01-01T00:00:00Z", "APPROVED"),
+                        rv("bob", "h", "2026-01-02T00:00:00Z", "COMMENTED")], "h") == "bob"
+    assert approved_by([rv("bob", "h", "2026-01-01T00:00:00Z", "APPROVED"),
+                        rv("bob", "h", "2026-01-02T00:00:00Z", "DISMISSED")], "h") is None
+    assert approved_by([rv("ghost", "h", "2026-01-01T00:00:00Z", "APPROVED")], "h") == "ghost"
+    assert approved_by([rv("bob", "h", "", "APPROVED")], "h") is None
+    assert approved_by([rv("bob", "h", "2026-01-01T00:00:00Z", "APPROVED"),
+                        rv("amy", "h", "2026-01-01T00:00:00Z", "APPROVED"),
+                        rv("amy", "h", "2026-01-02T00:00:00Z", "CHANGES_REQUESTED")], "h") == "bob"

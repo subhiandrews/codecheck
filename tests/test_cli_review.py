@@ -648,3 +648,14 @@ def test_precheck_pr_asks_whoami_once(tmp_path):
     provider.whoami = lambda: calls.append(1) or real()
     call(ctx, "precheck", "--mode", "pr", "--pr", str(pr.ref))
     assert len(calls) == 1
+
+
+def test_precheck_pr_skips_approved_head(tmp_path):
+    from codecheck.models import Review
+
+    ctx, provider, pr = pr_setup(tmp_path)
+    provider.reviews[pr.ref] = [Review("bob", pr.head_sha, "2026-01-01T00:00:00Z", "APPROVED")]
+    _code, out = call(ctx, "precheck", "--mode", "pr", "--pr", str(pr.ref))
+    assert out["proceed"] is False and "already approved by bob" in out["reason"]
+    _code, out = call(ctx, "precheck", "--mode", "pr", "--pr", str(pr.ref), "--force")
+    assert out["proceed"] is True
