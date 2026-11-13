@@ -16,7 +16,12 @@ Python 3.14 (CI asserts >= 3.14.10). The venv lives in the repo at `.venv`.
 node --test tests-node/*.test.js                 # installer tests (Node >= 20)
 .venv/bin/python -m codecheck <subcommand>       # run the CLI (also: bin/code-check wrapper)
 .venv/bin/python -m codecheck gen-agents --out agents   # regenerate agents/*.md
+.venv/bin/python -m codecheck eval --replay      # deterministic golden-set replay (prints JSON with `passed`)
+.venv/bin/python -m codecheck eval --live [--if-reachable]   # live snippet eval (needs a reachable model)
+scripts/install-git-hooks.sh                     # opt in: git config core.hooksPath .githooks
 ```
+
+**Commit gates.** `scripts/gates.sh` runs `eval --replay` always and `eval --live --if-reachable` only when a staged file matches a pattern in `scripts/gate-paths.txt` (review-behaviour paths); the live gate skips, never blocks, when no model is reachable. `.githooks/pre-commit` runs ruff, eslint and the gates. `scripts/install-git-hooks.sh` sets `core.hooksPath`, which is repository-level config shared by every worktree, so it is a deliberate user step and nothing here runs it. The Claude hook in `.claude/settings.json` runs `scripts/gates.sh --if-no-git-hook`, which exits at once when the git hook is installed so a commit does not run the gates twice. `CODE_CHECK_BIN` overrides the CLI the gates call. CI runs `eval --replay` too.
 
 `.venv/bin/ruff check .` must pass (default rules, no config file; ruff is in the `dev` extra). A project hook in `.claude/settings.json` runs it before any `git commit` Claude runs and blocks the commit on failure. Every CLI subcommand prints exactly one JSON document on stdout; errors are JSON too (a catch-all in `cli.py`).
 

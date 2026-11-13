@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Lint, then run the eval gates (scripts/gates.sh). Install with scripts/install-git-hooks.sh.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT" || exit 1
+
+R="$ROOT/.venv/bin/ruff"
+if [ -x "$R" ]; then
+  "$R" check . >&2 || { echo 'ruff check failed: fix the findings above before committing' >&2; exit 1; }
+else
+  echo "ruff not found at $R (pip install -e '.[dev]'); skipping lint" >&2
+fi
+
+E="$ROOT/node_modules/.bin/eslint"
+if [ -x "$E" ]; then
+  "$E" . >&2 || { echo 'eslint failed: fix the findings above before committing' >&2; exit 1; }
+else
+  echo "eslint not found at $E (npm ci); skipping lint" >&2
+fi
+
+exec "$ROOT/scripts/gates.sh"

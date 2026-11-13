@@ -1,0 +1,7 @@
+^src/codecheck/agentgen\.py$
+^agents/
+^skills/
+^src/codecheck/config\.py$
+^src/codecheck/core/(findings|diffmap|policy|pipeline|render)
+^src/codecheck/commands/(ingest|post)\.py$
+^src/codecheck/evals/

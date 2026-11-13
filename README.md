@@ -313,6 +313,10 @@ Matching is tolerant, because live reviews vary from run to run. A reported find
 
 **Calibration still to do.** The two shipped snippets (`off-by-one`, `clean-code`) are marked `"calibrated": false`: their expected categories and severities were chosen from the reviewers' instructions, not from a real run. Run `code-check eval --live` once by hand, then adjust each snippet's category list and severity to what the panel reports where that is a defensible judgment, and set `calibrated` to true.
 
+## Development
+
+Run `scripts/install-git-hooks.sh` once to enable the checked-in pre-commit hook (`git config core.hooksPath .githooks`; this is repository-level config, so it applies to all worktrees). The hook runs ruff and eslint, then `scripts/gates.sh`: `code-check eval --replay` always, and `code-check eval --live --if-reachable` only when the staged files touch review behaviour (the patterns in `scripts/gate-paths.txt`). The live gate skips, and does not block the commit, when no model is reachable. Commits made by Claude Code run the same gates through `.claude/settings.json`, unless the git hook is installed (then the hook runs them once).
+
 ## Extending
 
 **A new code host.** Implement the `Provider` protocol in `src/codecheck/providers/base.py` (about a dozen methods that return the dataclasses in `models.py`), register it in `providers/__init__.py`, and run the shared contract suite against it by subclassing `ProviderContract` in `tests/providers/contract.py`. Nothing outside `providers/` needs to change. GitHub uses the `gh` CLI; GitLab (`glab`) and Bitbucket are planned for Phase 2.
