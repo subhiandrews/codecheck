@@ -1,4 +1,3 @@
-import pytest
 import json
 
 from codecheck.models import PRRef
@@ -21,9 +20,6 @@ class TestFakeProviderContract(ProviderContract):
 
 
 class TestGitHubContract(ProviderContract):
-    def test_write_side_does_not_raise(self):
-        pytest.skip("write side lands in Task 11")
-
     def make_provider(self):
         runner = (
             FakeRunner()

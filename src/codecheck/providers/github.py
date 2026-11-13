@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from codecheck.errors import ProviderError
-from codecheck.models import Check, PRRef, PullRequest, Thread, ThreadComment
+from codecheck.models import Check, Decision, PostResult, PRRef, PullRequest, ReviewComment, Thread, ThreadComment
 from codecheck.runner import CommandResult, CommandRunner
 
 _REMOTE = re.compile(r"[:/]([^/:]+/[^/]+?)(?:\.git)?/?$")
@@ -15,6 +15,8 @@ _BUCKET = {"pass": "pass", "fail": "fail", "pending": "pending", "skipping": "sk
 _SCOPES = {"review-requested": "--review-requested=@me", "authored": "--author=@me"}
 _PR_FIELDS = "number,title,body,author,baseRefName,headRefName,headRefOid,isDraft,state,url,isCrossRepository"
 _REPO = re.compile(r"[A-Za-z0-9_.][A-Za-z0-9_.-]*/[A-Za-z0-9_.][A-Za-z0-9_.-]*")
+_LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\[bot\])?")
+_SHA = re.compile(r"[0-9A-Fa-f]{1,64}")
 _DIGITS = re.compile(r"[0-9]+")
 _LOG_TAIL_CHARS = 20_000
 
@@ -37,6 +39,8 @@ def _repo(repo: str) -> str:
     """Reject anything that is not owner/name; in particular a leading '-' can never reach gh as an option."""
     if not isinstance(repo, str) or not _REPO.fullmatch(repo):
         raise ProviderError(f"invalid repository {repo!r}; expected owner/name")
+    if any(seg.strip(".") == "" for seg in repo.split("/")):
+        raise ProviderError(f"invalid repository {repo!r}; dot-only segments are not allowed")
     return repo
 
 
@@ -45,6 +49,18 @@ def _num(number: int) -> str:
     if isinstance(number, bool) or not _DIGITS.fullmatch(text):
         raise ProviderError(f"invalid PR number {number!r}")
     return text
+
+
+def _login(user: str) -> str:
+    if not isinstance(user, str) or not _LOGIN.fullmatch(user):
+        raise ProviderError(f"invalid user login {user!r}")
+    return user
+
+
+def _sha(sha: str) -> str:
+    if not isinstance(sha, str) or not _SHA.fullmatch(sha):
+        raise ProviderError(f"invalid commit id {sha!r}")
+    return sha
 
 
 def _thread(n: dict) -> Thread:
@@ -148,3 +164,44 @@ class GitHubProvider:
             raise ProviderError(f"invalid run id {check.run_id!r}")
         out = self._gh("run", "view", check.run_id, "--repo", _repo(ref.repo), "--log-failed").stdout
         return out[-_LOG_TAIL_CHARS:]
+
+    def post_review(
+        self, ref: PRRef, head_sha: str, body: str, comments: Sequence[ReviewComment], decision: Decision
+    ) -> PostResult:
+        endpoint = f"repos/{_repo(ref.repo)}/pulls/{_num(ref.number)}/reviews"
+        commit_id = _sha(head_sha)
+        argv = ["gh", "api", endpoint, "--method", "POST", "--input", "-"]
+
+        def payload(text: str, inline: Sequence[ReviewComment]) -> str:
+            return json.dumps({
+                "commit_id": commit_id, "body": text, "event": decision.event,
+                "comments": [{"path": c.path, "line": c.line, "side": c.side, "body": c.body} for c in inline],
+            })
+
+        res = self.runner.run(argv, input=payload(body, comments), cwd=self.cwd)
+        if res.returncode == 0:
+            return PostResult(len(comments))
+        if not comments:
+            raise ProviderError(f"posting review failed ({res.returncode}): {res.stderr.strip()[:500]}")
+        folded = body + "\n\n---\n_The host rejected the inline anchors, so the findings are listed here instead._\n\n"
+        folded += "\n\n".join(f"**`{c.path}:{c.line}`**\n{c.body}" for c in comments)
+        retry = self.runner.run(argv, input=payload(folded, []), cwd=self.cwd)
+        if retry.returncode != 0:
+            raise ProviderError(f"posting review failed ({retry.returncode}): {retry.stderr.strip()[:500]}")
+        return PostResult(0, degraded=True)
+
+    def reply(self, ref: PRRef, thread: Thread, body: str) -> None:
+        root = _num(thread.comments[0].id)
+        self._gh("api", f"repos/{_repo(ref.repo)}/pulls/{_num(ref.number)}/comments/{root}/replies",
+                 "--method", "POST", "-f", f"body={body}")
+
+    def resolve(self, thread: Thread) -> None:
+        self._gh("api", "graphql", "-f", f"query={RESOLVE_MUTATION}", "-f", f"id={thread.id}")
+
+    def request_review(self, ref: PRRef, users: Sequence[str]) -> None:
+        if not users:
+            return
+        args = ["api", f"repos/{_repo(ref.repo)}/pulls/{_num(ref.number)}/requested_reviewers", "--method", "POST"]
+        for user in users:
+            args += ["-f", f"reviewers[]={_login(user)}"]
+        self._gh(*args)
