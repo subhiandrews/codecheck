@@ -110,3 +110,11 @@ def test_dash_leading_bodies_are_data_not_options():
     gh.reply(REF, THREAD, "--evil")
     gh.post_review(REF, "abc", "--body", [ReviewComment("--x", 1, "RIGHT", "-y")], Decision("COMMENT", "r"))
     assert json.loads(runner.calls[1].input)["comments"][0]["path"] == "--x"
+
+
+@pytest.mark.parametrize("stderr", ["HTTP 401: Bad credentials", "HTTP 502: Bad Gateway", "error connecting to api.github.com"])
+def test_non_anchor_failures_with_inline_comments_raise_without_a_body_only_retry(stderr):
+    runner = FakeRunner().on(*REVIEWS, returncode=1, stderr=stderr)
+    with pytest.raises(ProviderError, match="posting review failed"):
+        GitHubProvider(runner).post_review(REF, "abc", "s", [ReviewComment("a.py", 1, "RIGHT", "x")], Decision("COMMENT", "r"))
+    assert len(runner.calls) == 1

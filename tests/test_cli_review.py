@@ -315,3 +315,28 @@ def test_draft_pr_is_never_posted_to(tmp_path):
     code, res = call(ctx, "post", "--run", out["run_id"])
     assert code == 0 and res["posted"] is False and res["draft"] is True
     assert provider.posted == [] and ctx.state.get(f"review:{pr.ref}") is None
+
+
+def test_repost_skips_findings_already_posted_inline_by_us(tmp_path):
+    from codecheck.models import Thread, ThreadComment
+
+    ctx, provider, pr = pr_setup(tmp_path)
+    first = {"file": "app.py", "line": 2, "severity": "warning", "category": "bug", "message": "y unused"}
+    second = {"file": "app.py", "line": 1, "severity": "suggestion", "category": "style", "message": "name x"}
+    out = run_pr_context(ctx, pr)
+    finish_review(ctx, out, aggregated={"findings": [first]})
+    call(ctx, "ingest", "--run", out["run_id"])
+    call(ctx, "post", "--run", out["run_id"])
+    body = provider.posted[0]["comments"][0].body
+    # GitHub now shows our comment as a thread; someone else quoting the marker does not count.
+    provider.threads[pr.ref] = [
+        Thread("T1", "app.py", 2, False, False, (ThreadComment(1, "me", body, "t"),)),
+        Thread("T2", "app.py", 1, False, False, (ThreadComment(2, "mallory", "<!-- code-check:finding:"
+                                                 + "0" * 12 + " -->", "t"),)),
+    ]
+    out2 = call(ctx, "context", "--mode", "pr", "--pr", str(pr.ref))[1]
+    finish_review(ctx, out2, aggregated={"findings": [first, second]})
+    call(ctx, "ingest", "--run", out2["run_id"])
+    code, res = call(ctx, "post", "--run", out2["run_id"])
+    assert res["posted"] and res["inline"] == 1 and res["already_posted"] == 1 and res["findings"] == 2
+    assert [c.line for c in provider.posted[1]["comments"]] == [1]

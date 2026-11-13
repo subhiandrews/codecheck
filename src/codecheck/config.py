@@ -1,5 +1,10 @@
-"""Layered configuration: defaults < user file < repo file < environment."""
+"""Layered configuration: defaults < repo `.code-check.toml` < user file < environment (spec section 9).
 
+Security-sensitive keys (REPO_FORBIDDEN) cannot come from the repository file: a repository is not
+trusted to choose the tools an unattended run gets, where state lives, or whether reviews auto-approve.
+"""
+
+import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
@@ -21,6 +26,7 @@ class ReviewConfig:
 class LoopConfig:
     max_prs_per_iteration: int = 5
     repos: tuple[str, ...] = ()
+    review_forks: bool = False  # the unattended review loop skips fork-based PRs unless this is true
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +62,13 @@ class RunPrConfig:
     claude_bin: str = "claude"
     timeout_seconds: int = 1800
     permission_mode: str = "dontAsk"
-    allowed_tools: tuple[str, ...] = ("Read", "Grep", "Glob", "Write", "Edit", "Agent", "Bash")
+    # Passes `--add-dir <state_dir>` so the run may read and write the worktrees and run directories that
+    # live under state_dir (outside its working directory).
+    add_state_dir: bool = True
+    # A review only reads code and writes findings files: no Edit.
+    review_allowed_tools: tuple[str, ...] = ("Read", "Grep", "Glob", "Write", "Agent", "Bash")
+    # Babysitting fixes code, so it also needs Edit.
+    babysit_allowed_tools: tuple[str, ...] = ("Read", "Grep", "Glob", "Write", "Edit", "Agent", "Bash")
     review_prompt: str = (
         "Use the code-check review-pr skill on {ref}. Run unattended: never ask questions; "
         "finish with one line summarizing the outcome."
@@ -83,6 +95,11 @@ class Config:
 
 
 _FREEFORM = {("models", "per_language")}
+# Keys (or whole tables) a repository's .code-check.toml may not set.
+REPO_FORBIDDEN = {("state_dir",), ("run_pr",), ("shadow",), ("review", "auto_approve"), ("loop", "review_forks")}
+MODEL_NAME = re.compile(r"[A-Za-z0-9._:\[\]-]+")
+# Values accepted by `claude --permission-mode` (Task 1 spike).
+PERMISSION_MODES = ("acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off"}
 
@@ -188,9 +205,46 @@ def _read(path: Path) -> dict:
         raise ConfigError(f"cannot read {path}: {e}") from e
 
 
+def _reject_repo_keys(repo: Mapping) -> None:
+    for key in sorted(REPO_FORBIDDEN):
+        node = repo
+        for part in key:
+            if not isinstance(node, Mapping) or part not in node:
+                break
+            node = node[part]
+        else:
+            name = ".".join(key)
+            raise ConfigError(
+                f"config key {name} cannot be set in the repository's .code-check.toml (security-sensitive); "
+                f"set it in ~/.config/code-check/config.toml or with a CODE_CHECK_ environment variable")
+
+
+def validate(cfg: Config) -> Config:
+    m = cfg.models
+    named = {"models.aggregator": m.aggregator, "models.language_experts": m.language_experts,
+             "models.reviewers": m.reviewers, "models.deep": m.deep}
+    named |= {f"models.per_language.{k}": v for k, v in m.per_language.items()}
+    for key, value in named.items():
+        if not isinstance(value, str) or not MODEL_NAME.fullmatch(value):
+            raise ConfigError(f"config key {key} is not a valid model name: {value!r}")
+    r = cfg.run_pr
+    for key in ("review_allowed_tools", "babysit_allowed_tools"):
+        for tool in getattr(r, key):
+            if not tool.strip() or tool.lstrip().startswith("-"):
+                raise ConfigError(f"config key run_pr.{key} has an invalid entry {tool!r} (must not start with '-')")
+    if r.permission_mode not in PERMISSION_MODES:
+        raise ConfigError(f"config key run_pr.permission_mode must be one of {', '.join(PERMISSION_MODES)}")
+    for key in ("review_prompt", "babysit_prompt"):
+        if getattr(r, key).lstrip().startswith("-"):
+            raise ConfigError(f"config key run_pr.{key} must not start with '-'")
+    return cfg
+
+
 def load_config(repo_dir: Path, home: Path, env: Mapping[str, str]) -> Config:
     data = asdict(Config())
+    repo = _read(repo_dir / ".code-check.toml")
+    _reject_repo_keys(repo)
+    _merge(data, repo)
     _merge(data, _read(home / ".config" / "code-check" / "config.toml"))
-    _merge(data, _read(repo_dir / ".code-check.toml"))
     _apply_env(data, env)
-    return _build(Config, data)
+    return validate(_build(Config, data))

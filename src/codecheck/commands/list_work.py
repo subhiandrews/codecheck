@@ -36,6 +36,8 @@ def _consider(ctx, mode: str, ref, me: str) -> tuple[WorkItem | None, str | None
     if mode == "review":
         if pr.state != "open" or pr.is_draft or pr.author == me:
             return None, None
+        if pr.is_cross_repo and not ctx.config.loop.review_forks:
+            return None, "fork-based PR: not reviewed unattended (set loop.review_forks = true to include forks)"
         if ctx.state.get(f"review:{ref}") == pr.head_sha:
             return None, None  # this head was already reviewed (by the loop or by hand)
         return WorkItem(ref, pr.head_sha, "new head"), None

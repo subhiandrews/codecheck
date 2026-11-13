@@ -274,3 +274,36 @@ def test_sigterm_mid_iteration_releases_the_lock_and_restores_handlers(tmp_path)
     assert exc.value.code == 128 + signal.SIGTERM
     assert not _lock_path(tmp_path).exists()
     assert signal.getsignal(signal.SIGTERM) is before
+
+
+def test_headless_argv_scopes_tools_per_mode_and_adds_the_state_dir(tmp_path):
+    ctx, provider, fake, refs, _ = setup(tmp_path)
+    review = call(ctx, "run-pr", "--mode", "review", "--pr", str(refs[0]), "--dry-run")[1]["argv"]
+    babysit = call(ctx, "run-pr", "--mode", "babysit", "--pr", str(refs[0]), "--dry-run")[1]["argv"]
+    state = str((tmp_path / "state").resolve())
+    for argv in (review, babysit):
+        assert argv[argv.index("--add-dir") + 1] == state
+        assert argv.index("--add-dir") < argv.index("--allowedTools")  # variadic flags come after the prompt
+        assert argv[argv.index("--permission-prompts") + 1] == "none"
+    assert "Edit" not in review[review.index("--allowedTools"):]
+    assert "Edit" in babysit[babysit.index("--allowedTools"):]
+    ctx.config = replace(ctx.config, run_pr=replace(ctx.config.run_pr, add_state_dir=False))
+    assert "--add-dir" not in call(ctx, "run-pr", "--mode", "review", "--pr", str(refs[0]), "--dry-run")[1]["argv"]
+
+
+def test_run_pr_refuses_tool_entries_that_would_act_as_options(tmp_path):
+    ctx, provider, fake, refs, _ = setup(tmp_path)
+    ctx.config = replace(ctx.config, run_pr=replace(ctx.config.run_pr, review_allowed_tools=("Read", "--verbose")))
+    code, out = call(ctx, "run-pr", "--mode", "review", "--pr", str(refs[0]))
+    assert code == 1 and "must not start with '-'" in out["error"] and claude_calls(fake) == []
+
+
+def test_review_loop_skips_fork_prs_unless_enabled(tmp_path):
+    ctx, provider, fake, refs, _ = setup(tmp_path, n_prs=2)
+    provider.prs[refs[0]] = replace(provider.prs[refs[0]], is_cross_repo=True)
+    out = call(ctx, "loop", "--mode", "review")[1]
+    assert [r["pr"] for r in out["results"]] == [str(refs[1])]
+    assert out["skipped"][0]["pr"] == str(refs[0]) and "review_forks" in out["skipped"][0]["reason"]
+    ctx.config = replace(ctx.config, loop=replace(ctx.config.loop, review_forks=True))
+    out = call(ctx, "loop", "--mode", "review")[1]
+    assert [r["pr"] for r in out["results"]] == [str(refs[0])]

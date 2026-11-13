@@ -4,7 +4,7 @@ from codecheck.commands._common import check_finding_paths, finding_items, load_
 from codecheck.core.diffmap import anchor_finding, parse_diff
 from codecheck.core.findings import attach_anchors, finding_id, merge_exact_duplicates, validate_findings
 from codecheck.core.policy import decide
-from codecheck.core.render import comment_body, render_local, summary_body
+from codecheck.core.render import FINDING_MARKER, comment_body, render_local, summary_body
 from codecheck.errors import CodeCheckError
 from codecheck.models import PRRef, ReviewComment
 from codecheck.shadow.recorder import record_post
@@ -24,6 +24,11 @@ def _reviewer_findings(run_dir, ingest, meta) -> dict:
         items, errs = validate_findings(finding_items(raw), reviewer=member, root=meta["root"])
         out[member], _ = check_finding_paths(items, errs, meta["root"], member)
     return out
+
+
+def _already_posted(threads, me: str) -> set[str]:
+    """Finding IDs whose hidden marker is already in one of our own inline comments on this PR."""
+    return {fid for t in threads for c in t.comments if c.author == me for fid in FINDING_MARKER.findall(c.body)}
 
 
 def run(args, ctx) -> dict:
@@ -63,7 +68,8 @@ def run(args, ctx) -> dict:
 
     ref = PRRef.parse(meta["pr"])
     pr = ctx.provider.get_pr(ref)
-    if pr.author == ctx.provider.whoami():
+    me = ctx.provider.whoami()
+    if pr.author == me:
         raise CodeCheckError("refusing to post a review on your own PR")
     if pr.is_draft:
         return {"posted": False, "draft": True, "reason": "PR is a draft; draft PRs are never posted to"}
@@ -71,8 +77,12 @@ def run(args, ctx) -> dict:
         return {"posted": False, "stale": True,
                 "reason": f"PR head moved ({meta['head_sha'][:8]} -> {pr.head_sha[:8]}); re-run the review"}
     decision = decide(findings, auto_approve=cfg.review.auto_approve, is_draft=pr.is_draft, incomplete=incomplete)
-    anchored, unlisted = [], []
+    already = _already_posted(ctx.provider.list_threads(ref), me)
+    anchored, unlisted, repeated = [], [], 0
     for f in findings:
+        if finding_id(f) in already:
+            repeated += 1  # posted inline by an earlier run: do not post it again
+            continue
         a = anchor_finding(diff_files, f.file, f.line)
         (anchored if a else unlisted).append((f, a))
     cap = cfg.review.max_inline_comments
@@ -89,6 +99,7 @@ def run(args, ctx) -> dict:
             ctx.shadow, meta, reviewer_findings=_reviewer_findings(run_dir, ingest, meta), findings=findings,
             inline_ids={finding_id(f) for f, _ in inline}, decision=decision, incomplete=incomplete, dropped=dropped))
     return {"posted": True, "degraded": result.degraded, "inline": len(comments), "unlisted": len(not_inline),
+            "already_posted": repeated,
             "findings": len(findings), "decision": decision.event, "reason": decision.reason,
             "incomplete": incomplete, "failed_reviewers": failed, "base_warning": meta.get("base_warning"),
             "run_id": meta["run_id"]}

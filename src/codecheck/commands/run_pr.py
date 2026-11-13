@@ -3,6 +3,7 @@ import time
 
 from codecheck.commands._common import safe_repo
 from codecheck.commands.workspace import managed_clone
+from codecheck.config import expand_path
 from codecheck.core.state import MAX_LOOP_FAILURES, WorkItem, mark_processed, record_failure
 from codecheck.errors import CodeCheckError
 from codecheck.runids import new_run_id
@@ -42,10 +43,19 @@ def run_one(ctx, mode: str, ref, fingerprint: str | None = None, dry_run: bool =
     if ref.repo.startswith("-"):
         raise CodeCheckError(f"unsafe repository name {ref.repo!r}")
     template = cfg.review_prompt if mode == "review" else cfg.babysit_prompt
-    # The prompt comes first: --allowedTools is variadic and would swallow a later positional.
-    argv = [cfg.claude_bin, "-p", template.format(ref=ref), "--output-format", "json",
-            "--permission-mode", cfg.permission_mode, "--permission-prompts", "none",
-            "--allowedTools", *cfg.allowed_tools]
+    tools = cfg.review_allowed_tools if mode == "review" else cfg.babysit_allowed_tools
+    prompt = template.format(ref=ref)
+    # argv values must never be read as options by claude.
+    if prompt.lstrip().startswith("-") or any(t.lstrip().startswith("-") or not t.strip() for t in tools):
+        raise CodeCheckError("run_pr prompt and allowed tools must not start with '-'")
+    # The prompt comes first: --allowedTools and --add-dir are variadic and would swallow a later positional.
+    argv = [cfg.claude_bin, "-p", prompt, "--output-format", "json",
+            "--permission-mode", cfg.permission_mode, "--permission-prompts", "none"]
+    if cfg.add_state_dir:
+        # Reviews and fixes happen in worktrees and run directories under state_dir, outside the run's cwd.
+        # An absolute path never starts with '-'. (`--add-dir` is not covered by the Task 1 spike.)
+        argv += ["--add-dir", str(expand_path(ctx.config.state_dir).resolve())]
+    argv += ["--allowedTools", *tools]
     if dry_run:
         return {"pr": str(ref), "argv": argv}
     started = time.time()

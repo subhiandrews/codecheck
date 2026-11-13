@@ -77,6 +77,13 @@ def _thread(n: dict) -> Thread:
     return Thread(n["id"], n["path"], n.get("line") or n.get("originalLine"), n["isResolved"], n["isOutdated"], comments)
 
 
+_ANCHOR_REJECTED = re.compile(r"\b422\b|unprocessable|could not be resolved|pull_request_review_thread", re.I)
+
+
+def _anchor_rejected(stderr: str) -> bool:
+    return bool(_ANCHOR_REJECTED.search(stderr or ""))
+
+
 class GitHubProvider:
     name = "github"
 
@@ -181,7 +188,9 @@ class GitHubProvider:
         res = self.runner.run(argv, input=payload(body, comments), cwd=self.cwd)
         if res.returncode == 0:
             return PostResult(len(comments))
-        if not comments:
+        if not comments or not _anchor_rejected(res.stderr):
+            # Only an unresolvable inline anchor (HTTP 422) is worth retrying as a body-only review;
+            # auth, network or server errors would fail the retry too, or hide a real problem.
             raise ProviderError(f"posting review failed ({res.returncode}): {res.stderr.strip()[:500]}")
         folded = body + "\n\n---\n_The host rejected the inline anchors, so the findings are listed here instead._\n\n"
         folded += "\n\n".join(f"**`{c.path}:{c.line}`**\n{c.body}" for c in comments)

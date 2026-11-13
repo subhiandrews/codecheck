@@ -91,7 +91,9 @@ code-check doctor                         # prerequisites
 
 ## Configuration
 
-Settings are layered, highest precedence first: environment (`CODE_CHECK_<SECTION>__<KEY>`, for example `CODE_CHECK_REVIEW__AUTO_APPROVE=true`), the repository's `.code-check.toml`, `~/.config/code-check/config.toml`, then the defaults below. Unknown keys and wrong types in files are errors.
+Settings are layered, highest precedence first: environment (`CODE_CHECK_<SECTION>__<KEY>`, for example `CODE_CHECK_REVIEW__AUTO_APPROVE=true`), your `~/.config/code-check/config.toml`, the repository's `.code-check.toml`, then the defaults below. Your own settings therefore win over a repository's. Unknown keys and wrong types in files are errors.
+
+A repository's `.code-check.toml` may **not** set the security-sensitive keys `state_dir`, anything under `[run_pr]` or `[shadow]`, `review.auto_approve` or `loop.review_forks`: a repository you review is not trusted to choose what an unattended run may do, where state is written, or whether reviews approve. Such a key in the repository file is an error that names the key; set it in your user file or the environment instead. Model names must match `[A-Za-z0-9._:[\]-]+`, `run_pr.permission_mode` must be one of `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`, and allowed-tool entries and prompts must not start with `-`.
 
 ```toml
 provider = "github"            # only GitHub in Phase 1
@@ -109,6 +111,7 @@ ignore = ["**/*.lock", "dist/**"]   # plain glob patterns, see below
 [loop]
 max_prs_per_iteration = 5
 repos = []                     # empty = every repository you have access to
+review_forks = false           # the unattended review loop skips fork-based PRs unless true
 
 [models]
 aggregator = "opus"
@@ -134,10 +137,11 @@ max_ci_attempts = 3
 claude_bin = "claude"
 timeout_seconds = 1800
 permission_mode = "dontAsk"
-allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit", "Agent", "Bash"]
-# Plain `Bash` is in the default allow-list because the skills run git, gh and the code-check CLI.
-# It is broad: narrow it (for example "Bash(git:*)", "Bash(gh:*)", "Bash(code-check:*)") if you prefer.
+add_state_dir = true           # pass `--add-dir <state_dir>` (worktrees and run directories live there)
+review_allowed_tools = ["Read", "Grep", "Glob", "Write", "Agent", "Bash"]
+babysit_allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit", "Agent", "Bash"]
 # review_prompt and babysit_prompt are the prompts given to each headless process; {ref} is the PR.
+# See "Prompt injection and unattended runs" before relying on these defaults.
 ```
 
 **`review.ignore` is not gitignore.** Each pattern is matched against the whole repository-relative path with plain glob semantics (Python's `PurePosixPath.full_match`): `*` does not cross a `/`, `**` matches any number of directories, there is no negation (`!`), no trailing-slash directory rule and no anchoring rules. `*.lock` therefore matches only a top-level file; use `**/*.lock` for any depth and `dist/**` for everything below `dist`. Ignored files are left out of the review entirely.
