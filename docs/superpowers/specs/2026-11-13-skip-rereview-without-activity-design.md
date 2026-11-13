@@ -1,0 +1,57 @@
+# Skip re-review when nothing has happened since our last review (short design)
+
+## Intent
+
+When code-check has already reviewed someone else's PR, it should leave that PR alone until the author does something about the review: pushes a new commit, or replies on one of our threads. Until then it spends no tokens on it. Today "already reviewed" is only a local record (`review:<ref>` equals the reviewed head), so a fresh machine or wiped state re-reviews a PR we already reviewed, reviews with no inline comments are invisible to the check, and replies to our comments are never looked at on the review side.
+
+## Rule
+
+Take our latest submitted review on the PR from GitHub. Since it was posted:
+
+| New commits | Replies from others on our threads | Result |
+|---|---|---|
+| yes | any | review again |
+| no | yes | do not review; surface it ("author replied on 2 threads, no new commits since your review") |
+| no | no | do not review; skip quietly ("already reviewed this head") |
+
+`--force` overrides all of it. Unchanged: drafts, closed PRs, own PRs, ignore patterns.
+
+## Goals / non-goals / anti-goals
+
+- Goal: no LLM spend on a PR with no new commits, decided from GitHub, not only local state.
+- Goal: replies are visible to the user without triggering a review.
+- Non-goal: judging whether a commit "addresses" a comment. Any new head counts, including a force-push or rebase (my call: the CLI cannot make that judgment exactly, and you did not want it guessed).
+- Non-goal: re-reviewing with replies as context, or replying to them. That is `address-comments`' job for your own PRs.
+- Anti-goal: our own replies, our own review, or bot comments counting as activity; a review that finished incomplete counting as done.
+
+## Approaches considered
+
+- A. Keep local state, add reply detection: smallest, but keeps the fresh-machine problem and cannot see reviews without inline comments.
+- B. GitHub as source of truth (chosen): add `Provider.list_reviews`; local state becomes a shortcut.
+- C. Hidden marker in our review body: still needs the reviews list, and breaks if the body is edited. B covers it.
+
+## Design
+
+**Provider.** Add `list_reviews(ref) -> list[Review]` to the `Provider` protocol, the GitHub adapter (the PR's reviews endpoint, paginated: author login, commit id, submitted_at, state) and `FakeProvider`. New `Review` dataclass in `models.py`. Same argument validation as the other adapter calls. Pending reviews (no `submitted_at`) are ignored.
+
+**Core function** in `core/precheck.py` (pure, no I/O): `review_activity(reviews, threads, head_sha, me)` returns the latest own review (commit, time), `new_commits` (head differs from that review's commit), and `replies`: comments by someone other than `me` and not a bot, created after the review's time, on threads whose first comment is ours. Replies on resolved or outdated threads count.
+
+**Wiring.**
+- `precheck --mode pr` and `list_work._consider` (review mode) call `list_reviews` and `list_threads` only after the cheap local check passes, and only when the PR is not already known to be new. Result for replies-only: `proceed: false`, reason as above, plus `replies: {threads, comments}`.
+- `loop` reports replies-only PRs under `skipped` with that reason. The `review-pr` skill prints them as one line each and never reviews them.
+- If we have no review on GitHub at all, behavior is today's (review unless local state says this head was reviewed).
+- Local state `review:<ref>` stays: a match with the current head still short-circuits before any extra API calls.
+
+**Incomplete reviews.** `post` currently leaves `review:<ref>` unset when reviewers failed, so the next run retries. With GitHub as truth that review would look complete. So `post` also records `review-incomplete:<ref>` = head sha when incomplete (cleared on a complete post), and the check treats that head as not reviewed.
+
+**Bots and self.** Ignore authors equal to `whoami()` and logins ending `[bot]`. GraphQL may return bot logins without the suffix; the builder should add `__typename` to the threads query (no change to its node count) and ignore `Bot`.
+
+## Constraints
+
+- Every subcommand still prints exactly one JSON document; skills, README and the static plugin tests stay in sync (`tests/test_plugin_static.py`, `tests/test_readme.py`).
+- No new config key. Tests use `FakeProvider`; add contract tests for `list_reviews` and cases for: new commit with and without replies, replies only, nothing new, no GitHub review, own and bot replies ignored, incomplete review retried, `--force`.
+- README: document the behavior in the review sections.
+
+## Left to the builder
+
+Pagination approach for the reviews endpoint, exact JSON shape of the `replies` field, and the wording of skip reasons.
