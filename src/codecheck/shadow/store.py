@@ -70,8 +70,22 @@ class ShadowStore:
         path = self._path(run_id, ".diff")
         return path.read_text(encoding="utf-8") if path.exists() else ""
 
+    def _order_key(self, run_id: str) -> tuple:
+        ts = [r["ts"] for r in self.read(run_id) if r.get("type") == "run" and isinstance(r.get("ts"), (int, float))]
+        if ts:
+            return (0, min(ts), run_id)
+        try:
+            return (1, self._path(run_id, ".jsonl").stat().st_mtime, run_id)
+        except OSError:
+            return (2, 0.0, run_id)
+
+    def ordered_run_ids(self) -> list[str]:
+        """Run ids oldest first (run-record timestamp, then file mtime, then id). Ids are random, so sorting by id is not time."""
+        return sorted(self.run_ids(), key=self._order_key)
+
     def runs_for_pr(self, pr: str) -> list[str]:
+        """Runs for a PR, oldest first."""
         return [
-            rid for rid in self.run_ids()
+            rid for rid in self.ordered_run_ids()
             if any(r.get("type") == "run" and r.get("pr") == pr for r in self.read(rid))
         ]

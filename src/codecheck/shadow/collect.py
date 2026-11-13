@@ -25,12 +25,14 @@ def collect_outcomes(provider, shadow: ShadowStore, ref: PRRef, me: str) -> dict
     run_ids = shadow.runs_for_pr(str(ref))
     if not run_ids:
         return {"runs": 0, "outcomes": 0, "human_comments": 0}
-    findings: dict[str, tuple[str, dict]] = {}
+    findings: dict[str, tuple[str, dict]] = {}  # newest run wins (run_ids is chronological)
+    by_run: dict[str, list[tuple[str, dict]]] = {rid: [] for rid in run_ids}
     for rid in run_ids:
         for rec in shadow.read(rid):
             if rec.get("type") == "finding" and isinstance(rec.get("id"), str):
                 findings[rec["id"]] = (rid, rec)
-    latest_run = run_ids[-1]
+                by_run[rid].append((rid, rec))
+    latest_run = run_ids[-1]  # runs_for_pr is chronological
     outcomes = humans = 0
     for thread in provider.list_threads(ref):
         if not thread.comments:
@@ -51,13 +53,18 @@ def collect_outcomes(provider, shadow: ShadowStore, ref: PRRef, me: str) -> dict
             })
             outcomes += 1
         elif root.author != me and not _is_bot(root.author):
-            near = next(
-                (f_id for f_id, (_, f) in findings.items()
-                 if f.get("file") == thread.path and thread.line is not None
-                 and isinstance(f.get("line"), int) and abs(f["line"] - thread.line) <= 3),
-                None,
-            )
-            shadow.append(latest_run, {
+            near, home = None, latest_run
+            for rid in reversed(run_ids):  # newest run whose own findings it matches
+                near = next(
+                    (f.get("id") for _, f in by_run[rid]
+                     if f.get("file") == thread.path and thread.line is not None
+                     and isinstance(f.get("line"), int) and abs(f["line"] - thread.line) <= 3),
+                    None,
+                )
+                if near is not None:
+                    home = rid
+                    break
+            shadow.append(home, {
                 "type": "human_comment", "thread_id": thread.id, "path": thread.path, "line": thread.line,
                 "author": root.author, "body": root.body, "matches_finding": near,
             })

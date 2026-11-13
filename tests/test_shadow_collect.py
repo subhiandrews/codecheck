@@ -1,4 +1,5 @@
 import json
+import os
 
 import pytest
 
@@ -105,6 +106,7 @@ def test_cli_requires_shadow_enabled(tmp_path):
     code, out = call(ctx, "shadow", "export-golden", "--out", str(tmp_path / "g.jsonl"))
     assert code == 1 and "disabled" in out["error"]
 
+
 def _setup(tmp_path, thr):
     shadow = ShadowStore(tmp_path)
     seed(shadow)
@@ -133,7 +135,6 @@ def test_forged_marker_in_message_or_by_human_does_not_misattribute(tmp_path):
 
 
 def test_export_is_private_and_scrubbed(tmp_path):
-    import os
     shadow, provider = _setup(tmp_path / "s", threads())
     shadow.append(RID, {"type": "human_comment", "thread_id": "T9", "path": "q.py", "line": 1, "author": "bob",
                         "body": "token ghp_" + "a" * 36, "matches_finding": None})
@@ -161,3 +162,57 @@ def test_record_verdict_whitelists_fields_and_checks_run(tmp_path):
     assert code == 1 and "unknown run" in out["error"]
     code, out = call(ctx, "shadow", "record-verdict", "--run", RID, stdin="{}")
     assert code == 1
+
+
+def _two_runs(tmp_path):
+    """Run ids chosen so lexical order is the OPPOSITE of chronological order."""
+    old, new = "ffffffffffff", "000000000000"
+    clock = iter(range(1000, 2000))
+    shadow = ShadowStore(tmp_path, now=lambda: next(clock))
+    for rid in (old, new):  # old is created first
+        shadow.append(rid, {"type": "run", "pr": "o/r#7", "repo": "o/r", "head_sha": rid, "panel": [], "models": {}, "tool_version": "0"})
+        shadow.save_diff(rid, "diff --git a/a.py b/a.py\n")
+        shadow.append(rid, {"type": "finding", "id": "a" * 12, "file": "a.py", "line": 3, "severity": "warning",
+                            "category": "bug", "message": "m", "reviewers": ["skeptic"], "inline": True})
+    shadow.append(old, {"type": "finding", "id": "e" * 12, "file": "a.py", "line": 50, "severity": "warning",
+                        "category": "bug", "message": "m", "reviewers": ["skeptic"], "inline": True})
+    return shadow, old, new
+
+
+def test_runs_are_chronological_not_lexical(tmp_path):
+    shadow, old, new = _two_runs(tmp_path)
+    assert shadow.runs_for_pr("o/r#7") == [old, new]
+
+
+def test_multi_run_attribution_and_export_dedupe(tmp_path):
+    shadow, old, new = _two_runs(tmp_path)
+    marker = f"x\n<!-- code-check:finding:{'a' * 12} -->"
+    thr = [
+        Thread("T1", "a.py", 3, True, False, (tc(1, "me", marker),)),
+        Thread("T2", "a.py", 4, False, False, (tc(2, "alice", "near a"),)),     # matches a in newest run
+        Thread("T3", "a.py", 50, False, False, (tc(3, "alice", "near e"),)),    # only old run has e
+        Thread("T4", "z.py", 1, False, False, (tc(4, "alice", "unmatched"),)),  # falls back to newest run
+    ]
+    provider = FakeProvider()
+    provider.threads[REF] = thr
+    collect_outcomes(provider, shadow, REF, "me")
+    collect_outcomes(provider, shadow, REF, "me")
+    where = {r["thread_id"]: rid for rid in (old, new) for r in shadow.read(rid) if r["type"] == "human_comment"}
+    assert where == {"T2": new, "T3": old, "T4": new}
+    assert [r["finding_id"] for r in shadow.read(new) if r["type"] == "outcome"] == ["a" * 12, "a" * 12]
+    assert not [r for r in shadow.read(old) if r["type"] == "outcome"]
+    out = tmp_path / "g.jsonl"
+    assert export_golden(shadow, out) == 2
+    rows = {r["run_id"]: r for r in map(json.loads, out.read_text().splitlines())}
+    assert {f["id"]: f["label"] for f in rows[new]["findings"]} == {"a" * 12: "confirmed"}
+    assert {f["id"]: f["label"] for f in rows[old]["findings"]} == {"a" * 12: "unreviewed", "e" * 12: "confirmed"}
+    misses = [(m["path"]) for r in rows.values() for m in r["misses"]]
+    assert misses == ["z.py"]
+
+
+def test_export_tolerates_malformed_records(tmp_path):
+    shadow, old, new = _two_runs(tmp_path)
+    shadow.append(new, {"type": "finding", "file": "a.py"})  # no id
+    shadow.append(new, {"type": "outcome", "thread_id": "T9"})  # no finding_id
+    shadow.append(new, {"type": "human_comment", "thread_id": "T8", "path": "q", "author": "b", "body": "x"})
+    assert export_golden(shadow, tmp_path / "g.jsonl") == 1
