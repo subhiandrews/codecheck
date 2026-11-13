@@ -1,6 +1,18 @@
-from codecheck.core.precheck import precheck_local, precheck_pr
+from codecheck.core.precheck import (
+    Activity,
+    Reply,
+    cap_replies,
+    cheap_skip,
+    fetch_activity,
+    needs_activity,
+    precheck_local,
+    precheck_pr,
+    replies_seen_key,
+    review_activity,
+    review_verdict,
+)
 from codecheck.core.state import StateStore
-from codecheck.models import PRRef, PullRequest
+from codecheck.models import PRRef, PullRequest, Review, Thread, ThreadComment
 
 REF = PRRef("o/r", 7)
 
@@ -44,16 +56,6 @@ def test_local_precheck(tmp_path):
 
 # --- review verdict from GitHub activity ---
 
-from codecheck.core.precheck import (
-    Activity,
-    Reply,
-    cap_replies,
-    needs_activity,
-    review_activity,
-    review_verdict,
-)
-from codecheck.models import Review, Thread, ThreadComment
-
 T0 = "2026-01-01T00:00:10Z"
 
 
@@ -91,11 +93,11 @@ def test_activity_picks_latest_own_review():
     ]
     act = review_activity(reviews, [], "me")
     assert act.last_review.commit_id == "new"
-    assert review_activity([Review("x", "a", T0, "COMMENTED")], [th(tc("me", T0), tc("a", "2027"))], "me") == Activity(None, ())
+    assert review_activity([Review("x", "a", T0, "COMMENTED")], [th(tc("me", T0), tc("a", "2027-01-01T00:00:00Z"))], "me") == Activity(None, ())
 
 
-def reply(i=1, tid="T1", body="b"):
-    return Reply(tid, "a.py", 3, "alice", body, "2026-01-02T00:00:00Z")
+def reply(tid="T1", body="b", at="2026-01-02T00:00:00Z"):
+    return Reply(tid, "a.py", 3, "alice", body, at)
 
 
 def test_verdict_table(tmp_path):
@@ -158,3 +160,62 @@ def test_cap_replies_scrubs_before_truncating():
     body = "x" * 985 + " " + token
     out = cap_replies([reply(body=body)])[0].body
     assert "ghp_" not in out and len(out) <= 1000
+
+
+def test_cap_replies_limits_total_comments():
+    one_thread = [reply() for _ in range(300)]
+    assert len(cap_replies(one_thread)) == 100
+
+
+def test_replies_seen_hides_older_replies_only(tmp_path):
+    s = StateStore(tmp_path / "s.json")
+    s.set(f"review:{REF}", "abc123")
+    rev = Review("me", "abc123", T0, "COMMENTED")
+    old, new = reply(at="2026-01-02T00:00:00Z"), reply(at="2026-01-03T00:00:00Z")
+    s.set(replies_seen_key(pr()), "2026-01-02T00:00:00Z")
+    assert review_verdict(pr(), s, Activity(rev, (old,))).kind == "reviewed"
+    v = review_verdict(pr(), s, Activity(rev, (old, new)))
+    assert v.kind == "replies" and v.replies == (new,)
+
+
+def test_cheap_skip_matches_precheck_pr_reasons():
+    kw = {"ignore": ("**/*.lock",), "me": "me"}
+    assert cheap_skip(pr(), ["a.py"], **kw) is None
+    assert "draft" in cheap_skip(pr(is_draft=True), ["a.py"], **kw).reason
+    assert "no reviewable" in cheap_skip(pr(), ["x.lock"], **kw).reason
+
+
+def test_fetch_activity_fetches_only_what_can_matter(tmp_path):
+    s = StateStore(tmp_path / "s.json")
+    calls = []
+
+    def reviews(rs):
+        def f():
+            calls.append("reviews")
+            return rs
+        return f
+
+    def threads():
+        calls.append("threads")
+        return [th(tc("me", T0), tc("alice", "2026-01-02T00:00:00Z", 2))]
+
+    s.set(f"review-incomplete:{REF}", "abc123")
+    assert fetch_activity(pr(), s, "me", reviews([]), threads) is None and calls == []
+    s.delete(f"review-incomplete:{REF}")
+    assert fetch_activity(pr(), s, "me", reviews([]), threads) == Activity(None, ()) and calls == ["reviews"]
+    calls.clear()
+    old = [Review("me", "old111", T0, "COMMENTED")]
+    assert fetch_activity(pr(), s, "me", reviews(old), threads).replies == () and calls == ["reviews"]
+    calls.clear()
+    at_head = [Review("me", "abc123", T0, "COMMENTED")]
+    assert len(fetch_activity(pr(), s, "me", reviews(at_head), threads).replies) == 1
+    assert calls == ["reviews", "threads"]
+
+
+def test_force_skips_replies_verdict(tmp_path):
+    s = StateStore(tmp_path / "s.json")
+    s.set(f"review:{REF}", "abc123")
+    act = Activity(Review("me", "abc123", T0, "COMMENTED"), (reply(),))
+    kw = {"ignore": (), "me": "me"}
+    assert not precheck_pr(pr(), ["a.py"], s, activity=act, **kw).proceed
+    assert precheck_pr(pr(), ["a.py"], s, activity=act, force=True, **kw).proceed

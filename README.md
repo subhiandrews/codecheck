@@ -272,7 +272,7 @@ Start with `code-check doctor` (or `node installer/cli.js doctor`).
 | `gh auth` fails | `gh auth login`, or set `GH_TOKEN` for unattended runs |
 | "no changes against base" | Nothing differs from `<remote>/<base>`; commit or edit something, or check `base_branch` |
 | "already reviewed" / "unchanged since last review" | Nothing changed since the last run; pass `--force` to `precheck` to review anyway |
-| "N replies on T of your threads, no new commits since your review" | Only replies landed; the loop never re-reviews on a reply. Run `review-pr <PR>` interactively to see them and choose a reply-aware re-review, or `precheck --force` |
+| "N replies on T of your threads, no new commits since your review" | Only replies landed; the loop never re-reviews on a reply. Run `review-pr <PR>` interactively to see them and choose a reply-aware re-review, or `precheck --force`. Answering no runs `precheck --dismiss-replies`, which hides those replies until newer ones arrive |
 | "base may be stale" | The fetch failed (offline or no access); results compare against the last fetched base |
 | "run this from a clone of OWNER/REPO" | `review-pr` needs a local clone of the PR's repository |
 | A loop does nothing | It only acts on PRs with something new; check `code-check list-work --mode review` (and its `skipped` list) |

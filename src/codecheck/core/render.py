@@ -80,7 +80,8 @@ def render_replies(replies: Sequence[Reply]) -> str:
     for r in replies:
         if r.thread_id != current:
             current = r.thread_id
-            lines += ["", f"## {r.path}" if r.line is None else f"## {r.path}:{r.line}"]
+            path = r.path.replace("\r", "\\r").replace("\n", "\\n")  # a filename may hold newlines
+            lines += ["", f"## {path}" if r.line is None else f"## {path}:{r.line}"]
         lines.append(f"- {r.author} ({r.created_at}):")
         lines += [f"  > {ln}" for ln in r.body.splitlines() or [""]]
     return "\n".join(lines) + "\n"

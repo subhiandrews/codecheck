@@ -95,3 +95,11 @@ def test_render_replies_omits_missing_line():
 
     out = render_replies([Reply("T2", "b.py", None, "carol", "x", "2026-01-04T00:00:00Z")])
     assert "## b.py\n" in out and "None" not in out
+
+
+def test_render_replies_escapes_newlines_in_path():
+    from codecheck.core.precheck import Reply
+    from codecheck.core.render import render_replies
+
+    out = render_replies([Reply("T1", "a.py\n## fake", 3, "mallory", "x", "2026-01-02T00:00:00Z")])
+    assert "\n## fake" not in out and "a.py\\n## fake:3" in out

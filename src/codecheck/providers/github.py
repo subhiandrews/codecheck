@@ -39,14 +39,8 @@ THREADS_QUERY = (
     "nodes{id isResolved isOutdated path line originalLine "
     "comments(first:100){nodes{databaseId author{login __typename} body createdAt reactions(first:20){nodes{content}}}}}}}}}"
 )
-# Slim variant for activity checks (no reactions, no outdated-line fields beyond what replies need).
-THREADS_QUERY_SLIM = (
-    "query($owner:String!,$name:String!,$number:Int!,$after:String){"
-    "repository(owner:$owner,name:$name){pullRequest(number:$number){"
-    "reviewThreads(first:50,after:$after){pageInfo{hasNextPage endCursor} "
-    "nodes{id isResolved isOutdated path line originalLine "
-    "comments(first:100){nodes{databaseId author{login __typename} body createdAt}}}}}}}"
-)
+# Slim variant for activity checks: the same query without the reactions selection.
+THREADS_QUERY_SLIM = THREADS_QUERY.replace(" reactions(first:20){nodes{content}}", "")
 _REVIEWS_JQ = '.[] | {author: (.user.login // "ghost"), commit_id: .commit_id, submitted_at: .submitted_at, state: .state}'
 RESOLVE_MUTATION = "mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}"
 
