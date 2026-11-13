@@ -3,7 +3,8 @@
 import json
 import os
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime
 from pathlib import Path
 
 from codecheck.shadow.scrub import scrub_text
@@ -49,6 +50,36 @@ def subagent_transcripts(main: Path) -> list[Path]:
         return []
 
 
+def belongs_to_run(path: Path, run_id: str) -> bool:
+    """True when the file's first `user` entry is a string naming this run's directory (`RUN_DIR=<state>/runs/<run_id>`)."""
+    needle = f"runs/{run_id}"
+    try:
+        with path.open(encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                except (ValueError, RecursionError):
+                    continue
+                if not (isinstance(entry, dict) and entry.get("type") == "user"):
+                    continue
+                msg = entry.get("message")
+                content = msg.get("content") if isinstance(msg, dict) else None
+                return isinstance(content, str) and needle in content
+    except OSError:
+        return False
+    return False
+
+
+def _epoch(entry: dict) -> float | None:
+    ts = entry.get("timestamp")
+    if not isinstance(ts, str):
+        return None
+    try:
+        return datetime.fromisoformat(ts).timestamp()
+    except ValueError:
+        return None
+
+
 def _result_text(content) -> str:
     if isinstance(content, str):
         return content
@@ -70,9 +101,10 @@ def _guidance_lines(text: str, found: list[str]) -> None:
                 found.append(entry)
 
 
-def extract_signals(paths: Sequence[Path]) -> dict:
+def extract_signals(paths: Sequence[Path], *, windows: Mapping[Path, tuple[float, float]] | None = None) -> dict:
     """Deterministic counts from transcripts. `ignored_guidance` comes only from assistant text and tool results,
-    never from thinking blocks or user prompts."""
+    never from thinking blocks or user prompts. For a path in `windows`, only entries whose `timestamp` lies in the
+    closed (start, end) epoch-seconds window count; entries without a usable timestamp are skipped."""
     out = {
         "tool_calls": 0, "tool_errors": [], "retries": 0,
         "permission_denials": 0, "agents": [], "unreadable_lines": 0, "ignored_guidance": [],
@@ -87,6 +119,7 @@ def extract_signals(paths: Sequence[Path]) -> dict:
             out["unreadable_lines"] += 1
             out["agents"].append(agent)
             continue
+        window = (windows or {}).get(path)
         for line in lines:
             if not line.strip():
                 continue
@@ -94,6 +127,8 @@ def extract_signals(paths: Sequence[Path]) -> dict:
                 entry = json.loads(line)
                 if not isinstance(entry, dict):
                     raise TypeError("not an object")
+                if window is not None and not ((at := _epoch(entry)) is not None and window[0] <= at <= window[1]):
+                    continue
                 kind = entry.get("type")
                 msg = entry.get("message")
                 blocks = msg.get("content") if isinstance(msg, dict) else None

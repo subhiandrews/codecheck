@@ -1,6 +1,8 @@
 import json
 import stat
+import time
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -45,6 +47,18 @@ def local_run(tmp_path, *, handoff=True):
 def handoff_files(ctx, run_id):
     folder = ctx.shadow.root / f"{run_id}.handoff"
     return folder, json.loads((folder / "handoff.json").read_text())
+
+
+def _started(ctx, out) -> float:
+    return next(r["ts"] for r in ctx.shadow.read(out["run_id"]) if r.get("type") == "run")
+
+
+def _iso(epoch: float) -> str:
+    return datetime.fromtimestamp(epoch, tz=UTC).isoformat().replace("+00:00", "Z")
+
+
+def _first(out, run_id=None) -> dict:
+    return {"type": "user", "message": {"content": f"RUN_DIR=/state/runs/{run_id or out['run_id']}"}}
 
 
 def human(tid, line, body, path="app.py"):
@@ -168,12 +182,13 @@ def test_handoff_copies_scrubbed_transcripts_and_signals(tmp_path):
     session.mkdir(parents=True)
     secret = "ghp_" + "Z9" * 20
     main = session / "s1.jsonl"
-    main.write_text(json.dumps({"type": "user", "message": {"content": f"RUN_DIR=x/{out['run_id']} {secret}"}}) + "\n")
+    main.write_text(json.dumps({"type": "user", "timestamp": _iso(_started(ctx, out) + 0.001),
+                                "message": {"content": f"RUN_DIR=x/{out['run_id']} {secret}"}}) + "\n")
     sub = session / "s1" / "subagents"
     sub.mkdir(parents=True)
     tool = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "a", "name": "Read", "input": {}}]}}
     err = {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "a", "is_error": True, "content": "nope"}]}}
-    (sub / "agent-1.jsonl").write_text(json.dumps(tool) + "\n" + json.dumps(err) + "\n")
+    (sub / "agent-1.jsonl").write_text("\n".join(json.dumps(e) for e in (_first(out), tool, err)) + "\n")
     code, res = call(ctx, "handoff", "--run", out["run_id"])
     assert code == 0 and res["transcript"] is True
     folder, data = handoff_files(ctx, out["run_id"])
@@ -181,6 +196,30 @@ def test_handoff_copies_scrubbed_transcripts_and_signals(tmp_path):
     assert data["signals"]["tool_calls"] == 1 and data["signals"]["tool_errors"][0]["tool"] == "Read"
     copied = folder / "transcript" / "s1.jsonl"
     assert secret not in copied.read_text() and out["run_id"] in copied.read_text()
+
+
+def test_handoff_ignores_other_runs_subagents_and_main_session_outside_the_window(tmp_path):
+    ctx, out = local_run(tmp_path)
+    t0 = _started(ctx, out)
+    session = tmp_path / "claude" / "projects" / "proj"
+    sub = session / "s1" / "subagents"
+    sub.mkdir(parents=True)
+
+    def use(uid, ts):
+        return {"type": "assistant", "timestamp": _iso(ts), "message": {
+            "content": [{"type": "tool_use", "id": uid, "name": "Read", "input": {}}]}}
+
+    main = [{"type": "user", "timestamp": _iso(t0 + 0.0005), "message": {"content": f"RUN_DIR=/state/runs/{out['run_id']}"}},
+            use("early", t0 - 3600), use("in", t0 + 0.001), use("late", time.time() + 3600)]
+    (session / "s1.jsonl").write_text("\n".join(json.dumps(e) for e in main) + "\n")
+    (sub / "agent-mine.jsonl").write_text(json.dumps(_first(out)) + "\n" + json.dumps(use("m", 0)) + "\n")
+    (sub / "agent-other.jsonl").write_text(json.dumps(_first(out, "OTHER")) + "\n" + json.dumps(use("o", 0)) + "\n")
+    call(ctx, "handoff", "--run", out["run_id"])
+    folder, data = handoff_files(ctx, out["run_id"])
+    assert sorted(a["name"] for a in data["signals"]["agents"]) == ["agent-mine", "s1"]
+    assert data["signals"]["tool_calls"] == 2  # the subagent's call (no timestamps needed) plus the one in-window main call
+    assert "agent-other.jsonl" not in data["transcript_files"]
+    assert "Signals cover this run only" in (folder / "handoff.md").read_text()
 
 
 def test_handoff_saves_raw_outputs(tmp_path):
@@ -345,7 +384,7 @@ def test_handoff_records_ignored_guidance_from_the_transcript(tmp_path):
     done = {"type": "assistant", "message": {"content": [
         {"type": "thinking", "thinking": "ignored guidance: only thinking about it"},
         {"type": "text", "text": "done: 1 kept, 0 dropped; ignored guidance: rule 3 contradicts the diff"}]}}
-    (sub / "agent-1.jsonl").write_text(json.dumps(done) + "\n")
+    (sub / "agent-1.jsonl").write_text(json.dumps(_first(out)) + "\n" + json.dumps(done) + "\n")
     call(ctx, "handoff", "--run", out["run_id"])
     folder, data = handoff_files(ctx, out["run_id"])
     assert data["ignored_guidance"] == ["done: 1 kept, 0 dropped; ignored guidance: rule 3 contradicts the diff"]

@@ -1,8 +1,10 @@
 import json
 import os
 import stat
+from datetime import datetime
 
 from codecheck.shadow.transcripts import (
+    belongs_to_run,
     copy_scrubbed,
     extract_signals,
     find_transcript,
@@ -131,3 +133,33 @@ def test_extract_signals_dedupes_ignored_guidance(tmp_path):
     a = _write(tmp_path / "a.jsonl", [{"type": "assistant", "message": {"content": [{"type": "text", "text": line}]}}])
     b = _write(tmp_path / "b.jsonl", [{"type": "user", "message": {"content": [{"type": "tool_result", "content": line}]}}])
     assert extract_signals([a, b])["ignored_guidance"] == [line]
+
+
+def test_belongs_to_run_matches_run_dir_in_first_user_message(tmp_path):
+    a = _write(tmp_path / "a.jsonl", [
+        {"type": "last-prompt"}, {"type": "user", "message": {"content": "RUN_DIR=/s/runs/AAA"}},
+        {"type": "user", "message": {"content": "runs/BBB"}}])
+    b = _write(tmp_path / "b.jsonl", [{"type": "user", "message": {"content": "RUN_DIR=/s/runs/BBB"}}])
+    blocks = _write(tmp_path / "c.jsonl", [
+        {"type": "user", "message": {"content": [{"type": "text", "text": "RUN_DIR=/s/runs/AAA"}]}}])
+    empty = _write(tmp_path / "d.jsonl", [])
+    assert belongs_to_run(a, "AAA") and not belongs_to_run(a, "BBB")
+    assert belongs_to_run(b, "BBB") and not belongs_to_run(b, "AAA")
+    assert not belongs_to_run(blocks, "AAA") and not belongs_to_run(empty, "AAA")
+    assert not belongs_to_run(tmp_path / "missing.jsonl", "AAA")
+
+
+def test_extract_signals_window_counts_only_timestamped_entries_inside(tmp_path):
+    def at(ts, uid):
+        e = _use(uid, "Read", {})
+        if ts:
+            e["timestamp"] = ts
+        return e
+
+    p = _write(tmp_path / "m.jsonl", [
+        at("2026-11-13T09:00:00.000Z", "a"), at("2026-11-13T10:00:00.500Z", "b"),
+        at("2026-11-13T11:00:00.000Z", "c"), at(None, "d")])
+    lo = datetime.fromisoformat("2026-11-13T09:30:00Z").timestamp()
+    hi = datetime.fromisoformat("2026-11-13T10:30:00Z").timestamp()
+    assert extract_signals([p], windows={p: (lo, hi)})["tool_calls"] == 1
+    assert extract_signals([p])["tool_calls"] == 4

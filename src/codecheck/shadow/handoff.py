@@ -85,6 +85,7 @@ def render_markdown(h: dict) -> str:
     if not h.get("transcript"):
         lines.append(f"- No transcript: {h.get('transcript_reason')}")
     elif signals:
+        lines.append("- Signals cover this run only (subagents by RUN_DIR, main session by time window)")
         lines.append(f"- {signals['tool_calls']} tool calls, {len(signals['tool_errors'])} failed, "
                      f"{signals['retries']} retries, {signals['permission_denials']} permission denials")
         lines += [f"- {a['name']}: {a['turns']} turns, {a['output_tokens']} output tokens" for a in signals["agents"]]

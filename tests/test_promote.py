@@ -1,6 +1,7 @@
 import json
 import stat
 from dataclasses import replace
+from datetime import UTC, datetime
 
 import pytest
 from clihelp import call, finish_review, pr_setup, run_pr_context
@@ -240,10 +241,12 @@ def test_draft_signals_carry_no_tool_error_text(tmp_path):
     out = run_pr_context(ctx, pr)
     session = tmp_path / "claude" / "projects" / "proj"
     session.mkdir(parents=True)
-    use = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "a", "name": "Read", "input": {}}]}}
-    err = {"type": "user", "message": {"content": [
+    now = datetime.now(UTC).isoformat().replace("+00:00", "Z")  # inside the run's window: after it started, before hand-off
+    use = {"type": "assistant", "timestamp": now,
+           "message": {"content": [{"type": "tool_use", "id": "a", "name": "Read", "input": {}}]}}
+    err = {"type": "user", "timestamp": now, "message": {"content": [
         {"type": "tool_result", "tool_use_id": "a", "is_error": True, "content": f"{planted} at /home/alice"}]}}
-    start = {"type": "user", "message": {"content": f"RUN_DIR={out['run_dir']}"}}
+    start = {"type": "user", "timestamp": now, "message": {"content": f"RUN_DIR={out['run_dir']}"}}
     (session / "s1.jsonl").write_text("\n".join(json.dumps(e) for e in (start, use, err)) + "\n")
     finish_review(ctx, out, {"skeptic": [FINDING]}, {"findings": [FINDING, FAR], "dropped": []})
     call(ctx, "ingest", "--run", out["run_id"])
