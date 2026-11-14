@@ -17,6 +17,7 @@ from codecheck.core.findings import finding_id, validate_findings
 from codecheck.core.pipeline import finalize_findings
 from codecheck.models import PRRef
 from codecheck.runids import check_run_id
+from codecheck.shadow.buildid import plugin_build
 from codecheck.shadow.collect import collect_outcomes
 from codecheck.shadow.handoff import (
     SCHEMA,
@@ -80,6 +81,7 @@ def build_handoff(ctx, run_id: str) -> dict:
     handoff = {
         "schema": SCHEMA, "run_id": run_id, "skill": meta.get("skill"), "mode": meta.get("mode"), "repo": meta.get("repo"),
         "pr": meta.get("pr"), "pr_url": pr_url, "head_sha": meta.get("head_sha"), "tool_version": __version__,
+        **plugin_build(ctx.env),
         "config_hash": config_hash(ctx.config), "models": meta.get("models"), "panel": meta.get("panel"), "blind": bool(meta.get("blind")),
         "reviewers": _reviewers(run_dir, meta, ingest), "signals": signals,
         "findings": _findings(run_dir, meta, aggregator_raw), "dropped": _dropped(aggregator_raw),

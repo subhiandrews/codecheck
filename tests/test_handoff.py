@@ -365,6 +365,23 @@ def test_render_markdown_mentions_the_essentials():
         "transcript": False, "transcript_reason": "no transcript found", "signals": None,
     })
     assert "abcdef012345" in md and "skeptic" in md and "not posted" in md and "no transcript found" in md
+    base = {"run_id": "r", "reviewers": {}, "findings": [], "comparison_reason": "x", "transcript_reason": "y"}
+    assert "- Build: 0123456789ab (/p/root)" in render_markdown({**base, "prompts_hash": "0123456789ab", "plugin_root": "/p/root"})
+    assert "- Build: unknown (no root)" in render_markdown({**base, "prompts_hash": None, "build_reason": "no root"})
+
+
+def test_handoff_records_plugin_build(tmp_path):
+    from codecheck.shadow.buildid import plugin_build
+
+    root = tmp_path / "plug"
+    (root / "agents").mkdir(parents=True)
+    (root / "agents" / "a.md").write_text("a")
+    ctx, out = local_run(tmp_path)
+    ctx.env = {**ctx.env, "CLAUDE_PLUGIN_ROOT": str(root)}
+    call(ctx, "handoff", "--run", out["run_id"])
+    _folder, data = handoff_files(ctx, out["run_id"])
+    want = plugin_build({"CLAUDE_PLUGIN_ROOT": str(root)})
+    assert {k: data[k] for k in want} == want and want["prompts_hash"]
 
 
 def test_handoff_comparison_failure_still_writes_the_files(tmp_path):

@@ -1,7 +1,8 @@
 """Pure pieces of the hand-off: compare human comments with our findings, and narrate a run.
 
 `handoff.json` (SCHEMA 1) holds, from the design's section 3: the run (`run_id`, `skill`, `mode`, `repo`, `pr`,
-`pr_url`, `head_sha`, `tool_version`, `config_hash`, `models`, `panel`, `blind`), each reviewer's ingest status
+`pr_url`, `head_sha`, `tool_version`, `plugin_root`, `prompts_hash` (12 hex chars over the agent and skill
+prompts) and `build_reason` (why they are null), `config_hash`, `models`, `panel`, `blind`), each reviewer's ingest status
 (`reviewers`), the aggregated `findings` (ids and order as `post` gives them), the aggregator's `dropped` list, the
 `decision`, transcript `signals` (tool calls and errors, retries, permission denials, turns and output tokens per
 transcript file), `ignored_guidance` lines from the transcripts, the human `comparison` (or `comparison_reason`), and
@@ -80,6 +81,10 @@ def render_markdown(h: dict) -> str:
         f"- Skill: {h.get('skill')} ({h.get('mode')} mode) on {h.get('repo')}, {where}",
         f"- Head: {h.get('head_sha')}" + (" (blind: reviewers did not see existing comments)" if h.get("blind") else ""),
     ]
+    if h.get("prompts_hash"):
+        lines.append(f"- Build: {h['prompts_hash']} ({h.get('plugin_root')})")
+    else:
+        lines.append(f"- Build: unknown ({h.get('build_reason')})")
     decision = h.get("decision")
     lines.append(f"- Decision: {decision['event']} ({decision.get('reason')})" if decision else "- Decision: none recorded")
     lines += ["", "## Reviewers", ""]
