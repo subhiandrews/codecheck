@@ -1,0 +1,363 @@
+{
+  "version": 1,
+  "case_id": "tokio-rs-tokio-local-53de1f6b",
+  "repo": "tokio-rs/tokio",
+  "pr": null,
+  "head_sha": "53de1f6b29d39f9325e375864d859b40f4651df2",
+  "diff": "diff --git a/tokio/src/runtime/driver.rs b/tokio/src/runtime/driver.rs\nindex 82fd513d..9a73e394 100644\n--- a/tokio/src/runtime/driver.rs\n+++ b/tokio/src/runtime/driver.rs\n@@ -102,6 +102,18 @@ impl Handle {\n                 .as_ref()\n                 .expect(\"A Tokio 1.x context was found, but IO is disabled. Call `enable_io` on the runtime builder to enable IO.\")\n         }\n+\n+        /// Closes the I/O driver's registry and waker. Called by the\n+        /// scheduler at shutdown, once the driver is no longer polled.\n+        pub(crate) fn release_io(&self) {\n+            if let Some(io) = self.io.as_ref() {\n+                io.release_resources();\n+            }\n+        }\n+    }\n+\n+    cfg_not_io_driver! {\n+        pub(crate) fn release_io(&self) {}\n     }\n \n     cfg_signal_internal_and_unix! {\ndiff --git a/tokio/src/runtime/io/driver.rs b/tokio/src/runtime/io/driver.rs\nindex d5ab7000..685040ce 100644\n--- a/tokio/src/runtime/io/driver.rs\n+++ b/tokio/src/runtime/io/driver.rs\n@@ -11,7 +11,7 @@ cfg_io_uring! {\n \n use crate::io::interest::Interest;\n use crate::io::ready::Ready;\n-use crate::loom::sync::Mutex;\n+use crate::loom::sync::{Mutex, RwLock};\n use crate::runtime::driver;\n use crate::runtime::io::registration_set;\n use crate::runtime::io::{IoDriverMetrics, RegistrationSet, ScheduledIo};\n@@ -40,8 +40,17 @@ pub(crate) struct Driver {\n \n /// A reference to an I/O driver.\n pub(crate) struct Handle {\n-    /// Registers I/O resources.\n-    registry: mio::Registry,\n+    /// The registry and the waker. Both keep OS resources of the event queue\n+    /// open, so they are dropped when the runtime shuts down.\n+    ///\n+    /// The lock keeps them alive while in use: closing the waker during a\n+    /// concurrent `wake` would write to a file descriptor that may already\n+    /// have been reused.\n+    ///\n+    /// Never acquire this lock while holding `synced`, and never acquire it\n+    /// twice on the same thread: a nested read can deadlock with a queued\n+    /// writer.\n+    resources: RwLock<Option<Resources>>,\n \n     /// Tracks all registrations\n     registrations: RegistrationSet,\n@@ -49,11 +58,6 @@ pub(crate) struct Handle {\n     /// State that should be synchronized\n     synced: Mutex<registration_set::Synced>,\n \n-    /// Used to wake up the reactor from a call to `turn`.\n-    /// Not supported on `Wasi` due to lack of threading support.\n-    #[cfg(not(target_os = \"wasi\"))]\n-    waker: mio::Waker,\n-\n     pub(crate) metrics: IoDriverMetrics,\n \n     #[cfg(all(\n@@ -75,6 +79,16 @@ pub(crate) struct Handle {\n     pub(crate) uring_probe: OnceCell<Option<io_uring::Probe>>,\n }\n \n+struct Resources {\n+    /// Registers I/O resources.\n+    registry: mio::Registry,\n+\n+    /// Used to wake up the reactor from a call to `turn`.\n+    /// Not supported on `Wasi` due to lack of threading support.\n+    #[cfg(not(target_os = \"wasi\"))]\n+    waker: mio::Waker,\n+}\n+\n #[derive(Debug)]\n pub(crate) struct ReadyEvent {\n     pub(super) tick: u16,\n@@ -135,11 +149,13 @@ impl Driver {\n         let (registrations, synced) = RegistrationSet::new();\n \n         let handle = Handle {\n-            registry,\n+            resources: RwLock::new(Some(Resources {\n+                registry,\n+                #[cfg(not(target_os = \"wasi\"))]\n+                waker,\n+            })),\n             registrations,\n             synced: Mutex::new(synced),\n-            #[cfg(not(target_os = \"wasi\"))]\n-            waker,\n             metrics: IoDriverMetrics::default(),\n             #[cfg(all(\n                 tokio_unstable,\n@@ -274,9 +290,32 @@ impl Handle {\n     /// after this method has been called. If the reactor is not currently\n     /// blocked in `turn`, then the next call to `turn` will not block and\n     /// return immediately.\n+    ///\n+    /// Does nothing once the runtime has shut down.\n     pub(crate) fn unpark(&self) {\n-        #[cfg(not(target_os = \"wasi\"))]\n-        self.waker.wake().expect(\"failed to wake I/O driver\");\n+        if let Some(resources) = self.resources.read().as_ref() {\n+            resources.wake();\n+        }\n+    }\n+\n+    /// Closes the registry and the waker, so that a handle outliving the\n+    /// runtime does not keep the system event queue open.\n+    ///\n+    /// Must only be called once the driver is no longer polled.\n+    pub(crate) fn release_resources(&self) {\n+        *self.resources.write() = None;\n+    }\n+\n+    /// Calls `f` with the registry, or fails if the runtime has shut down.\n+    ///\n+    /// `f` must not acquire `resources` again.\n+    fn with_registry<R>(&self, f: impl FnOnce(&mio::Registry) -> io::Result<R>) -> io::Result<R> {\n+        match self.resources.read().as_ref() {\n+            Some(resources) => f(&resources.registry),\n+            None => Err(io::Error::other(\n+                crate::util::error::RUNTIME_SHUTTING_DOWN_ERROR,\n+            )),\n+        }\n     }\n \n     /// Registers an I/O resource with the reactor for a given `mio::Ready` state.\n@@ -287,25 +326,29 @@ impl Handle {\n         source: &mut impl mio::event::Source,\n         interest: Interest,\n     ) -> io::Result<Arc<ScheduledIo>> {\n-        let scheduled_io = self.registrations.allocate(&mut self.synced.lock())?;\n-        let token = [REDACTED];\n-\n-        // we should remove the `scheduled_io` from the `registrations` set if registering\n-        // the `source` with the OS fails. Otherwise it will leak the `scheduled_io`.\n-        if let Err(e) = self.registry.register(source, token, interest.to_mio()) {\n-            // safety: `scheduled_io` is part of the `registrations` set.\n-            unsafe {\n-                self.registrations\n-                    .remove(&mut self.synced.lock(), &scheduled_io)\n-            };\n-\n-            return Err(e);\n-        }\n+        // Holding the registry across `allocate` and `register` means it\n+        // cannot be closed in between.\n+        self.with_registry(|registry| {\n+            let scheduled_io = self.registrations.allocate(&mut self.synced.lock())?;\n+            let token = [REDACTED];\n+\n+            // we should remove the `scheduled_io` from the `registrations` set if registering\n+            // the `source` with the OS fails. Otherwise it will leak the `scheduled_io`.\n+            if let Err(e) = registry.register(source, token, interest.to_mio()) {\n+                // safety: `scheduled_io` is part of the `registrations` set.\n+                unsafe {\n+                    self.registrations\n+                        .remove(&mut self.synced.lock(), &scheduled_io)\n+                };\n+\n+                return Err(e);\n+            }\n \n-        // TODO: move this logic to `RegistrationSet` and use a `CountedLinkedList`\n-        self.metrics.incr_fd_count();\n+            // TODO: move this logic to `RegistrationSet` and use a `CountedLinkedList`\n+            self.metrics.incr_fd_count();\n \n-        Ok(scheduled_io)\n+            Ok(scheduled_io)\n+        })\n     }\n \n     /// Deregisters an I/O resource from the reactor.\n@@ -314,6 +357,18 @@ impl Handle {\n         registration: &Arc<ScheduledIo>,\n         source: &mut impl Source,\n     ) -> io::Result<()> {\n+        let resources = self.resources.read();\n+        let resources = match resources.as_ref() {\n+            Some(resources) => resources,\n+            None => {\n+                // The runtime has shut down. The driver is never polled\n+                // again, so the `ScheduledIo` token can no longer be\n+                // dispatched, and pending releases are never processed.\n+                self.metrics.dec_fd_count();\n+                return Ok(());\n+            }\n+        };\n+\n         // Deregister the source with the OS poller **first**.\n         //\n         // If `deregister` fails (for example, because the caller closed the raw\n@@ -322,13 +377,15 @@ impl Handle {\n         // duplicated before the original fd number was closed, the open file\n         // description remains registered in epoll with the `ScheduledIo` token\n         // pointer even though `EPOLL_CTL_DEL` fails with `EBADF`.\n-        self.registry.deregister(source)?;\n+        resources.registry.deregister(source)?;\n \n         if self\n             .registrations\n             .deregister(&mut self.synced.lock(), registration)\n         {\n-            self.unpark();\n+            // Wake through the guard we already hold: `self.unpark()` would\n+            // take the read lock a second time.\n+            resources.wake();\n         }\n \n         self.metrics.dec_fd_count();\n@@ -343,6 +400,13 @@ impl Handle {\n     }\n }\n \n+impl Resources {\n+    fn wake(&self) {\n+        #[cfg(not(target_os = \"wasi\"))]\n+        self.waker.wake().expect(\"failed to wake I/O driver\");\n+    }\n+}\n+\n /// Dispatches an event received from the poller to the corresponding `ScheduledIo`.\n ///\n /// # Safety\ndiff --git a/tokio/src/runtime/io/driver/signal.rs b/tokio/src/runtime/io/driver/signal.rs\nindex ea3ef07b..19bd84e3 100644\n--- a/tokio/src/runtime/io/driver/signal.rs\n+++ b/tokio/src/runtime/io/driver/signal.rs\n@@ -7,9 +7,9 @@ impl Handle {\n         &self,\n         receiver: &mut mio::net::UnixStream,\n     ) -> io::Result<()> {\n-        self.registry\n-            .register(receiver, TOKEN_SIGNAL, mio::Interest::READABLE)?;\n-        Ok(())\n+        self.with_registry(|registry| {\n+            registry.register(receiver, TOKEN_SIGNAL, mio::Interest::READABLE)\n+        })\n     }\n }\n \ndiff --git a/tokio/src/runtime/io/driver/uring.rs b/tokio/src/runtime/io/driver/uring.rs\nindex 0119d725..bffaa0df 100644\n--- a/tokio/src/runtime/io/driver/uring.rs\n+++ b/tokio/src/runtime/io/driver/uring.rs\n@@ -193,8 +193,9 @@ impl Drop for UringContext {\n impl Handle {\n     fn add_uring_source(&self, uringfd: RawFd) -> io::Result<()> {\n         let mut source = SourceFd(&uringfd);\n-        self.registry\n-            .register(&mut source, TOKEN_WAKEUP, Interest::READABLE.to_mio())\n+        self.with_registry(|registry| {\n+            registry.register(&mut source, TOKEN_WAKEUP, Interest::READABLE.to_mio())\n+        })\n     }\n \n     pub(crate) fn get_uring(&self) -> &Mutex<UringContext> {\ndiff --git a/tokio/src/runtime/scheduler/current_thread/mod.rs b/tokio/src/runtime/scheduler/current_thread/mod.rs\nindex 3efd6735..cc0f18b9 100644\n--- a/tokio/src/runtime/scheduler/current_thread/mod.rs\n+++ b/tokio/src/runtime/scheduler/current_thread/mod.rs\n@@ -315,6 +315,10 @@ fn shutdown2(mut core: Box<Core>, handle: &Handle) -> Box<Core> {\n         driver.shutdown(&handle.driver);\n     }\n \n+    // Also runs when a panic while parking dropped the driver, so that\n+    // `driver.shutdown` above was skipped.\n+    handle.driver.release_io();\n+\n     core\n }\n \ndiff --git a/tokio/src/runtime/scheduler/multi_thread/park.rs b/tokio/src/runtime/scheduler/multi_thread/park.rs\nindex efe0ff06..a54f29a0 100644\n--- a/tokio/src/runtime/scheduler/multi_thread/park.rs\n+++ b/tokio/src/runtime/scheduler/multi_thread/park.rs\n@@ -49,8 +49,11 @@ const NOTIFIED: usize = 3;\n \n /// Shared across multiple Parker handles\n struct Shared {\n-    /// Shared driver. Only one thread at a time can use this\n-    driver: TryLock<Driver>,\n+    /// Shared driver. Only one thread at a time can use this.\n+    ///\n+    /// Taken and dropped on shutdown, so that a `Handle` that outlives the\n+    /// runtime does not keep the driver's resources open.\n+    driver: TryLock<Option<Driver>>,\n }\n \n impl Parker {\n@@ -61,7 +64,7 @@ impl Parker {\n                 mutex: Mutex::new(()),\n                 condvar: Condvar::new(),\n                 shared: Arc::new(Shared {\n-                    driver: TryLock::new(driver),\n+                    driver: TryLock::new(Some(driver)),\n                 }),\n             }),\n         }\n@@ -88,7 +91,8 @@ impl Parker {\n         duration: Duration,\n     ) -> HadDriver {\n         if let Some(mut driver) = self.inner.shared.driver.try_lock() {\n-            self.inner.park_driver(&mut driver, handle, Some(duration))\n+            let driver = driver.as_mut().expect(\"driver missing\");\n+            self.inner.park_driver(driver, handle, Some(duration))\n         } else if !duration.is_zero() {\n             self.inner.park_condvar(Some(duration));\n             HadDriver::No\n@@ -141,7 +145,8 @@ impl Inner {\n         }\n \n         if let Some(mut driver) = self.shared.driver.try_lock() {\n-            self.park_driver(&mut driver, handle, None)\n+            let driver = driver.as_mut().expect(\"driver missing\");\n+            self.park_driver(driver, handle, None)\n         } else {\n             self.park_condvar(None);\n             HadDriver::No\n@@ -307,8 +312,15 @@ impl Inner {\n     }\n \n     fn shutdown(&self, handle: &driver::Handle) {\n+        // Every core is shut down once all of them have stopped parking, so\n+        // the lock is free. The first core to get here drops the driver.\n         if let Some(mut driver) = self.shared.driver.try_lock() {\n-            driver.shutdown(handle);\n+            if let Some(mut driver) = driver.take() {\n+                driver.shutdown(handle);\n+                handle.release_io();\n+            }\n+        } else {\n+            debug_assert!(false, \"driver locked during shutdown\");\n         }\n \n         self.condvar.notify_all();\ndiff --git a/tokio/tests/io_driver_drop.rs b/tokio/tests/io_driver_drop.rs\nindex 419fa162..ec49ecd3 100644\n--- a/tokio/tests/io_driver_drop.rs\n+++ b/tokio/tests/io_driver_drop.rs\n@@ -106,9 +106,43 @@ fn shutdown_drops_waker_holding_registration() {\n     assert!(dropped.load(Ordering::Relaxed));\n }\n \n+#[test]\n+fn into_std_after_drop_current_thread() {\n+    into_std_after_drop(rt());\n+}\n+\n+#[test]\n+fn into_std_after_drop_multi_thread() {\n+    into_std_after_drop(multi_thread_rt());\n+}\n+\n+fn into_std_after_drop(rt: runtime::Runtime) {\n+    let listener = {\n+        let _enter = rt.enter();\n+        let listener = std::net::TcpListener::bind(\"127.0.0.1:0\").unwrap();\n+\n+        listener.set_nonblocking(true).unwrap();\n+\n+        TcpListener::from_std(listener).unwrap()\n+    };\n+\n+    drop(rt);\n+\n+    // Deregistering from a shut down driver must not fail.\n+    listener.into_std().unwrap();\n+}\n+\n fn rt() -> runtime::Runtime {\n     runtime::Builder::new_current_thread()\n         .enable_all()\n         .build()\n         .unwrap()\n }\n+\n+fn multi_thread_rt() -> runtime::Runtime {\n+    runtime::Builder::new_multi_thread()\n+        .worker_threads(2)\n+        .enable_all()\n+        .build()\n+        .unwrap()\n+}\ndiff --git a/tokio/tests/rt_shutdown_fds.rs b/tokio/tests/rt_shutdown_fds.rs\nnew file mode 100644\nindex 00000000..36bb31d8\n--- /dev/null\n+++ b/tokio/tests/rt_shutdown_fds.rs\n@@ -0,0 +1,55 @@\n+#![warn(rust_2018_idioms)]\n+#![cfg(all(feature = \"full\", target_os = \"linux\", not(miri)))]\n+\n+//! Regression test for #8703: dropping a runtime must release its I/O driver's\n+//! file descriptors even while a `RuntimeMetrics` (and so a `Handle`) is alive.\n+//!\n+//! This file has a single test on purpose: tests in one binary run in\n+//! parallel, and any concurrent fd activity would skew the count.\n+\n+use tokio::runtime::{Builder, Runtime, RuntimeMetrics};\n+\n+const ROUNDS: usize = 50;\n+\n+fn open_fds() -> usize {\n+    std::fs::read_dir(\"/proc/self/fd\").unwrap().count()\n+}\n+\n+fn leaked_fds(build: fn() -> Runtime) -> usize {\n+    // Warm up process-wide state, such as the signal driver's global socket pair.\n+    drop(build());\n+\n+    let before = open_fds();\n+    let mut kept: Vec<RuntimeMetrics> = Vec::with_capacity(ROUNDS);\n+    for _ in 0..ROUNDS {\n+        let rt = build();\n+        rt.block_on(async {\n+            tokio::net::TcpListener::bind(\"127.0.0.1:0\").await.unwrap();\n+        });\n+        kept.push(rt.metrics());\n+        drop(rt);\n+    }\n+    let after = open_fds();\n+    drop(kept);\n+\n+    after.saturating_sub(before)\n+}\n+\n+#[test]\n+fn dropped_runtime_releases_fds_while_metrics_alive() {\n+    let current = leaked_fds(|| Builder::new_current_thread().enable_all().build().unwrap());\n+    let multi = leaked_fds(|| {\n+        Builder::new_multi_thread()\n+            .worker_threads(2)\n+            .enable_all()\n+            .build()\n+            .unwrap()\n+    });\n+\n+    // A per-runtime leak shows up as at least ROUNDS extra fds; anything\n+    // smaller is unrelated process-wide noise.\n+    assert!(\n+        current < ROUNDS && multi < ROUNDS,\n+        \"fds leaked over {ROUNDS} runtimes: current_thread {current}, multi_thread {multi}\"\n+    );\n+}\ndiff --git a/tokio/tests/rt_unstable_metrics.rs b/tokio/tests/rt_unstable_metrics.rs\nindex 0ab505f9..823d5b8d 100644\n--- a/tokio/tests/rt_unstable_metrics.rs\n+++ b/tokio/tests/rt_unstable_metrics.rs\n@@ -788,6 +788,23 @@ fn io_driver_fd_count() {\n     assert_eq!(metrics.io_driver_fd_registered_count(), 1);\n }\n \n+#[cfg(target_os = \"linux\")]\n+#[test]\n+fn io_driver_fd_count_after_drop() {\n+    for rt in [current_thread(), threaded()] {\n+        let metrics = rt.metrics();\n+\n+        let listener =\n+            rt.block_on(async { tokio::net::TcpListener::bind(\"127.0.0.1:0\").await.unwrap() });\n+        assert_eq!(metrics.io_driver_fd_registered_count(), 1);\n+\n+        drop(rt);\n+        drop(listener);\n+\n+        assert_eq!(metrics.io_driver_fd_deregistered_count(), 1);\n+    }\n+}\n+\n #[cfg(any(target_os = \"linux\", target_os = \"macos\"))]\n #[test]\n fn io_driver_ready_count() {\ndiff --git a/tokio/tests/signal_drop_rt.rs b/tokio/tests/signal_drop_rt.rs\nindex 3c909b23..3d277f30 100644\n--- a/tokio/tests/signal_drop_rt.rs\n+++ b/tokio/tests/signal_drop_rt.rs\n@@ -37,6 +37,30 @@ fn dropping_loops_does_not_cause_starvation() {\n     second_rt.block_on(second_signal.recv());\n }\n \n+#[test]\n+fn signal_errors_after_drop_current_thread() {\n+    signal_errors_after_drop(rt());\n+}\n+\n+#[test]\n+fn signal_errors_after_drop_multi_thread() {\n+    signal_errors_after_drop(\n+        tokio::runtime::Builder::new_multi_thread()\n+            .worker_threads(2)\n+            .enable_all()\n+            .build()\n+            .unwrap(),\n+    );\n+}\n+\n+fn signal_errors_after_drop(rt: Runtime) {\n+    let handle = rt.handle().clone();\n+    drop(rt);\n+\n+    let _enter = handle.enter();\n+    assert!(signal(SignalKind::user_defined1()).is_err());\n+}\n+\n fn rt() -> Runtime {\n     tokio::runtime::Builder::new_current_thread()\n         .enable_all()\n",
+  "reviewer_outputs": {
+    "architect": [
+      {
+        "anchor": "",
+        "category": "performance",
+        "file": "tokio/src/runtime/io/driver.rs",
+        "line": 89,
+        "message": "unpark and every register/deregister now take a shared RwLock read lock. unpark is a hot cross-thread path (every remote wake). The reader count is a shared atomic cache line, and it adds a lock-ordering rule (resources before synced) that is enforced only by comments. Consider whether the lock is needed, for example by keeping the waker in an Arc that the handle drops, or by taking the lock only on shutdown-sensitive paths. If it stays, the cost is acceptable but worth noting.",
+        "reviewers": [
+          "architect"
+        ],
+        "severity": "suggestion",
+        "suggestion": null
+      },
+      {
+        "anchor": "",
+        "category": "robustness",
+        "file": "tokio/src/runtime/scheduler/multi_thread/park.rs",
+        "line": 93,
+        "message": "driver.as_mut().expect(\"driver missing\") adds a new panic path on park. It relies on every worker having stopped parking before Inner::shutdown runs, which the worker's shutdown_core ordering provides today. The invariant lives in another module and is not asserted there, so a future change to shutdown ordering would turn into a runtime panic. A comment pointing to shutdown_core, or treating None as a no-driver park (HadDriver::No), would be more robust.",
+        "reviewers": [
+          "architect"
+        ],
+        "severity": "suggestion",
+        "suggestion": null
+      }
+    ],
+    "lang-rust": [
+      {
+        "anchor": "",
+        "category": "leak",
+        "file": "tokio/src/runtime/io/driver.rs",
+        "line": 367,
+        "message": "After the runtime has shut down, `deregister_source` returns early on `resources == None` without calling `self.registrations.deregister(...)`. The `ScheduledIo` stays in `synced.registrations`, which holds an `Arc<ScheduledIo>` per registration. That list is only drained by `RegistrationSet::shutdown`, which runs from `driver::Shared::shutdown` on the normal path. On the panic-while-parking path in current_thread `shutdown2`, `driver.shutdown` is skipped (`core.driver` is None), so `registrations.shutdown` never runs and the entries are never removed. Every such registration then stays alive for as long as the io `Handle` lives (for example while a `RuntimeMetrics` clone is held), which is a regression: before this patch, `deregister` removed the entry. The fix is to drain the set in `release_resources` after the write guard is released, so that waking tasks cannot re-enter `resources` while it is locked. `registrations.shutdown` is idempotent (it returns an empty vec when `is_shutdown` is already set), so it is safe on the normal path too.",
+        "reviewers": [
+          "lang-rust"
+        ],
+        "severity": "warning",
+        "suggestion": "pub(crate) fn release_resources(&self) {\n    *self.resources.write() = None;\n    // Drain the registrations after the write guard is released: waking a task\n    // here may call `unpark`, which takes `resources.read()`.\n    let ios = self.registrations.shutdown(&mut self.synced.lock());\n    for io in ios {\n        io.shutdown();\n    }\n}"
+      },
+      {
+        "anchor": "",
+        "category": "resource-leak",
+        "file": "tokio/src/runtime/scheduler/multi_thread/park.rs",
+        "line": 323,
+        "message": "If the try_lock fails, `Inner::shutdown` only reaches `debug_assert!(false)`. In release builds the driver is then silently not dropped and `handle.release_io()` is never called, so the epoll/registry fds this patch is meant to close stay open. `shutdown_core` makes the lock free in practice, so this is unlikely to be hit, but the release-build fallback leaks the exact resources the change targets. A fallback that still closes the io resources would be safer.",
+        "reviewers": [
+          "lang-rust"
+        ],
+        "severity": "suggestion",
+        "suggestion": "} else {\n    debug_assert!(false, \"driver locked during shutdown\");\n    handle.release_io();\n}"
+      },
+      {
+        "anchor": "",
+        "category": "panic",
+        "file": "tokio/src/runtime/scheduler/multi_thread/park.rs",
+        "line": 94,
+        "message": "`expect(\"driver missing\")` is now reachable from `park_timeout` and `park` (also at line 148) if a parker runs after `Inner::shutdown` has taken the driver. `shutdown_core` appears to rule this out, since every core has left its park loop before any `Inner::shutdown` runs, so this is an invariant panic rather than a live bug. It is still worth a comment or a debug assertion stating the invariant, because the old code had no such panic site.",
+        "reviewers": [
+          "lang-rust"
+        ],
+        "severity": "suggestion",
+        "suggestion": "let driver = driver.as_mut().expect(\"driver missing: parked after shutdown\");"
+      }
+    ],
+    "pragmatist": [
+      {
+        "anchor": "",
+        "category": "performance",
+        "file": "tokio/src/runtime/io/driver.rs",
+        "line": 89,
+        "message": "Every cross-thread `unpark` and every `register`/`deregister` now takes a RwLock read lock, which adds an atomic RMW on a shared cache line to paths that were lock-free for the waker and registry. The change is correct and the deadlock rules are documented. It is still a permanent hot-path cost to fix a leak that only shows up when a Handle or RuntimeMetrics outlives the runtime. Please confirm with a quick benchmark (for example the spawn or wake-heavy multi-thread benches) that the cost is negligible, and say so in the commit message.",
+        "reviewers": [
+          "pragmatist"
+        ],
+        "severity": "suggestion",
+        "suggestion": ""
+      }
+    ],
+    "skeptic": [
+      {
+        "anchor": "",
+        "category": "performance",
+        "file": "tokio/src/runtime/io/driver.rs",
+        "line": 89,
+        "message": "unpark() now takes an RwLock read lock on every cross-thread wake of the I/O driver (and register_source holds one across allocate+register). The lock is uncontended in steady state, but a read lock is an atomic RMW on a shared cache line on a hot path. Worth a benchmark; an AtomicBool/shutdown flag or ArcSwap-style approach could avoid it.",
+        "reviewers": [
+          "skeptic"
+        ],
+        "severity": "suggestion",
+        "suggestion": null
+      },
+      {
+        "anchor": "",
+        "category": "robustness",
+        "file": "tokio/src/runtime/scheduler/multi_thread/park.rs",
+        "line": 33,
+        "message": "park/park_timeout now use expect(\"driver missing\"), which turns any park after shutdown into a panic. This holds only because shutdown runs after all workers stop parking. The new debug_assert!(false) in shutdown covers only the locked case, so a release-build park after shutdown would panic instead of degrading to the condvar path. Falling back to park_condvar when the driver is None would be safer.",
+        "reviewers": [
+          "skeptic"
+        ],
+        "severity": "suggestion",
+        "suggestion": "            let Some(driver) = driver.as_mut() else { self.inner.park_condvar(Some(duration)); return HadDriver::No; };"
+      },
+      {
+        "anchor": "",
+        "category": "tests",
+        "file": "tokio/tests/rt_shutdown_fds.rs",
+        "line": 57,
+        "message": "The leak assertion `< ROUNDS` is loose. A leak of one fd per runtime gives exactly ROUNDS and would be caught, but a partial leak, such as only the waker or only on some paths, would pass. The test also has no coverage for concurrent unpark/register racing with release_resources, which is the stated reason for the RwLock.",
+        "reviewers": [
+          "skeptic"
+        ],
+        "severity": "suggestion",
+        "suggestion": null
+      }
+    ]
+  },
+  "aggregator": {
+    "dropped": [
+      {
+        "file": "tokio/src/runtime/io/driver.rs",
+        "line": 89,
+        "message": "RwLock read lock on unpark/register/deregister hot path; benchmark it.",
+        "reason": "duplicate",
+        "reviewers": [
+          "pragmatist"
+        ]
+      },
+      {
+        "file": "tokio/src/runtime/io/driver.rs",
+        "line": 89,
+        "message": "unpark takes a RwLock read lock on every cross-thread wake; worth a benchmark.",
+        "reason": "duplicate",
+        "reviewers": [
+          "skeptic"
+        ]
+      },
+      {
+        "file": "tokio/src/runtime/scheduler/multi_thread/park.rs",
+        "line": 93,
+        "message": "expect(\"driver missing\") adds a panic path relying on shutdown_core ordering.",
+        "reason": "duplicate",
+        "reviewers": [
+          "architect"
+        ]
+      },
+      {
+        "file": "tokio/src/runtime/scheduler/multi_thread/park.rs",
+        "line": 33,
+        "message": "park/park_timeout expect(\"driver missing\") panics after shutdown; fall back to park_condvar.",
+        "reason": "duplicate",
+        "reviewers": [
+          "skeptic"
+        ]
+      },
+      {
+        "file": "tokio/src/runtime/scheduler/multi_thread/park.rs",
+        "line": 323,
+        "message": "If try_lock fails in release builds, the driver is not dropped and release_io is not called.",
+        "reason": "low-value",
+        "reviewers": [
+          "lang-rust"
+        ]
+      },
+      {
+        "file": "tokio/tests/rt_shutdown_fds.rs",
+        "line": 57,
+        "message": "The `< ROUNDS` leak assertion is loose, and there is no test of concurrent unpark/register racing release_resources.",
+        "reason": "low-value",
+        "reviewers": [
+          "skeptic"
+        ]
+      }
+    ],
+    "findings": [
+      {
+        "category": "performance",
+        "file": "tokio/src/runtime/io/driver.rs",
+        "line": 296,
+        "message": "`unpark` now takes a `RwLock` read lock on every cross-thread wake of the I/O driver. `add_source` (through `with_registry`) and `deregister_source` also hold one. Before this change the waker and registry needed no lock on these paths. Even uncontended, a read lock is an atomic RMW on a shared cache line, and the lock adds an ordering rule (never take `resources` while holding `synced`, never take it twice) that only comments enforce. The fix is correct. Still, this is a permanent hot-path cost to fix a leak that only appears when a `Handle` or `RuntimeMetrics` outlives the runtime. Please benchmark it on the wake-heavy multi-thread benches, or consider an approach without a lock on the wake path.",
+        "reviewers": [
+          "architect",
+          "pragmatist",
+          "skeptic"
+        ],
+        "severity": "suggestion"
+      },
+      {
+        "category": "robustness",
+        "file": "tokio/src/runtime/scheduler/multi_thread/park.rs",
+        "line": 94,
+        "message": "`driver.as_mut().expect(\"driver missing\")` here and at line 148 adds a panic path to `park_timeout` and `park` that the old code did not have. It is safe only because `shutdown_core` guarantees that every worker has stopped parking before `Inner::shutdown` takes the driver. That invariant lives in another module and nothing here asserts it. Either add a comment pointing to it, or treat `None` as a parked-without-driver case: fall back to `park_condvar` and return `HadDriver::No`. Then a future change to shutdown order would degrade gracefully instead of panicking.",
+        "reviewers": [
+          "lang-rust",
+          "architect",
+          "skeptic"
+        ],
+        "severity": "suggestion",
+        "suggestion": "let Some(driver) = driver.as_mut() else {\n    self.inner.park_condvar(Some(duration));\n    return HadDriver::No;\n};"
+      },
+      {
+        "category": "leak",
+        "file": "tokio/src/runtime/io/driver.rs",
+        "line": 306,
+        "message": "Downgraded from warning. The reviewer called this a regression, but before this patch `RegistrationSet::deregister` also only queued the entry in `pending_release`. Entries leave `registrations` only in `release` (run from `turn`) or in `shutdown`, so the leak already existed. It is still real. In current_thread `shutdown2`, when a panic during park has dropped the driver, `driver.shutdown` is skipped and `registrations.shutdown` never runs. Each `Arc<ScheduledIo>` then stays in `synced.registrations` for as long as the io `Handle` lives, for example while a `RuntimeMetrics` is held. That is the very situation this change targets. `release_resources` could drain the set once the write guard is released. `RegistrationSet::shutdown` returns an empty vec when `is_shutdown` is already set, so this is a no-op on the normal path.",
+        "reviewers": [
+          "lang-rust"
+        ],
+        "severity": "suggestion",
+        "suggestion": "pub(crate) fn release_resources(&self) {\n    *self.resources.write() = None;\n    // Drain after releasing the write guard: waking a task may call `unpark`.\n    let ios = self.registrations.shutdown(&mut self.synced.lock());\n    for io in ios {\n        io.shutdown();\n    }\n}"
+      }
+    ]
+  },
+  "expected_posted": [
+    {
+      "file": "tokio/src/runtime/io/driver.rs",
+      "line": 296,
+      "category": "performance",
+      "severity": "suggestion",
+      "inline": true
+    },
+    {
+      "file": "tokio/src/runtime/io/driver.rs",
+      "line": 306,
+      "category": "leak",
+      "severity": "suggestion",
+      "inline": true
+    },
+    {
+      "file": "tokio/src/runtime/scheduler/multi_thread/park.rs",
+      "line": 94,
+      "category": "robustness",
+      "severity": "suggestion",
+      "inline": true
+    }
+  ],
+  "expected_decision": "APPROVE",
+  "labels": [
+    {
+      "id": "b1451c75c0a8",
+      "file": "tokio/src/runtime/io/driver.rs",
+      "line": 296,
+      "severity": "suggestion",
+      "category": "performance",
+      "message": "`unpark` now takes a `RwLock` read lock on every cross-thread wake of the I/O driver. `add_source` (through `with_registry`) and `deregister_source` also hold one. Before this change the waker and registry needed no lock on these paths. Even uncontended, a read lock is an atomic RMW on a shared cache line, and the lock adds an ordering rule (never take `resources` while holding `synced`, never take it twice) that only comments enforce. The fix is correct. Still, this is a permanent hot-path cost to fix a leak that only appears when a `Handle` or `RuntimeMetrics` outlives the runtime. Please benchmark it on the wake-heavy multi-thread benches, or consider an approach without a lock on the wake path.",
+      "label": "expected"
+    },
+    {
+      "id": "14163444d1d0",
+      "file": "tokio/src/runtime/io/driver.rs",
+      "line": 306,
+      "severity": "suggestion",
+      "category": "leak",
+      "message": "Downgraded from warning. The reviewer called this a regression, but before this patch `RegistrationSet::deregister` also only queued the entry in `pending_release`. Entries leave `registrations` only in `release` (run from `turn`) or in `shutdown`, so the leak already existed. It is still real. In current_thread `shutdown2`, when a panic during park has dropped the driver, `driver.shutdown` is skipped and `registrations.shutdown` never runs. Each `Arc<ScheduledIo>` then stays in `synced.registrations` for as long as the io `Handle` lives, for example while a `RuntimeMetrics` is held. That is the very situation this change targets. `release_resources` could drain the set once the write guard is released. `RegistrationSet::shutdown` returns an empty vec when `is_shutdown` is already set, so this is a no-op on the normal path.",
+      "label": "expected"
+    },
+    {
+      "id": "8642c63a2748",
+      "file": "tokio/src/runtime/scheduler/multi_thread/park.rs",
+      "line": 94,
+      "severity": "suggestion",
+      "category": "robustness",
+      "message": "`driver.as_mut().expect(\"driver missing\")` here and at line 148 adds a panic path to `park_timeout` and `park` that the old code did not have. It is safe only because `shutdown_core` guarantees that every worker has stopped parking before `Inner::shutdown` takes the driver. That invariant lives in another module and nothing here asserts it. Either add a comment pointing to it, or treat `None` as a parked-without-driver case: fall back to `park_condvar` and return `HadDriver::No`. Then a future change to shutdown order would degrade gracefully instead of panicking.",
+      "label": "expected"
+    }
+  ],
+  "misses": [
+    {
+      "path": "tokio/src/runtime/scheduler/multi_thread/park.rs",
+      "line": 323,
+      "author": "darkraider01",
+      "body": "if the lock is guaranteed to be free by this point, wouldn't an `expect()` make more sense?"
+    },
+    {
+      "path": "tokio/tests/rt_shutdown_fds.rs",
+      "line": 52,
+      "author": "darkraider01",
+      "body": "This would still pass with 49 leaked fds, right? I get that we're trying to avoid flaky tests here, but maybe the threshold could be a bit tighter? Otherwise a smaller leak could slip through."
+    },
+    {
+      "path": "tokio/src/runtime/io/driver.rs",
+      "line": 306,
+      "author": "darkraider01",
+      "body": "IMO it'd be worth testing `unpark()` racing with this too, would be nice to exercise the actual read/write lock interaction, especially since that's what we're relying on to keep the waker safe."
+    },
+    {
+      "path": "tokio/src/runtime/io/driver.rs",
+      "line": 360,
+      "author": "darkraider01",
+      "body": "I'm wondering there might be a possible race between deregistration and shutdown, like suppose we got a Thread A which enters `degregister_source()` and grabs the resources read lock. Thread B runs\n`RegistrationSet::shutdown()`, clears `pending_release` and marks the set as shut down. Then Thread A finishes the OS deregistration and calls `RegistrationSet::deregister()` and that pushes another `ScheduledIo` into `pending_release`, even though shutdown has already happened, since the driver won't be polled again, nothing drains that entry.\nSo if something still holds the runtime handle, wouldn't that `ScheduledIo` stick around until the handle itself is dropped?\nI might be missing something in the shutdown ordering here, but maybe it's worth checking `synced.is_shutdown` before queuing the release."
+    }
+  ],
+  "signals": {
+    "tool_calls": 98,
+    "tool_errors": [
+      {
+        "agent": "agent-aee14ee258429191d",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-aee14ee258429191d",
+        "tool": "Read"
+      }
+    ],
+    "retries": 0,
+    "permission_denials": 0,
+    "agents": [
+      {
+        "name": "505f7e3e-eeab-495c-8d9b-ab6e44ebfad7",
+        "tool_calls": 7,
+        "tool_errors": 0,
+        "turns": 12,
+        "output_tokens": 4208
+      },
+      {
+        "name": "agent-a534be1899b307735",
+        "tool_calls": 13,
+        "tool_errors": 0,
+        "turns": 16,
+        "output_tokens": 8216
+      },
+      {
+        "name": "agent-a58d7f96c3eaf6695",
+        "tool_calls": 16,
+        "tool_errors": 0,
+        "turns": 20,
+        "output_tokens": 11005
+      },
+      {
+        "name": "agent-a717d3e1937371ede",
+        "tool_calls": 15,
+        "tool_errors": 0,
+        "turns": 21,
+        "output_tokens": 12833
+      },
+      {
+        "name": "agent-ac1d89327662518bd",
+        "tool_calls": 14,
+        "tool_errors": 0,
+        "turns": 16,
+        "output_tokens": 11247
+      },
+      {
+        "name": "agent-aee14ee258429191d",
+        "tool_calls": 33,
+        "tool_errors": 2,
+        "turns": 51,
+        "output_tokens": 110525
+      }
+    ],
+    "unreadable_lines": 0
+  },
+  "label_status": "confirmed",
+  "repo_private": null
+}
