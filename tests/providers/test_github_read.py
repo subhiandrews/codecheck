@@ -257,3 +257,9 @@ def test_list_threads_without_reactions_uses_slim_query():
     argv = ["gh", "api", "graphql", "-f", f"query={THREADS_QUERY_SLIM}", "-f", "owner=o", "-f", "name=r", "-F", "number=7"]
     runner = FakeRunner().on(*argv, stdout=page([node("T1")]))
     assert [t.id for t in GitHubProvider(runner).list_threads(REF, reactions=False)] == ["T1"]
+
+
+def test_whoami_uses_configured_login_without_calling_gh():
+    runner = FakeRunner()  # any gh call would fail: nothing is registered
+    assert GitHubProvider(runner, login="github-actions[bot]").whoami() == "github-actions[bot]"
+    assert runner.calls == []

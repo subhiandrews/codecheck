@@ -111,9 +111,10 @@ def _anchor_rejected(stderr: str) -> bool:
 class GitHubProvider:
     name = "github"
 
-    def __init__(self, runner: CommandRunner, cwd: Path | None = None) -> None:
+    def __init__(self, runner: CommandRunner, cwd: Path | None = None, login: str = "") -> None:
         self.runner = runner
         self.cwd = cwd
+        self.login = login
 
     def _gh(self, *args: str, input: str | None = None, ok: Sequence[int] = (0,)) -> CommandResult:
         res = self.runner.run(["gh", *args], input=input, cwd=self.cwd)
@@ -125,6 +126,8 @@ class GitHubProvider:
         return json.loads(self._gh(*args).stdout or "null")
 
     def whoami(self) -> str:
+        if self.login:  # installation tokens (Actions' GITHUB_TOKEN) cannot call /user
+            return self.login
         return self._gh("api", "user", "--jq", ".login").stdout.strip()
 
     def get_pr(self, ref: PRRef) -> PullRequest:
