@@ -10,3 +10,7 @@ def test_registry_returns_github_and_rejects_unknown():
     assert isinstance(get_provider("github", FakeRunner()), GitHubProvider)
     with pytest.raises(ConfigError, match="github"):
         get_provider("gitlab", FakeRunner())
+
+
+def test_get_provider_passes_login_through():
+    assert get_provider("github", FakeRunner(), login="bot[bot]").whoami() == "bot[bot]"

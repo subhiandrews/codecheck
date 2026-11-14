@@ -19,6 +19,7 @@ class ReviewConfig:
     security: bool = False
     attribution: bool = True  # one credit line in the review summary; user-only
     label: str = "code-check"  # label added to reviewed PRs, "" disables; user-only
+    login: str = ""  # act as this login instead of asking `gh api user` (CI tokens cannot); user-only
     max_files: int = 80
     max_chunk_chars: int = 120_000
     max_inline_comments: int = 25
@@ -102,11 +103,13 @@ class Config:
 _FREEFORM = {("models", "per_language")}
 # Keys (or whole tables) a repository's .code-check.toml may not set.
 REPO_FORBIDDEN = {
-    ("state_dir",), ("run_pr",), ("shadow",), ("review", "auto_approve"), ("review", "attribution"), ("review", "label"), ("loop", "review_forks"),
+    ("state_dir",), ("run_pr",), ("shadow",), ("review", "auto_approve"), ("review", "attribution"), ("review", "label"), ("review", "login"), ("loop", "review_forks"),
     ("address", "test_command"), ("deep_reviewer", "command"),
 }
 MODEL_NAME = re.compile(r"[A-Za-z0-9._:\[\]-]+")
 LABEL_NAME = re.compile(r"[A-Za-z0-9._ :-]{1,50}")
+# A GitHub login, optionally a bot: octocat, github-actions[bot]. Never starts with '-'.
+LOGIN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}(\[bot\])?")
 # Values accepted by `claude --permission-mode` (Task 1 spike).
 PERMISSION_MODES = ("acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")
 _TRUE = {"1", "true", "yes", "on"}
@@ -239,6 +242,9 @@ def validate(cfg: Config) -> Config:
     label = cfg.review.label
     if label and (label.startswith("-") or not LABEL_NAME.fullmatch(label)):
         raise ConfigError(f"config key review.label is not a valid label name: {label!r}")
+    login = cfg.review.login
+    if login and not LOGIN_NAME.fullmatch(login):
+        raise ConfigError(f"config key review.login is not a valid GitHub login: {login!r}")
     r = cfg.run_pr
     for key in ("review_allowed_tools", "babysit_allowed_tools"):
         for tool in getattr(r, key):
