@@ -117,3 +117,12 @@ def test_prompts_explain_ours_tag():
     files = render_all(ModelsConfig())
     for name in ("skeptic.md", "aggregator.md"):
         assert "`[ours]`" in files[name] and "not a maintainer" in files[name]
+
+
+def test_every_agent_reads_run_files_and_knows_grep_is_ripgrep():
+    for name, body in render_all(ModelsConfig()).items():
+        assert "run_files" in body, name
+        assert "if `RUN_DIR/CODE_CHECK.md` exists" not in body, name
+    for name, body in render_all(ModelsConfig()).items():
+        if name != "aggregator.md":
+            assert "Grep is ripgrep: escape literal parentheses and brackets" in body, name

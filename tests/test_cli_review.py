@@ -716,3 +716,17 @@ def test_context_local_mode_handoff_is_not_blind(tmp_path):
     assert out["handoff"] is True and out["blind"] is False
     rec = _run_record(ctx, out)
     assert rec["blind"] is False and rec["repo_private"] is None
+
+
+def test_context_lists_run_files(tmp_path):
+    ctx, pr = _pr_with_guidance(tmp_path, "base rules\n", None)
+    _handoff(ctx)  # blind run: no existing-comments.md
+    out = run_pr_context(ctx, pr)
+    assert out["run_files"] == ["CODE_CHECK.md"]
+    meta = json.loads((Path(out["run_dir"]) / "context.json").read_text())
+    assert meta["run_files"] == ["CODE_CHECK.md"]
+    (tmp_path / "b").mkdir()
+    ctx2, pr2 = _pr_with_guidance(tmp_path / "b", None, None)
+    out2 = run_pr_context(ctx2, pr2)
+    assert out2["run_files"] == []
+    assert json.loads((Path(out2["run_dir"]) / "context.json").read_text())["run_files"] == []
