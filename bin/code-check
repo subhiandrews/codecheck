@@ -1,9 +1,12 @@
 #!/bin/sh
 set -eu
 if [ -n "${CODE_CHECK_PYTHON:-}" ]; then
+  ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+  export CODE_CHECK_PLUGIN_ROOT="$ROOT"
   exec "$CODE_CHECK_PYTHON" -m codecheck "$@"
 fi
 . "$(dirname "$0")/../hooks/common.sh"
 # Cheap and idempotent: only does work when the venv is missing or the version changed.
 "$ROOT/hooks/ensure-runtime.sh" >&2
+export CODE_CHECK_PLUGIN_ROOT="$ROOT"
 exec "$VENV/bin/python" -m codecheck "$@"

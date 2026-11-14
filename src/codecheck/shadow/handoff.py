@@ -6,7 +6,8 @@ prompts) and `build_reason` (why they are null), `config_hash`, `models`, `panel
 (`reviewers`), the aggregated `findings` (ids and order as `post` gives them), the aggregator's `dropped` list, the
 `decision`, transcript `signals` (tool calls and errors, retries, permission denials, turns and output tokens per
 transcript file), `ignored_guidance` lines from the transcripts, the human `comparison` (or `comparison_reason`; `general_comments_reason` says why its general comments are missing, null when fine) with `comparison_mode` (`posted`, `unposted` or null), `head_moved`
-and `pr_state` (`open`, `closed`, `merged`; null for local runs), and
+and `pr_state` (`open`, `closed`, `merged`; both null for local runs, on the posted path, for drafts and when the PR fetch
+failed; `head_moved` is also null when the run recorded no head SHA), and
 `transcript`, `transcript_reason`, `transcript_files`.
 
 Deliberately absent: per-reviewer tokens and duration (subagent transcripts are named by file, not by panel member,

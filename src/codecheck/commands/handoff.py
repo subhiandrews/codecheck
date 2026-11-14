@@ -69,7 +69,7 @@ def build_handoff(ctx, run_id: str) -> dict:
     ignored_guidance = signals.pop("ignored_guidance", []) if signals else []
     decision = next((r for r in reversed(records) if r.get("type") == "decision"), None)
     findings = _findings(run_dir, meta, aggregator_raw)
-    pr_url = comparison = comparison_mode = head_moved = pr_state = general_reason = None
+    pr_url = comparison = comparison_mode = head_moved = pr_state = general_reason = fetch_reason = None
     if meta.get("mode") != "pr" or not meta.get("pr"):
         comparison_reason = "local review: there is no pull request to compare with"
     else:
@@ -86,10 +86,10 @@ def build_handoff(ctx, run_id: str) -> dict:
         elif pr is None:
             comparison_reason = fetch_reason
         elif pr.is_draft:
-            comparison_reason = "review was not posted (draft, stale or dry run), so there is nothing to compare"
+            comparison_reason = "draft PR: review was not posted, so there is nothing to compare"
         else:
             comparison_mode, pr_state = "unposted", pr.state
-            head_moved = pr.head_sha != meta.get("head_sha")
+            head_moved = None if not meta.get("head_sha") else pr.head_sha != meta["head_sha"]
             comparison, comparison_reason, general_reason = _compare(ctx, ref, run_id, findings=findings)
     handoff = {
         "schema": SCHEMA, "run_id": run_id, "skill": meta.get("skill"), "mode": meta.get("mode"), "repo": meta.get("repo"),

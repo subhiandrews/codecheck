@@ -395,6 +395,8 @@ def test_handoff_records_plugin_build(tmp_path):
     root = tmp_path / "plug"
     (root / "agents").mkdir(parents=True)
     (root / "agents" / "a.md").write_text("a")
+    (root / ".claude-plugin").mkdir()
+    (root / ".claude-plugin" / "plugin.json").write_text("{}")
     ctx, out = local_run(tmp_path)
     ctx.env = {**ctx.env, "CLAUDE_PLUGIN_ROOT": str(root)}
     call(ctx, "handoff", "--run", out["run_id"])
@@ -630,3 +632,14 @@ def test_handoff_schema_note_lists_present_and_absent_fields():
     for field in ("config_hash", "dropped", "ignored_guidance", "signals", "comparison"):
         assert field in doc, field
     assert "per-reviewer tokens" in doc and "stale-PR retries" in doc
+
+
+def test_handoff_head_moved_is_null_without_a_recorded_head(tmp_path):
+    ctx, _provider, _pr, out = _unposted_run(tmp_path)
+    path = ctx.run_dir(out["run_id"]) / "context.json"
+    meta = json.loads(path.read_text())
+    meta.pop("head_sha")
+    path.write_text(json.dumps(meta))
+    call(ctx, "handoff", "--run", out["run_id"])
+    _folder, data = handoff_files(ctx, out["run_id"])
+    assert data["comparison_mode"] == "unposted" and data["head_moved"] is None

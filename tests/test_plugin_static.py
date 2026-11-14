@@ -457,3 +457,20 @@ def test_security_argument_is_documented_and_wired():
         assert pinned[name] in text
     for name in ("address-comments", "babysit-pr"):
         assert "guidance" in (REPO / f"skills/{name}/SKILL.md").read_text()
+
+
+def test_wrapper_exports_the_plugin_root_on_both_paths():
+    text = (REPO / "bin/code-check").read_text()
+    export = 'export CODE_CHECK_PLUGIN_ROOT="$ROOT"'
+    assert text.count(export) == 2
+    parts = text.split("exec ")
+    assert export in parts[0] and export in parts[1]  # before each exec
+
+
+def test_wrapper_gives_the_cli_its_plugin_root(tmp_path):
+    probe = tmp_path / "py"
+    probe.write_text('#!/bin/sh\necho "$CODE_CHECK_PLUGIN_ROOT"\n')
+    probe.chmod(0o755)
+    env = {**os.environ, "CODE_CHECK_PYTHON": str(probe)}
+    res = subprocess.run([str(REPO / "bin/code-check")], env=env, capture_output=True, text=True, check=False)
+    assert res.stdout.strip() == str(REPO)
