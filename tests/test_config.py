@@ -187,3 +187,25 @@ def test_build_context_creates_shadow_store_when_only_handoff_is_on(tmp_path):
     assert ctx.shadow is not None
     env["CODE_CHECK_SHADOW__HANDOFF"] = "0"
     assert build_context(tmp_path, env, tmp_path / "home", runner, FakeProvider()).shadow is None
+
+
+def test_login_defaults_to_empty(tmp_path):
+    assert load_config(tmp_path / "repo", tmp_path / "home", {}).review.login == ""
+
+
+def test_repo_file_cannot_set_login(tmp_path):
+    write(tmp_path / "repo/.code-check.toml", '[review]\nlogin = "someone"\n')
+    with pytest.raises(ConfigError, match=r"review.login.*repository"):
+        load_config(tmp_path / "repo", tmp_path / "home", {})
+
+
+@pytest.mark.parametrize("login", ["octocat", "github-actions[bot]", "a"])
+def test_login_accepts_users_and_bots(tmp_path, login):
+    cfg = load_config(tmp_path / "repo", tmp_path / "home", {"CODE_CHECK_REVIEW__LOGIN": login})
+    assert cfg.review.login == login
+
+
+@pytest.mark.parametrize("login", ["--foo", "-x", "a b", "a\nb", "x" * 40, "bad[bot]x"])
+def test_login_is_validated(tmp_path, login):
+    with pytest.raises(ConfigError, match="review.login"):
+        load_config(tmp_path / "repo", tmp_path / "home", {"CODE_CHECK_REVIEW__LOGIN": login})
