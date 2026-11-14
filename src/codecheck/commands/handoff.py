@@ -184,7 +184,7 @@ def _general_comments(ctx, ref: PRRef) -> list[dict]:
     try:
         general = build_general_comments(ctx.provider.list_reviews(ref), ctx.provider.list_issue_comments(ref),
                                          pr_author=ctx.provider.get_pr(ref).author)
-        return [{**g, "body": scrub_text(g["body"])} for g in general]
+        return [{**g, "body": " ".join(scrub_text(g["body"]).split())[:300]} for g in general]
     except Exception:  # noqa: BLE001 - the extra feedback is a convenience; the rest of the comparison stands
         return []
 

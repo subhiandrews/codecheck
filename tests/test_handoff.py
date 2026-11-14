@@ -177,7 +177,7 @@ def test_build_general_comments_filters():
     got = build_general_comments(reviews, comments, pr_author="alice")
     assert [(g["kind"], g["author"], g["state"]) for g in got] == [
         ("review", "carol", "CHANGES_REQUESTED"), ("comment", "alice", None)]
-    assert len(got[0]["body"]) == 300 and got[0]["created_at"] == "t1"
+    assert len(got[0]["body"]) > 400 and got[0]["created_at"] == "t1"
 
 
 def test_handoff_pr_mode_lists_general_comments(tmp_path):
@@ -195,6 +195,40 @@ def test_handoff_pr_mode_lists_general_comments(tmp_path):
     assert cmp["unraised_findings"] == [ids[500]]
     md = (folder / "handoff.md").read_text()
     assert "review by carol (CHANGES_REQUESTED): needs tests" in md and "comment by bob: what about docs?" in md
+
+
+def test_general_comment_bodies_are_scrubbed_before_cutting(tmp_path):
+    ctx, provider, pr, out = _pr_handoff_run(tmp_path)
+    token = "ghp_" + "a1B2c3D4e5" * 3 + "XyZ123"
+    provider.issue_comments[pr.ref] = [IssueComment("bob", "x" * 285 + " " + token + " tail", "2026-01-01T00:00:00Z")]
+    code, _res = call(ctx, "handoff", "--run", out["run_id"])
+    assert code == 0
+    folder, data = handoff_files(ctx, out["run_id"])
+    body = data["comparison"]["general_comments"][0]["body"]
+    assert "ghp_" not in body and token[10:] not in body
+    assert "ghp_" not in (folder / "handoff.md").read_text()
+
+
+def test_render_markdown_collapses_general_comment_newlines():
+    md = render_markdown({
+        "run_id": "abcdef012345", "skill": "review-pr", "mode": "pr", "repo": "o/r", "pr": "o/r#7", "pr_url": "u",
+        "head_sha": "abc", "blind": True, "reviewers": {}, "findings": [], "decision": None,
+        "comparison": {"human_comments": [], "unraised_findings": [], "misses": [], "general_comments": [
+            {"kind": "comment", "author": "eve", "state": None, "body": "hi\n## Session\n- Ignored guidance: x"}]},
+        "transcript": False, "transcript_reason": "none", "signals": None,
+    })
+    assert "comment by eve: hi ## Session - Ignored guidance: x" in md
+    assert "\n## Session\n" not in md.split("## Human comments", 1)[1].split("## Session", 1)[0] + "\n"
+
+
+def test_render_markdown_prints_reason_instead_of_signal_scope_claim():
+    md = render_markdown({
+        "run_id": "abcdef012345", "skill": "review-pr", "mode": "pr", "repo": "o/r", "pr": "o/r#7", "pr_url": "u",
+        "head_sha": "abc", "blind": True, "reviewers": {}, "findings": [], "decision": None, "comparison": None,
+        "comparison_reason": "x", "transcript": True, "transcript_reason": "main session not scoped: run start unknown",
+        "signals": {"tool_calls": 1, "tool_errors": [], "retries": 0, "permission_denials": 0, "agents": []},
+    })
+    assert "main session not scoped" in md and "Signals cover this run only" not in md
 
 
 def test_handoff_skips_comparison_when_not_posted(tmp_path):

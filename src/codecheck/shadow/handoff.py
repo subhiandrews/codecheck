@@ -33,11 +33,11 @@ def build_general_comments(reviews: Sequence[Review], issue_comments: Sequence[I
     for r in reviews:
         if r.is_bot or r.author == pr_author or _skip_body(r.body):
             continue
-        out.append({"kind": "review", "author": r.author, "state": r.state, "body": r.body[:300], "created_at": r.submitted_at})
+        out.append({"kind": "review", "author": r.author, "state": r.state, "body": r.body, "created_at": r.submitted_at})
     for c in issue_comments:
         if c.is_bot or _skip_body(c.body):
             continue
-        out.append({"kind": "comment", "author": c.author, "state": None, "body": c.body[:300], "created_at": c.created_at})
+        out.append({"kind": "comment", "author": c.author, "state": None, "body": c.body, "created_at": c.created_at})
     return out
 
 
@@ -101,14 +101,15 @@ def render_markdown(h: dict) -> str:
                          + (f", human says {c['human_severity']}, we said {c['finding_severity']}" if c["human_severity"] else ""))
         for g in cmp.get("general_comments") or []:
             state = f" ({g['state']})" if g.get("state") else ""
-            lines.append(f"- {g['kind']} by {g['author']}{state}: {(g.get('body') or '')[:120]}")
+            lines.append(f"- {g['kind']} by {g['author']}{state}: {' '.join((g.get('body') or '').split())[:120]}")
         lines.append(f"- Findings no human raised: {', '.join(cmp['unraised_findings']) or 'none'}")
     lines += ["", "## Session", ""]
     signals = h.get("signals")
     if not h.get("transcript"):
         lines.append(f"- No transcript: {h.get('transcript_reason')}")
     elif signals:
-        lines.append("- Signals cover this run only (subagents by RUN_DIR, main session by time window)")
+        lines.append(f"- {h['transcript_reason']}" if h.get("transcript_reason")
+                     else "- Signals cover this run only (subagents by RUN_DIR, main session by time window)")
         lines.append(f"- {signals['tool_calls']} tool calls, {len(signals['tool_errors'])} failed, "
                      f"{signals['retries']} retries, {signals['permission_denials']} permission denials")
         lines += [f"- {a['name']}: {a['turns']} turns, {a['output_tokens']} output tokens" for a in signals["agents"]]
