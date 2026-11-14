@@ -497,6 +497,34 @@ def test_handoff_unposted_records_closed_pr_state(tmp_path):
     assert data["pr_state"] == "merged" and data["comparison"] is not None
 
 
+def _failing_get_pr(provider):
+    def boom(ref):
+        raise RuntimeError("gh: network down")
+
+    provider.get_pr = boom
+
+
+def test_handoff_posted_comparison_survives_a_failing_pr_fetch(tmp_path):
+    ctx, provider, pr, out = _pr_handoff_run(tmp_path)
+    provider.threads[pr.ref] = [human("T1", 1, "**Warning**: y is never read")]
+    _failing_get_pr(provider)
+    code, res = call(ctx, "handoff", "--run", out["run_id"])
+    assert code == 0 and res["handoff"] is True and res["comparison"] is True
+    _folder, data = handoff_files(ctx, out["run_id"])
+    assert data["pr_url"] is None and data["comparison_mode"] == "posted" and data["comparison"] is not None
+    assert data["head_moved"] is None and data["pr_state"] is None
+
+
+def test_handoff_unposted_pr_fetch_failure_keeps_the_files(tmp_path):
+    ctx, provider, _pr, out = _unposted_run(tmp_path)
+    _failing_get_pr(provider)
+    code, res = call(ctx, "handoff", "--run", out["run_id"])
+    assert code == 0 and res["handoff"] is True
+    folder, data = handoff_files(ctx, out["run_id"])
+    assert data["comparison"] is None and data["comparison_reason"].startswith("comparison failed")
+    assert data["comparison_mode"] is None and data["pr_url"] is None and (folder / "handoff.md").is_file()
+
+
 def test_render_markdown_labels_an_unposted_comparison():
     base = {"run_id": "r", "reviewers": {}, "findings": [], "comparison_reason": "x", "transcript_reason": "y",
             "comparison": {"human_comments": [], "unraised_findings": [], "misses": []}, "comparison_mode": "unposted"}

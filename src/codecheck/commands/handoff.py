@@ -76,20 +76,21 @@ def build_handoff(ctx, run_id: str) -> dict:
         ref = PRRef.parse(meta["pr"])
         try:
             pr = ctx.provider.get_pr(ref)
-        except Exception as e:  # noqa: BLE001 - the link and comparison are conveniences
+        except Exception as e:  # noqa: BLE001 - the link and the unposted fields are conveniences
             pr = None
-            comparison_reason = scrub_text(f"comparison failed: could not fetch the PR: {type(e).__name__}: {e}")[:500]
-        if pr is not None:
-            pr_url = pr.url or None
-            if decision is not None:
-                comparison_mode = "posted"
-                comparison, comparison_reason = _compare(ctx, ref, run_id)
-            elif pr.is_draft:
-                comparison_reason = "review was not posted (draft, stale or dry run), so there is nothing to compare"
-            else:
-                comparison_mode, pr_state = "unposted", pr.state
-                head_moved = pr.head_sha != meta.get("head_sha")
-                comparison, comparison_reason = _compare(ctx, ref, run_id, findings=findings)
+            fetch_reason = scrub_text(f"comparison failed: could not fetch the PR: {type(e).__name__}: {e}")[:500]
+        pr_url = (pr.url or None) if pr is not None else None
+        if decision is not None:  # the posted comparison does not need the PR object
+            comparison_mode = "posted"
+            comparison, comparison_reason = _compare(ctx, ref, run_id)
+        elif pr is None:
+            comparison_reason = fetch_reason
+        elif pr.is_draft:
+            comparison_reason = "review was not posted (draft, stale or dry run), so there is nothing to compare"
+        else:
+            comparison_mode, pr_state = "unposted", pr.state
+            head_moved = pr.head_sha != meta.get("head_sha")
+            comparison, comparison_reason = _compare(ctx, ref, run_id, findings=findings)
     handoff = {
         "schema": SCHEMA, "run_id": run_id, "skill": meta.get("skill"), "mode": meta.get("mode"), "repo": meta.get("repo"),
         "pr": meta.get("pr"), "pr_url": pr_url, "head_sha": meta.get("head_sha"), "tool_version": __version__,
