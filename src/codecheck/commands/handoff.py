@@ -68,26 +68,39 @@ def build_handoff(ctx, run_id: str) -> dict:
     transcript, transcript_reason, transcript_files, signals = _transcripts(ctx, run_id, folder, started)
     ignored_guidance = signals.pop("ignored_guidance", []) if signals else []
     decision = next((r for r in reversed(records) if r.get("type") == "decision"), None)
-    pr_url = comparison = None
+    findings = _findings(run_dir, meta, aggregator_raw)
+    pr_url = comparison = comparison_mode = head_moved = pr_state = None
     if meta.get("mode") != "pr" or not meta.get("pr"):
         comparison_reason = "local review: there is no pull request to compare with"
     else:
         ref = PRRef.parse(meta["pr"])
-        pr_url = _pr_url(ctx, ref)
-        if decision is None:
-            comparison_reason = "review was not posted (draft, stale or dry run), so there is nothing to compare"
-        else:
-            comparison, comparison_reason = _compare(ctx, ref, run_id)
+        try:
+            pr = ctx.provider.get_pr(ref)
+        except Exception as e:  # noqa: BLE001 - the link and comparison are conveniences
+            pr = None
+            comparison_reason = scrub_text(f"comparison failed: could not fetch the PR: {type(e).__name__}: {e}")[:500]
+        if pr is not None:
+            pr_url = pr.url or None
+            if decision is not None:
+                comparison_mode = "posted"
+                comparison, comparison_reason = _compare(ctx, ref, run_id)
+            elif pr.is_draft:
+                comparison_reason = "review was not posted (draft, stale or dry run), so there is nothing to compare"
+            else:
+                comparison_mode, pr_state = "unposted", pr.state
+                head_moved = pr.head_sha != meta.get("head_sha")
+                comparison, comparison_reason = _compare(ctx, ref, run_id, findings=findings)
     handoff = {
         "schema": SCHEMA, "run_id": run_id, "skill": meta.get("skill"), "mode": meta.get("mode"), "repo": meta.get("repo"),
         "pr": meta.get("pr"), "pr_url": pr_url, "head_sha": meta.get("head_sha"), "tool_version": __version__,
         **plugin_build(ctx.env),
         "config_hash": config_hash(ctx.config), "models": meta.get("models"), "panel": meta.get("panel"), "blind": bool(meta.get("blind")),
         "reviewers": _reviewers(run_dir, meta, ingest), "signals": signals,
-        "findings": _findings(run_dir, meta, aggregator_raw), "dropped": _dropped(aggregator_raw),
+        "findings": findings, "dropped": _dropped(aggregator_raw),
         "ignored_guidance": ignored_guidance,
         "decision": {k: decision.get(k) for k in ("event", "reason", "incomplete")} if decision else None,
         "comparison": comparison, "comparison_reason": comparison_reason,
+        "comparison_mode": comparison_mode, "head_moved": head_moved, "pr_state": pr_state,
         "transcript": transcript, "transcript_reason": transcript_reason, "transcript_files": transcript_files,
     }
     handoff = scrub(handoff)  # structurally, so the JSON stays valid
@@ -164,13 +177,16 @@ def _transcripts(ctx, run_id: str, folder: Path, started: float | None) -> tuple
     return True, None, copied, extract_signals([main, *subs], windows={main: (started, time.time())})
 
 
-def _compare(ctx, ref: PRRef, run_id: str) -> tuple[dict | None, str | None]:
-    """Record human comments the way `shadow collect` does, then compare them with this run's posted findings."""
+def _compare(ctx, ref: PRRef, run_id: str, *, findings: list[dict] | None = None) -> tuple[dict | None, str | None]:
+    """Record human comments the way `shadow collect` does, then compare them with this run's findings.
+
+    A posted run's findings are its shadow `finding` records; an unposted run has none, so the caller passes the
+    hand-off's own findings."""
     try:
         collect_outcomes(ctx.provider, ctx.shadow, ref, ctx.provider.whoami())
     except Exception as e:  # noqa: BLE001 - offline or a gh failure: keep the rest of the hand-off
         return None, scrub_text(f"comparison failed: {type(e).__name__}: {e}")[:500]
-    ours = [r for r in ctx.shadow.read(run_id) if r.get("type") == "finding"]
+    ours = findings if findings is not None else [r for r in ctx.shadow.read(run_id) if r.get("type") == "finding"]
     # collect files a comment under the newest run whose findings it is near, so on a re-reviewed PR some of
     # this PR's comments live in older runs' records. Take every thread's latest record across the PR's runs
     # and match it against this run's findings, so a comment this run missed counts as a miss.
@@ -197,10 +213,3 @@ def _near(findings: list[dict], path, line) -> str | None:
         return None
     return next((f.get("id") for f in findings if f.get("file") == path and isinstance(f.get("line"), int)
                  and abs(f["line"] - line) <= 3), None)
-
-
-def _pr_url(ctx, ref: PRRef) -> str | None:
-    try:
-        return ctx.provider.get_pr(ref).url or None
-    except Exception:  # noqa: BLE001 - the link is a convenience; the hand-off is still useful without it
-        return None

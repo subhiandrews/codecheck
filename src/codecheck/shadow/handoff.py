@@ -5,7 +5,8 @@
 prompts) and `build_reason` (why they are null), `config_hash`, `models`, `panel`, `blind`), each reviewer's ingest status
 (`reviewers`), the aggregated `findings` (ids and order as `post` gives them), the aggregator's `dropped` list, the
 `decision`, transcript `signals` (tool calls and errors, retries, permission denials, turns and output tokens per
-transcript file), `ignored_guidance` lines from the transcripts, the human `comparison` (or `comparison_reason`), and
+transcript file), `ignored_guidance` lines from the transcripts, the human `comparison` (or `comparison_reason`) with `comparison_mode` (`posted`, `unposted` or null), `head_moved`
+and `pr_state` (`open`, `closed`, `merged`; null for local runs), and
 `transcript`, `transcript_reason`, `transcript_files`.
 
 Deliberately absent: per-reviewer tokens and duration (subagent transcripts are named by file, not by panel member,
@@ -95,7 +96,11 @@ def render_markdown(h: dict) -> str:
     lines += [f"- {f['severity']} {f['category']} at {f['file']}:{f['line']} ({f['id']})" for f in h.get("findings") or []]
     if not h.get("findings"):
         lines.append("- none")
-    lines += ["", "## Human comments", ""]
+    unposted = h.get("comparison_mode") == "unposted" and h.get("comparison") is not None
+    lines += ["", "## Human comments (unposted review; compared with the threads as they are now)" if unposted
+              else "## Human comments", ""]
+    if unposted and h.get("head_moved"):
+        lines.append("- Head moved since the review")
     cmp = h.get("comparison")
     if cmp is None:
         lines.append(f"- No comparison: {h.get('comparison_reason')}")

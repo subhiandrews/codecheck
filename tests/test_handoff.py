@@ -423,7 +423,56 @@ def test_handoff_second_run_counts_comments_filed_under_an_earlier_run(tmp_path)
     assert cmp["unraised_findings"] == []
 
 
-def test_handoff_skips_comparison_when_the_head_moved(tmp_path):
+def _unposted_run(tmp_path, findings=None):
+    ctx, provider, pr = pr_setup(tmp_path)
+    enable_handoff(ctx, tmp_path)
+    out = run_pr_context(ctx, pr)
+    if findings is None:
+        finish_review(ctx, out, {"skeptic": [FINDING]}, {"findings": [FINDING, FAR], "dropped": []})
+    else:
+        finish_review(ctx, out, {"skeptic": []}, {"findings": findings, "dropped": []})
+    call(ctx, "ingest", "--run", out["run_id"])
+    return ctx, provider, pr, out
+
+
+def test_handoff_compares_an_unposted_review(tmp_path):
+    ctx, provider, pr, out = _unposted_run(tmp_path)
+    provider.threads[pr.ref] = [human("T1", 1, "**Warning**: y is never read"), human("T2", 300, "rename this")]
+    code, res = call(ctx, "handoff", "--run", out["run_id"])
+    assert code == 0 and res["comparison"] is True
+    _folder, data = handoff_files(ctx, out["run_id"])
+    assert data["comparison_mode"] == "unposted" and data["head_moved"] is False and data["pr_state"] == "open"
+    assert data["decision"] is None and provider.posted == []
+    ids = {f["line"]: f["id"] for f in data["findings"]}
+    cmp = data["comparison"]
+    (t1,) = [h for h in cmp["human_comments"] if h["thread_id"] == "T1"]
+    assert t1["matched_finding"] == ids[2] and cmp["misses"] == ["T2"]
+
+
+def test_handoff_unposted_with_no_findings_lists_every_thread_as_a_miss(tmp_path):
+    ctx, provider, pr, out = _unposted_run(tmp_path, findings=[])
+    provider.threads[pr.ref] = [human("T1", 1, "Warning: y"), human("T2", 300, "rename this")]
+    call(ctx, "handoff", "--run", out["run_id"])
+    _folder, data = handoff_files(ctx, out["run_id"])
+    assert data["findings"] == [] and data["comparison_mode"] == "unposted"
+    assert sorted(data["comparison"]["misses"]) == ["T1", "T2"] and data["comparison"]["unraised_findings"] == []
+
+
+def test_handoff_unposted_comparison_failure_keeps_the_files(tmp_path):
+    ctx, provider, _pr, out = _unposted_run(tmp_path)
+
+    def offline(ref, reactions=True):
+        raise RuntimeError("gh: network down")
+
+    provider.list_threads = offline
+    code, res = call(ctx, "handoff", "--run", out["run_id"])
+    assert code == 0 and res["handoff"] is True
+    folder, data = handoff_files(ctx, out["run_id"])
+    assert data["comparison"] is None and data["comparison_reason"].startswith("comparison failed")
+    assert (folder / "handoff.md").is_file()
+
+
+def test_handoff_compares_when_the_head_moved(tmp_path):
     ctx, provider, pr = pr_setup(tmp_path)
     enable_handoff(ctx, tmp_path)
     out = run_pr_context(ctx, pr)
@@ -432,8 +481,30 @@ def test_handoff_skips_comparison_when_the_head_moved(tmp_path):
     provider.prs[pr.ref] = replace(pr, head_sha="f" * 40)
     _code, posted = call(ctx, "post", "--run", out["run_id"])
     assert posted["stale"] is True
+    provider.threads[pr.ref] = [human("T1", 1, "Warning: y")]
     code, res = call(ctx, "handoff", "--run", out["run_id"])
-    assert code == 0 and res["handoff"] is True and "not posted" in res["comparison"]
+    assert code == 0 and res["handoff"] is True and res["comparison"] is True
+    _folder, data = handoff_files(ctx, out["run_id"])
+    assert data["comparison_mode"] == "unposted" and data["head_moved"] is True
+
+
+def test_handoff_unposted_records_closed_pr_state(tmp_path):
+    ctx, provider, pr, out = _unposted_run(tmp_path)
+    provider.prs[pr.ref] = replace(pr, state="merged")
+    provider.threads[pr.ref] = [human("T1", 1, "Warning: y")]
+    call(ctx, "handoff", "--run", out["run_id"])
+    _folder, data = handoff_files(ctx, out["run_id"])
+    assert data["pr_state"] == "merged" and data["comparison"] is not None
+
+
+def test_render_markdown_labels_an_unposted_comparison():
+    base = {"run_id": "r", "reviewers": {}, "findings": [], "comparison_reason": "x", "transcript_reason": "y",
+            "comparison": {"human_comments": [], "unraised_findings": [], "misses": []}, "comparison_mode": "unposted"}
+    md = render_markdown({**base, "head_moved": True})
+    assert "## Human comments (unposted review; compared with the threads as they are now)" in md
+    assert "- Head moved since the review" in md
+    assert "Head moved" not in render_markdown({**base, "head_moved": False})
+    assert "## Human comments\n" in render_markdown({**base, "comparison_mode": "posted"})
 
 
 def _local_run_with(tmp_path, aggregated):
