@@ -48,6 +48,7 @@ from codecheck.errors import ProviderError
 from codecheck.models import (
     Check,
     Decision,
+    IssueComment,
     PostResult,
     PRRef,
     PullRequest,
@@ -70,6 +71,7 @@ class FakeProvider:
         self.threads: dict[PRRef, list[Thread]] = {}
         self.checks: dict[PRRef, list[Check]] = {}
         self.reviews: dict[PRRef, list[Review]] = {}
+        self.issue_comments: dict[PRRef, list[IssueComment]] = {}
         self.thread_calls: list = []
         self.review_calls: list = []
         self.logs: dict[str, str] = {}
@@ -123,6 +125,9 @@ class FakeProvider:
     def list_reviews(self, ref):
         self.review_calls.append(ref)
         return list(self.reviews.get(ref, []))
+
+    def list_issue_comments(self, ref):
+        return list(self.issue_comments.get(ref, []))
 
     def post_review(self, ref, head_sha, body, comments, decision: Decision):
         self.posted.append({"ref": ref, "head_sha": head_sha, "body": body, "comments": list(comments), "decision": decision})

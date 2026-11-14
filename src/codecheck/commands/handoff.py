@@ -18,7 +18,12 @@ from codecheck.core.pipeline import finalize_findings
 from codecheck.models import PRRef
 from codecheck.runids import check_run_id
 from codecheck.shadow.collect import collect_outcomes
-from codecheck.shadow.handoff import SCHEMA, build_comparison, render_markdown
+from codecheck.shadow.handoff import (
+    SCHEMA,
+    build_comparison,
+    build_general_comments,
+    render_markdown,
+)
 from codecheck.shadow.recorder import config_hash
 from codecheck.shadow.scrub import scrub, scrub_text
 from codecheck.shadow.store import write_private
@@ -172,7 +177,16 @@ def _compare(ctx, ref: PRRef, run_id: str) -> tuple[dict | None, str | None]:
         key=lambda r: r.get("ts") if isinstance(r.get("ts"), (int, float)) else 0,
     )
     rematched = [{**r, "matches_finding": _near(ours, r.get("path"), r.get("line"))} for r in comments]
-    return build_comparison(rematched, ours), None
+    return build_comparison(rematched, ours, _general_comments(ctx, ref)), None
+
+
+def _general_comments(ctx, ref: PRRef) -> list[dict]:
+    try:
+        general = build_general_comments(ctx.provider.list_reviews(ref), ctx.provider.list_issue_comments(ref),
+                                         pr_author=ctx.provider.get_pr(ref).author)
+        return [{**g, "body": scrub_text(g["body"])} for g in general]
+    except Exception:  # noqa: BLE001 - the extra feedback is a convenience; the rest of the comparison stands
+        return []
 
 
 def _near(findings: list[dict], path, line) -> str | None:

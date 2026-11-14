@@ -10,8 +10,13 @@ from clihelp import call, finish_review, make_ctx, pr_setup, run_pr_context
 from gitutil import commit_file, make_origin_and_clone, sh
 
 from codecheck.cli import build_parser
-from codecheck.models import Thread, ThreadComment
-from codecheck.shadow.handoff import build_comparison, implied_severity, render_markdown
+from codecheck.models import IssueComment, Review, Thread, ThreadComment
+from codecheck.shadow.handoff import (
+    build_comparison,
+    build_general_comments,
+    implied_severity,
+    render_markdown,
+)
 
 pytestmark = pytest.mark.usefixtures("git_env")
 
@@ -153,6 +158,43 @@ def test_handoff_pr_mode_compares_human_comments(tmp_path):
     assert data["decision"]["event"] == "COMMENT" and data["blind"] is True
     kinds = [r["type"] for r in ctx.shadow.read(out["run_id"])]
     assert kinds.count("human_comment") == 2  # the same records `shadow collect` writes
+
+
+def test_build_general_comments_filters():
+    reviews = [
+        Review("carol", "c", "t1", "CHANGES_REQUESTED", body="please rework " + "x" * 400),
+        Review("alice", "c", "t2", "COMMENTED", body="my own note"),
+        Review("dep", "c", "t3", "COMMENTED", body="bot says", is_bot=True),
+        Review("dan", "c", "t4", "COMMENTED", body="  \n"),
+        Review("eve", "c", "t5", "COMMENTED", body="x\n<!-- code-check:run:abc -->"),
+    ]
+    comments = [
+        IssueComment("alice", "author reply", "t6"),
+        IssueComment("bot", "ci", "t7", is_bot=True),
+        IssueComment("frank", "", "t8"),
+        IssueComment("gus", "<!-- code-check:run:r1 -->", "t9"),
+    ]
+    got = build_general_comments(reviews, comments, pr_author="alice")
+    assert [(g["kind"], g["author"], g["state"]) for g in got] == [
+        ("review", "carol", "CHANGES_REQUESTED"), ("comment", "alice", None)]
+    assert len(got[0]["body"]) == 300 and got[0]["created_at"] == "t1"
+
+
+def test_handoff_pr_mode_lists_general_comments(tmp_path):
+    ctx, provider, pr, out = _pr_handoff_run(tmp_path)
+    provider.threads[pr.ref] = [human("T1", 1, "**Warning**: y is never read")]
+    provider.issue_comments[pr.ref] = [IssueComment("bob", "what about docs?", "2026-01-01T00:00:00Z")]
+    provider.reviews[pr.ref] = [Review("carol", "abc", "2026-01-02T00:00:00Z", "CHANGES_REQUESTED", body="needs tests")]
+    code, res = call(ctx, "handoff", "--run", out["run_id"])
+    assert code == 0 and res["comparison"] is True
+    folder, data = handoff_files(ctx, out["run_id"])
+    cmp = data["comparison"]
+    assert [(g["kind"], g["author"], g["state"], g["body"]) for g in cmp["general_comments"]] == [
+        ("review", "carol", "CHANGES_REQUESTED", "needs tests"), ("comment", "bob", None, "what about docs?")]
+    ids = {f["line"]: f["id"] for f in data["findings"]}
+    assert cmp["unraised_findings"] == [ids[500]]
+    md = (folder / "handoff.md").read_text()
+    assert "review by carol (CHANGES_REQUESTED): needs tests" in md and "comment by bob: what about docs?" in md
 
 
 def test_handoff_skips_comparison_when_not_posted(tmp_path):

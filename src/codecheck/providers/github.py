@@ -9,6 +9,7 @@ from codecheck.errors import ProviderError
 from codecheck.models import (
     Check,
     Decision,
+    IssueComment,
     PostResult,
     PRRef,
     PullRequest,
@@ -41,7 +42,8 @@ THREADS_QUERY = (
 )
 # Slim variant for activity checks: the same query without the reactions selection.
 THREADS_QUERY_SLIM = THREADS_QUERY.replace(" reactions(first:20){nodes{content}}", "")
-_REVIEWS_JQ = '.[] | {author: (.user.login // "ghost"), commit_id: .commit_id, submitted_at: .submitted_at, state: .state}'
+_REVIEWS_JQ = '.[] | {author: (.user.login // "ghost"), commit_id: .commit_id, submitted_at: .submitted_at, state: .state, body: (.body // ""), is_bot: (.user.type == "Bot")}'
+_ISSUE_COMMENTS_JQ = '.[] | {author: (.user.login // "ghost"), body: (.body // ""), created_at: .created_at, is_bot: (.user.type == "Bot")}'
 RESOLVE_MUTATION = "mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}"
 
 
@@ -190,8 +192,20 @@ class GitHubProvider:
                 continue
             d = json.loads(line)
             if d.get("submitted_at"):
-                reviews.append(Review(d["author"], d.get("commit_id") or "", d["submitted_at"], d["state"]))
+                reviews.append(Review(d["author"], d.get("commit_id") or "", d["submitted_at"], d["state"],
+                                      d.get("body") or "", bool(d.get("is_bot"))))
         return reviews
+
+    def list_issue_comments(self, ref: PRRef) -> list[IssueComment]:
+        res = self._gh("api", f"repos/{_repo(ref.repo)}/issues/{_num(ref.number)}/comments", "--paginate",
+                       "--jq", _ISSUE_COMMENTS_JQ)
+        comments = []
+        for line in res.stdout.splitlines():
+            if line.strip():
+                d = json.loads(line)
+                comments.append(IssueComment(d["author"], d.get("body") or "", d.get("created_at") or "",
+                                             bool(d.get("is_bot"))))
+        return comments
 
     def get_checks(self, ref: PRRef) -> list[Check]:
         res = self._gh("pr", "checks", _num(ref.number), "--repo", _repo(ref.repo), "--json", "name,bucket,link", ok=(0, 1, 8))
