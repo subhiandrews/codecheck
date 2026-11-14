@@ -1,0 +1,461 @@
+{
+  "version": 1,
+  "case_id": "google-guava-8838-840e19b5",
+  "repo": "google/guava",
+  "pr": 8838,
+  "head_sha": "840e19b5db28e9bd0c58f65fa7184d4dcb995afe",
+  "diff": "diff --git a/android/guava-testlib/src/com/google/common/collect/testing/testers/CollectionRemoveIfTester.java b/android/guava-testlib/src/com/google/common/collect/testing/testers/CollectionRemoveIfTester.java\nindex bb14ebf97a..44f7ea0857 100644\n--- a/android/guava-testlib/src/com/google/common/collect/testing/testers/CollectionRemoveIfTester.java\n+++ b/android/guava-testlib/src/com/google/common/collect/testing/testers/CollectionRemoveIfTester.java\n@@ -17,7 +17,6 @@\n package com.google.common.collect.testing.testers;\n \n import static com.google.common.collect.testing.features.CollectionFeature.FAILS_FAST_ON_CONCURRENT_MODIFICATION;\n-import static com.google.common.collect.testing.features.CollectionFeature.SUPPORTS_ITERATOR_REMOVE;\n import static com.google.common.collect.testing.features.CollectionFeature.SUPPORTS_REMOVE;\n import static com.google.common.collect.testing.features.CollectionSize.SEVERAL;\n import static com.google.common.collect.testing.features.CollectionSize.ZERO;\n@@ -41,13 +40,13 @@ import java.util.function.Predicate;\n @GwtCompatible\n @IgnoreJRERequirement // We opt into library desugaring for our tests.\n public class CollectionRemoveIfTester<E> extends AbstractCollectionTester<E> {\n-  @CollectionFeature.Require(SUPPORTS_ITERATOR_REMOVE)\n+  @CollectionFeature.Require(SUPPORTS_REMOVE)\n   public void testRemoveIf_alwaysFalse() {\n     assertFalse(\"removeIf(x -> false) should return false\", collection.removeIf(x -> false));\n     expectUnchanged();\n   }\n \n-  @CollectionFeature.Require(SUPPORTS_ITERATOR_REMOVE)\n+  @CollectionFeature.Require(SUPPORTS_REMOVE)\n   @CollectionSize.Require(absent = ZERO)\n   public void testRemoveIf_sometimesTrue() {\n     assertTrue(\n@@ -56,14 +55,14 @@ public class CollectionRemoveIfTester<E> extends AbstractCollectionTester<E> {\n     expectMissing(samples.e0());\n   }\n \n-  @CollectionFeature.Require(SUPPORTS_ITERATOR_REMOVE)\n+  @CollectionFeature.Require(SUPPORTS_REMOVE)\n   @CollectionSize.Require(absent = ZERO)\n   public void testRemoveIf_allPresent() {\n     assertTrue(\"removeIf(x -> true) should return true\", collection.removeIf(x -> true));\n     expectContents();\n   }\n \n-  @CollectionFeature.Require({SUPPORTS_ITERATOR_REMOVE, FAILS_FAST_ON_CONCURRENT_MODIFICATION})\n+  @CollectionFeature.Require({SUPPORTS_REMOVE, FAILS_FAST_ON_CONCURRENT_MODIFICATION})\n   @CollectionSize.Require(SEVERAL)\n   public void testRemoveIfSomeMatchesConcurrentWithIteration() {\n     Iterator<E> iterator = collection.iterator();\ndiff --git a/android/guava/src/com/google/common/reflect/TypeVisitor.java b/android/guava/src/com/google/common/reflect/TypeVisitor.java\nindex e42ced4c2d..9e067e1ac3 100644\n--- a/android/guava/src/com/google/common/reflect/TypeVisitor.java\n+++ b/android/guava/src/com/google/common/reflect/TypeVisitor.java\n@@ -54,7 +54,7 @@ import org.jspecify.annotations.Nullable;\n  *\n  * @author Ben Yu\n  */\n-abstract class TypeVisitor {\n+public abstract class TypeVisitor {\n \n   private final Set<Type> visited = new HashSet<>();\n \n@@ -92,13 +92,13 @@ abstract class TypeVisitor {\n     }\n   }\n \n-  void visitClass(Class<?> t) {}\n+  protected void visitClass(Class<?> t) {}\n \n-  void visitGenericArrayType(GenericArrayType t) {}\n+  protected void visitGenericArrayType(GenericArrayType t) {}\n \n-  void visitParameterizedType(ParameterizedType t) {}\n+  protected void visitParameterizedType(ParameterizedType t) {}\n \n-  void visitTypeVariable(TypeVariable<?> t) {}\n+  protected void visitTypeVariable(TypeVariable<?> t) {}\n \n-  void visitWildcardType(WildcardType t) {}\n+  protected void visitWildcardType(WildcardType t) {}\n }\ndiff --git a/guava/src/com/google/common/reflect/TypeVisitor.java b/guava/src/com/google/common/reflect/TypeVisitor.java\nindex e42ced4c2d..9e067e1ac3 100644\n--- a/guava/src/com/google/common/reflect/TypeVisitor.java\n+++ b/guava/src/com/google/common/reflect/TypeVisitor.java\n@@ -54,7 +54,7 @@ import org.jspecify.annotations.Nullable;\n  *\n  * @author Ben Yu\n  */\n-abstract class TypeVisitor {\n+public abstract class TypeVisitor {\n \n   private final Set<Type> visited = new HashSet<>();\n \n@@ -92,13 +92,13 @@ abstract class TypeVisitor {\n     }\n   }\n \n-  void visitClass(Class<?> t) {}\n+  protected void visitClass(Class<?> t) {}\n \n-  void visitGenericArrayType(GenericArrayType t) {}\n+  protected void visitGenericArrayType(GenericArrayType t) {}\n \n-  void visitParameterizedType(ParameterizedType t) {}\n+  protected void visitParameterizedType(ParameterizedType t) {}\n \n-  void visitTypeVariable(TypeVariable<?> t) {}\n+  protected void visitTypeVariable(TypeVariable<?> t) {}\n \n-  void visitWildcardType(WildcardType t) {}\n+  protected void visitWildcardType(WildcardType t) {}\n }\n",
+  "reviewer_outputs": {
+    "architect": [
+      {
+        "anchor": "",
+        "category": "compat",
+        "file": "guava/src/com/google/common/reflect/TypeVisitor.java",
+        "line": 95,
+        "message": "Widening the visit* methods to protected breaks every existing package-private override, which now fails to compile with 'attempting to assign weaker access privileges'. The PR does not touch these overrides: Types.java:177-192, TypeResolver.java:135-202 and 411-435, TypeToken.java:873-891 and 1110-1130, and guava-tests TypeVisitorTest.java (about 49-133). Each one must become protected (or public). The same applies to the android tree.",
+        "reviewers": [
+          "architect"
+        ],
+        "severity": "critical",
+        "suggestion": "  protected void visitClass(Class<?> t) {}"
+      },
+      {
+        "anchor": "",
+        "category": "compat",
+        "file": "android/guava/src/com/google/common/reflect/TypeVisitor.java",
+        "line": 95,
+        "message": "Same as the guava tree. The android copies of Types, TypeResolver and TypeToken, and android/guava-tests TypeVisitorTest, still declare package-private visit* overrides. They will not compile against the protected base methods.",
+        "reviewers": [
+          "architect"
+        ],
+        "severity": "critical",
+        "suggestion": null
+      },
+      {
+        "anchor": "",
+        "category": "api",
+        "file": "guava/src/com/google/common/reflect/TypeVisitor.java",
+        "line": 57,
+        "message": "This makes a new public API surface, but the class gets no @since tag and no public-facing documentation. The implicit constructor also becomes public and protected hooks are added. The class has no @Beta or ElementTypesAreNonnullByDefault-style note, and the package is otherwise stable. Consider whether committing to this API is intended: the 'not thread safe' and 'visited once' semantics become a compatibility contract. Add @since and document the protected methods.",
+        "reviewers": [
+          "architect"
+        ],
+        "severity": "warning",
+        "suggestion": null
+      },
+      {
+        "anchor": "",
+        "category": "scope",
+        "file": "android/guava-testlib/src/com/google/common/collect/testing/testers/CollectionRemoveIfTester.java",
+        "line": 43,
+        "message": "This change from SUPPORTS_ITERATOR_REMOVE to SUPPORTS_REMOVE has nothing to do with making TypeVisitor public, and the PR description does not mention it. It alters which collections run the removeIf tests (it also affects the android testlib only, not the guava tree), so it risks failing or skipping tests in unrelated suites and leaves the two trees inconsistent. Drop it from this PR or submit it separately with a rationale.",
+        "reviewers": [
+          "architect"
+        ],
+        "severity": "warning",
+        "suggestion": null
+      }
+    ],
+    "lang-java": [
+      {
+        "anchor": "",
+        "category": "correctness",
+        "file": "android/guava-testlib/src/com/google/common/collect/testing/testers/CollectionRemoveIfTester.java",
+        "line": 43,
+        "message": "The feature gate for testRemoveIf_alwaysFalse, testRemoveIf_sometimesTrue, testRemoveIf_allPresent and testRemoveIfSomeMatchesConcurrentWithIteration was loosened from SUPPORTS_ITERATOR_REMOVE to SUPPORTS_REMOVE. The default Collection.removeIf is implemented via iterator().remove(), so a collection that supports remove() but not iterator remove will now throw UnsupportedOperationException from the sometimesTrue, allPresent and concurrent tests and fail. CollectionFeature only ties REMOVE_OPERATIONS and GENERAL_PURPOSE to both flags, and nothing implies SUPPORTS_ITERATOR_REMOVE from SUPPORTS_REMOVE, so the new gate is not a safe superset. Keep SUPPORTS_ITERATOR_REMOVE unless the intent is to cover collections that override removeIf, in which case document that and gate accordingly.",
+        "reviewers": [
+          "lang-java"
+        ],
+        "severity": "warning",
+        "suggestion": null
+      },
+      {
+        "anchor": "",
+        "category": "scope",
+        "file": "android/guava-testlib/src/com/google/common/collect/testing/testers/CollectionRemoveIfTester.java",
+        "line": 43,
+        "message": "This change to CollectionRemoveIfTester is unrelated to the PR title and description ('Make TypeVisitor public'). The standard tree copy at guava-testlib/src/com/google/common/collect/testing/testers/CollectionRemoveIfTester.java is unchanged and still uses SUPPORTS_ITERATOR_REMOVE, while the PR says the change applies to both trees. The two trees now diverge. Split this into its own PR, or apply the same change to both trees with its own justification.",
+        "reviewers": [
+          "lang-java"
+        ],
+        "severity": "warning",
+        "suggestion": null
+      },
+      {
+        "anchor": "",
+        "category": "api",
+        "file": "guava/src/com/google/common/reflect/TypeVisitor.java",
+        "line": 10,
+        "message": "TypeVisitor becomes a public type in com.google.common.reflect, which is a new public API commitment. The class Javadoc does not mention that it is now public or that subclasses outside the package are expected. Consider marking it @Beta (as Guava does for new public reflect APIs) and documenting the protected visit* hooks. The protected visit* widening itself is sound: visit() stays public final, and the Javadoc snippet already uses protected overrides.",
+        "reviewers": [
+          "lang-java"
+        ],
+        "severity": "suggestion",
+        "suggestion": null
+      },
+      {
+        "anchor": "",
+        "category": "api",
+        "file": "android/guava/src/com/google/common/reflect/TypeVisitor.java",
+        "line": 10,
+        "message": "Same as the standard tree: TypeVisitor is now a public type. Consider @Beta and Javadoc noting the public API, applied consistently in both trees.",
+        "reviewers": [
+          "lang-java"
+        ],
+        "severity": "suggestion",
+        "suggestion": null
+      }
+    ],
+    "pragmatist": [
+      {
+        "anchor": "",
+        "category": "build",
+        "file": "guava/src/com/google/common/reflect/TypeVisitor.java",
+        "line": 95,
+        "message": "The visit* methods become protected, but existing subclasses in the same package still override them with package-private access (Types.java:177-192, TypeResolver.java:135-202 and 411-435, TypeToken.java:873+ and 1110). Java rejects an override with weaker access, so this will not compile unless those overrides are changed to protected too. The PR touches none of them. The same applies to the android tree.",
+        "reviewers": [
+          "pragmatist"
+        ],
+        "severity": "critical",
+        "suggestion": "  protected void visitClass(Class<?> t) {}  // and update every overriding site to protected"
+      },
+      {
+        "anchor": "",
+        "category": "scope",
+        "file": "android/guava-testlib/src/com/google/common/collect/testing/testers/CollectionRemoveIfTester.java",
+        "line": 43,
+        "message": "Changing the required feature from SUPPORTS_ITERATOR_REMOVE to SUPPORTS_REMOVE has nothing to do with making TypeVisitor public. It changes which collections run these tests and is not mentioned in the PR description. It should be reverted or moved to a separate PR with its own explanation.",
+        "reviewers": [
+          "pragmatist"
+        ],
+        "severity": "warning",
+        "suggestion": null
+      },
+      {
+        "anchor": "",
+        "category": "api",
+        "file": "guava/src/com/google/common/reflect/TypeVisitor.java",
+        "line": 57,
+        "message": "This adds a new public API to a package where the other public classes are marked @Beta or similar, and there is no release note or test. Nothing shows that a subclass outside the package can use it. A small test in another package would help.",
+        "reviewers": [
+          "pragmatist"
+        ],
+        "severity": "suggestion",
+        "suggestion": null
+      }
+    ],
+    "skeptic": [
+      {
+        "anchor": "",
+        "category": "compile",
+        "file": "guava/src/com/google/common/reflect/TypeVisitor.java",
+        "line": 95,
+        "message": "The visit* methods are now protected, but every existing override is still package-private (e.g. Types.java:177-192, TypeResolver.java:135-202 and 411-435, TypeToken.java:873-891 and 1110-1130, and TypeVisitorTest.java:49-133). Java does not allow an override to have weaker access than the method it overrides, so these will not compile. The same applies to the android tree. The PR does not update any of them, so the build breaks. Each override needs `protected` (or `public`).",
+        "reviewers": [
+          "skeptic"
+        ],
+        "severity": "critical",
+        "suggestion": "  protected void visitClass(Class<?> t) {}"
+      },
+      {
+        "anchor": "",
+        "category": "compile",
+        "file": "android/guava/src/com/google/common/reflect/TypeVisitor.java",
+        "line": 95,
+        "message": "Same as the guava tree: the package-private overrides in android Types, TypeResolver, TypeToken and TypeVisitorTest now fail with 'attempting to assign weaker access privileges'.",
+        "reviewers": [
+          "skeptic"
+        ],
+        "severity": "critical",
+        "suggestion": null
+      },
+      {
+        "anchor": "",
+        "category": "api",
+        "file": "guava/src/com/google/common/reflect/TypeVisitor.java",
+        "line": 57,
+        "message": "This adds a new public API with no @Beta or @since tag, no public-API tests from outside the package, and no mention in the docs. The class is also not thread-safe, and the `visited` state is kept internally. Public subclasses can now call the final visit() re-entrantly, so the contract should be documented. The class is also now public in the android tree, which has different compatibility constraints.",
+        "reviewers": [
+          "skeptic"
+        ],
+        "severity": "warning",
+        "suggestion": null
+      },
+      {
+        "anchor": "",
+        "category": "scope",
+        "file": "android/guava-testlib/src/com/google/common/collect/testing/testers/CollectionRemoveIfTester.java",
+        "line": 43,
+        "message": "This change from SUPPORTS_ITERATOR_REMOVE to SUPPORTS_REMOVE has nothing to do with making TypeVisitor public. It changes which collections run these tests. Collections that support iterator remove but not remove(), such as some views, will silently lose coverage, and others may start failing. The non-android guava-testlib is not changed to match, so the two trees now diverge. Split it into a separate PR or explain it.",
+        "reviewers": [
+          "skeptic"
+        ],
+        "severity": "warning",
+        "suggestion": null
+      }
+    ]
+  },
+  "aggregator": {
+    "dropped": [
+      {
+        "file": "android/guava-testlib/src/com/google/common/collect/testing/testers/CollectionRemoveIfTester.java",
+        "line": 43,
+        "message": "Unrelated CollectionRemoveIfTester change; trees diverge (scope).",
+        "reason": "duplicate",
+        "reviewers": [
+          "lang-java"
+        ]
+      },
+      {
+        "file": "guava/src/com/google/common/reflect/TypeVisitor.java",
+        "line": 10,
+        "message": "Consider @Beta and Javadoc for the new public type.",
+        "reason": "duplicate",
+        "reviewers": [
+          "lang-java"
+        ]
+      },
+      {
+        "file": "android/guava/src/com/google/common/reflect/TypeVisitor.java",
+        "line": 10,
+        "message": "Same as standard tree: consider @Beta and Javadoc.",
+        "reason": "duplicate",
+        "reviewers": [
+          "lang-java"
+        ]
+      }
+    ],
+    "findings": [
+      {
+        "category": "build",
+        "file": "guava/src/com/google/common/reflect/TypeVisitor.java",
+        "line": 95,
+        "message": "The visit* methods are now protected, but every existing subclass in the package still overrides them with package-private access: Types.java:177-192, TypeResolver.java:135-202 and 411-435, TypeToken.java:873-891 and 1110-1130, and guava-tests TypeVisitorTest.java:49-133. Java rejects an override with weaker access ('attempting to assign weaker access privileges'), so this tree will not compile. The PR changes none of these overrides.",
+        "reviewers": [
+          "architect",
+          "pragmatist",
+          "skeptic"
+        ],
+        "severity": "critical",
+        "suggestion": "Mark every overriding visit* method in Types, TypeResolver, TypeToken and TypeVisitorTest as `protected`."
+      },
+      {
+        "category": "build",
+        "file": "android/guava/src/com/google/common/reflect/TypeVisitor.java",
+        "line": 95,
+        "message": "Same problem in the android tree. The android copies of Types.java, TypeResolver.java and TypeToken.java, and android/guava-tests TypeVisitorTest.java, still declare package-private visit* overrides (same line numbers as the guava tree). They will not compile against the now-protected base methods.",
+        "reviewers": [
+          "architect",
+          "pragmatist",
+          "skeptic"
+        ],
+        "severity": "critical",
+        "suggestion": "Mark the android overrides `protected` as well."
+      },
+      {
+        "category": "correctness",
+        "file": "android/guava-testlib/src/com/google/common/collect/testing/testers/CollectionRemoveIfTester.java",
+        "line": 43,
+        "message": "This change, which moves the removeIf tests from SUPPORTS_ITERATOR_REMOVE to SUPPORTS_REMOVE, has nothing to do with making TypeVisitor public, and the PR description does not mention it. It is also not a safe swap. SUPPORTS_REMOVE does not imply SUPPORTS_ITERATOR_REMOVE: they are only bundled together by GENERAL_PURPOSE and REMOVE_OPERATIONS in CollectionFeature. The default Collection.removeIf goes through iterator().remove(), so a collection that supports remove() but not iterator removal can now fail with UnsupportedOperationException. A collection with the reverse support silently loses coverage. Only the android testlib is changed; guava-testlib/.../CollectionRemoveIfTester.java still requires SUPPORTS_ITERATOR_REMOVE, so the two trees now differ.",
+        "reviewers": [
+          "architect",
+          "pragmatist",
+          "skeptic",
+          "lang-java"
+        ],
+        "severity": "warning",
+        "suggestion": "Revert this file from the PR. If the change is wanted, put it in a separate PR with a rationale and apply it to both trees."
+      },
+      {
+        "category": "api",
+        "file": "guava/src/com/google/common/reflect/TypeVisitor.java",
+        "line": 57,
+        "message": "This makes TypeVisitor a new public API, including an implicit public constructor and protected hooks, in both the guava and android trees. Unlike every other public class in com.google.common.reflect (for example TypeResolver, which has `@since 15.0`), it has no @since tag. The protected visit* hooks are undocumented, and nothing tests subclassing from outside the package. Once public, the 'visited at most once' and 'not thread safe' behaviour becomes a compatibility contract.",
+        "reviewers": [
+          "architect",
+          "pragmatist",
+          "skeptic",
+          "lang-java"
+        ],
+        "severity": "warning",
+        "suggestion": "Add an @since tag in both trees and Javadoc for the protected visit* methods. Consider a test that subclasses TypeVisitor from another package."
+      }
+    ]
+  },
+  "expected_posted": [
+    {
+      "file": "android/guava/src/com/google/common/reflect/TypeVisitor.java",
+      "line": 95,
+      "category": "build",
+      "severity": "critical",
+      "inline": true
+    },
+    {
+      "file": "guava/src/com/google/common/reflect/TypeVisitor.java",
+      "line": 95,
+      "category": "build",
+      "severity": "critical",
+      "inline": true
+    },
+    {
+      "file": "android/guava-testlib/src/com/google/common/collect/testing/testers/CollectionRemoveIfTester.java",
+      "line": 43,
+      "category": "correctness",
+      "severity": "warning",
+      "inline": true
+    },
+    {
+      "file": "guava/src/com/google/common/reflect/TypeVisitor.java",
+      "line": 57,
+      "category": "api",
+      "severity": "warning",
+      "inline": true
+    }
+  ],
+  "expected_decision": "COMMENT",
+  "labels": [
+    {
+      "id": "2d9529d99aaa",
+      "file": "android/guava/src/com/google/common/reflect/TypeVisitor.java",
+      "line": 95,
+      "severity": "critical",
+      "category": "build",
+      "message": "Same problem in the android tree. The android copies of Types.java, TypeResolver.java and TypeToken.java, and android/guava-tests TypeVisitorTest.java, still declare package-private visit* overrides (same line numbers as the guava tree). They will not compile against the now-protected base methods.",
+      "label": "expected"
+    },
+    {
+      "id": "9416e45fec1c",
+      "file": "guava/src/com/google/common/reflect/TypeVisitor.java",
+      "line": 95,
+      "severity": "critical",
+      "category": "build",
+      "message": "The visit* methods are now protected, but every existing subclass in the package still overrides them with package-private access: Types.java:177-192, TypeResolver.java:135-202 and 411-435, TypeToken.java:873-891 and 1110-1130, and guava-tests TypeVisitorTest.java:49-133. Java rejects an override with weaker access ('attempting to assign weaker access privileges'), so this tree will not compile. The PR changes none of these overrides.",
+      "label": "expected"
+    },
+    {
+      "id": "454f366e4511",
+      "file": "android/guava-testlib/src/com/google/common/collect/testing/testers/CollectionRemoveIfTester.java",
+      "line": 43,
+      "severity": "warning",
+      "category": "correctness",
+      "message": "This change, which moves the removeIf tests from SUPPORTS_ITERATOR_REMOVE to SUPPORTS_REMOVE, has nothing to do with making TypeVisitor public, and the PR description does not mention it. It is also not a safe swap. SUPPORTS_REMOVE does not imply SUPPORTS_ITERATOR_REMOVE: they are only bundled together by GENERAL_PURPOSE and REMOVE_OPERATIONS in CollectionFeature. The default Collection.removeIf goes through iterator().remove(), so a collection that supports remove() but not iterator removal can now fail with UnsupportedOperationException. A collection with the reverse support silently loses coverage. Only the android testlib is changed; guava-testlib/.../CollectionRemoveIfTester.java still requires SUPPORTS_ITERATOR_REMOVE, so the two trees now differ.",
+      "label": "expected"
+    },
+    {
+      "id": "ba0eaccd34bb",
+      "file": "guava/src/com/google/common/reflect/TypeVisitor.java",
+      "line": 57,
+      "severity": "warning",
+      "category": "api",
+      "message": "This makes TypeVisitor a new public API, including an implicit public constructor and protected hooks, in both the guava and android trees. Unlike every other public class in com.google.common.reflect (for example TypeResolver, which has `@since 15.0`), it has no @since tag. The protected visit* hooks are undocumented, and nothing tests subclassing from outside the package. Once public, the 'visited at most once' and 'not thread safe' behaviour becomes a compatibility contract.",
+      "label": "not_expected"
+    }
+  ],
+  "misses": [],
+  "signals": {
+    "tool_calls": 115,
+    "tool_errors": [
+      {
+        "agent": "b83d354c-b2f1-4bba-8c8c-04065ebabbeb",
+        "tool": "Bash"
+      },
+      {
+        "agent": "agent-a13055a41e78afe5d",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-a13055a41e78afe5d",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-a6483197dbe2751ed",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-a68c0f2050514b334",
+        "tool": "Grep"
+      },
+      {
+        "agent": "agent-a68c0f2050514b334",
+        "tool": "Grep"
+      }
+    ],
+    "retries": 0,
+    "permission_denials": 0,
+    "agents": [
+      {
+        "name": "b83d354c-b2f1-4bba-8c8c-04065ebabbeb",
+        "tool_calls": 25,
+        "tool_errors": 1,
+        "turns": 43,
+        "output_tokens": 10962
+      },
+      {
+        "name": "agent-a13055a41e78afe5d",
+        "tool_calls": 10,
+        "tool_errors": 2,
+        "turns": 11,
+        "output_tokens": 4664
+      },
+      {
+        "name": "agent-a1ead983c0247144e",
+        "tool_calls": 6,
+        "tool_errors": 0,
+        "turns": 7,
+        "output_tokens": 1439
+      },
+      {
+        "name": "agent-a1fcb5d990b0f84cc",
+        "tool_calls": 6,
+        "tool_errors": 0,
+        "turns": 7,
+        "output_tokens": 2245
+      },
+      {
+        "name": "agent-a23df64366c856120",
+        "tool_calls": 6,
+        "tool_errors": 0,
+        "turns": 7,
+        "output_tokens": 3319
+      },
+      {
+        "name": "agent-a4fdbd497d20028d2",
+        "tool_calls": 18,
+        "tool_errors": 0,
+        "turns": 25,
+        "output_tokens": 12949
+      },
+      {
+        "name": "agent-a6483197dbe2751ed",
+        "tool_calls": 14,
+        "tool_errors": 1,
+        "turns": 20,
+        "output_tokens": 19305
+      },
+      {
+        "name": "agent-a68c0f2050514b334",
+        "tool_calls": 11,
+        "tool_errors": 2,
+        "turns": 13,
+        "output_tokens": 5262
+      },
+      {
+        "name": "agent-a9a31eb0c46aecd2c",
+        "tool_calls": 10,
+        "tool_errors": 0,
+        "turns": 12,
+        "output_tokens": 4574
+      },
+      {
+        "name": "agent-ad0fa26e3e5f2fc95",
+        "tool_calls": 9,
+        "tool_errors": 0,
+        "turns": 12,
+        "output_tokens": 4776
+      }
+    ],
+    "unreadable_lines": 0
+  },
+  "label_status": "confirmed",
+  "repo_private": false
+}

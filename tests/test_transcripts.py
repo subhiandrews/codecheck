@@ -1,8 +1,10 @@
 import json
 import os
 import stat
+from datetime import datetime
 
 from codecheck.shadow.transcripts import (
+    belongs_to_run,
     copy_scrubbed,
     extract_signals,
     find_transcript,
@@ -109,25 +111,67 @@ def test_extract_signals_survives_a_deeply_nested_line(tmp_path):
     assert s["tool_calls"] == 1 and s["unreadable_lines"] == 1
 
 
+def test_ignored_guidance_only_from_subagent_done_lines(tmp_path):
+    phrase = "ignored guidance: x"
+    main = _write(tmp_path / "s1.jsonl", [
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": phrase}]}},
+        {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "1", "content": phrase}]}}])
+    agent = _write(tmp_path / "agent-1.jsonl", [
+        {"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "done: 1 kept, 0 dropped; ignored guidance: rule 3"},
+            {"type": "text", "text": "we saw some ignored guidance: rule 9 along the way"}]}}])
+    assert extract_signals([main, agent])["ignored_guidance"] == ["done: 1 kept, 0 dropped; ignored guidance: rule 3"]
+
+
 def test_extract_signals_collects_ignored_guidance(tmp_path):
     text = {"type": "assistant", "message": {"content": [
-        {"type": "thinking", "thinking": "ignored guidance: private thought"},
-        {"type": "text", "text": f"done: 2 findings\nignored guidance: rule says {TOKEN} " + "q" * 400}]}}
+        {"type": "thinking", "thinking": "done: ignored guidance: private thought"},
+        {"type": "text", "text": f"done: 2 findings; ignored guidance: rule says {TOKEN} " + "q" * 400}]}}
     result = {"type": "user", "message": {"content": [
         {"type": "tool_result", "tool_use_id": "9", "content": [{"type": "text", "text": "done: 0; Ignored guidance: style rule"}]}]}}
-    prompt = {"type": "user", "message": {"content": "ignored guidance: in a user prompt"}}
+    prompt = {"type": "user", "message": {"content": "done: ignored guidance: in a user prompt"}}
     many = {"type": "assistant", "message": {"content": [
-        {"type": "text", "text": "\n".join(f"ignored guidance: reason {i}" for i in range(30))}]}}
-    s = extract_signals([_write(tmp_path / "m.jsonl", [text, result, prompt, many])])
+        {"type": "text", "text": "\n".join(f"done: 1; ignored guidance: reason {i}" for i in range(30))}]}}
+    s = extract_signals([_write(tmp_path / "agent-1.jsonl", [text, result, prompt, many])])
     got = s["ignored_guidance"]
     assert len(got) == 20 and all(len(g) <= 300 for g in got)
-    assert got[0].startswith("ignored guidance: rule says") and TOKEN not in json.dumps(got)
-    assert got[1] == "done: 0; Ignored guidance: style rule"
-    assert not any("private thought" in g or "user prompt" in g for g in got)
+    assert got[0].startswith("done: 2 findings; ignored guidance: rule says") and TOKEN not in json.dumps(got)
+    assert got[1] == "done: 1; ignored guidance: reason 0"
+    assert not any("private thought" in g or "user prompt" in g or "style rule" in g for g in got)
 
 
 def test_extract_signals_dedupes_ignored_guidance(tmp_path):
     line = "done: 1 kept; ignored guidance: x"
-    a = _write(tmp_path / "a.jsonl", [{"type": "assistant", "message": {"content": [{"type": "text", "text": line}]}}])
-    b = _write(tmp_path / "b.jsonl", [{"type": "user", "message": {"content": [{"type": "tool_result", "content": line}]}}])
+    a = _write(tmp_path / "agent-a.jsonl", [{"type": "assistant", "message": {"content": [{"type": "text", "text": line}]}}])
+    b = _write(tmp_path / "agent-b.jsonl", [{"type": "assistant", "message": {"content": [{"type": "text", "text": line}]}}])
     assert extract_signals([a, b])["ignored_guidance"] == [line]
+
+
+def test_belongs_to_run_matches_run_dir_in_first_user_message(tmp_path):
+    a = _write(tmp_path / "a.jsonl", [
+        {"type": "last-prompt"}, {"type": "user", "message": {"content": "RUN_DIR=/s/runs/AAA"}},
+        {"type": "user", "message": {"content": "runs/BBB"}}])
+    b = _write(tmp_path / "b.jsonl", [{"type": "user", "message": {"content": "RUN_DIR=/s/runs/BBB"}}])
+    blocks = _write(tmp_path / "c.jsonl", [
+        {"type": "user", "message": {"content": [{"type": "text", "text": "RUN_DIR=/s/runs/AAA"}]}}])
+    empty = _write(tmp_path / "d.jsonl", [])
+    assert belongs_to_run(a, "AAA") and not belongs_to_run(a, "BBB")
+    assert belongs_to_run(b, "BBB") and not belongs_to_run(b, "AAA")
+    assert not belongs_to_run(blocks, "AAA") and not belongs_to_run(empty, "AAA")
+    assert not belongs_to_run(tmp_path / "missing.jsonl", "AAA")
+
+
+def test_extract_signals_window_counts_only_timestamped_entries_inside(tmp_path):
+    def at(ts, uid):
+        e = _use(uid, "Read", {})
+        if ts:
+            e["timestamp"] = ts
+        return e
+
+    p = _write(tmp_path / "m.jsonl", [
+        at("2026-11-13T09:00:00.000Z", "a"), at("2026-11-13T10:00:00.500Z", "b"),
+        at("2026-11-13T11:00:00.000Z", "c"), at(None, "d")])
+    lo = datetime.fromisoformat("2026-11-13T09:30:00Z").timestamp()
+    hi = datetime.fromisoformat("2026-11-13T10:30:00Z").timestamp()
+    assert extract_signals([p], windows={p: (lo, hi)})["tool_calls"] == 1
+    assert extract_signals([p])["tool_calls"] == 4

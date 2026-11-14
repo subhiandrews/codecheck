@@ -1,6 +1,6 @@
 {
   "name": "off-by-one",
-  "calibrated": false,
+  "calibrated": true,
   "base": {
     "sales.py": "\"\"\"Small helpers for daily sales figures.\"\"\"\n\n\ndef total(values):\n    \"\"\"Sum of all values.\"\"\"\n    return sum(values)\n"
   },

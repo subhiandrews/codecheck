@@ -3,7 +3,8 @@
 import json
 import os
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime
 from pathlib import Path
 
 from codecheck.shadow.scrub import scrub_text
@@ -49,6 +50,36 @@ def subagent_transcripts(main: Path) -> list[Path]:
         return []
 
 
+def belongs_to_run(path: Path, run_id: str) -> bool:
+    """True when the file's first `user` entry is a string naming this run's directory (`RUN_DIR=<state>/runs/<run_id>`)."""
+    needle = f"runs/{run_id}"
+    try:
+        with path.open(encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                except (ValueError, RecursionError):
+                    continue
+                if not (isinstance(entry, dict) and entry.get("type") == "user"):
+                    continue
+                msg = entry.get("message")
+                content = msg.get("content") if isinstance(msg, dict) else None
+                return isinstance(content, str) and needle in content
+    except OSError:
+        return False
+    return False
+
+
+def _epoch(entry: dict) -> float | None:
+    ts = entry.get("timestamp")
+    if not isinstance(ts, str):
+        return None
+    try:
+        return datetime.fromisoformat(ts).timestamp()
+    except ValueError:
+        return None
+
+
 def _result_text(content) -> str:
     if isinstance(content, str):
         return content
@@ -60,24 +91,28 @@ def _result_text(content) -> str:
 
 
 def _guidance_lines(text: str, found: list[str]) -> None:
-    """Collect lines reporting ignored guidance (an agent's `done:` line), scrubbed, capped and without repeats."""
+    """Collect `done:` lines reporting ignored guidance, scrubbed, capped and without repeats."""
     for line in text.splitlines():
         if len(found) >= _GUIDANCE_CAP:
             return
-        if _GUIDANCE in line.lower():
-            entry = scrub_text(line.strip())[:_ERROR_CAP]
+        stripped = line.strip()
+        if stripped.lower().startswith("done:") and _GUIDANCE in stripped.lower():
+            entry = scrub_text(stripped)[:_ERROR_CAP]
             if entry not in found:
                 found.append(entry)
 
 
-def extract_signals(paths: Sequence[Path]) -> dict:
-    """Deterministic counts from transcripts. `ignored_guidance` comes only from assistant text and tool results,
-    never from thinking blocks or user prompts."""
+def extract_signals(paths: Sequence[Path], *, windows: Mapping[Path, tuple[float, float]] | None = None) -> dict:
+    """Deterministic counts from transcripts. `ignored_guidance` comes only from the assistant text of subagent
+    transcripts (`agent-*.jsonl`) and only from their `done:` lines, never from the main session, tool results,
+    thinking blocks or user prompts. For a path in `windows`, only entries whose `timestamp` lies in the
+    closed (start, end) epoch-seconds window count; entries without a usable timestamp are skipped."""
     out = {
         "tool_calls": 0, "tool_errors": [], "retries": 0,
         "permission_denials": 0, "agents": [], "unreadable_lines": 0, "ignored_guidance": [],
     }
     for path in paths:
+        is_subagent = path.stem.startswith("agent-")
         agent = {"name": path.stem, "tool_calls": 0, "tool_errors": 0, "turns": 0, "output_tokens": 0}
         uses: dict[str, tuple[str, str]] = {}
         last_error: tuple[str, str] | None = None
@@ -87,6 +122,7 @@ def extract_signals(paths: Sequence[Path]) -> dict:
             out["unreadable_lines"] += 1
             out["agents"].append(agent)
             continue
+        window = (windows or {}).get(path)
         for line in lines:
             if not line.strip():
                 continue
@@ -94,6 +130,8 @@ def extract_signals(paths: Sequence[Path]) -> dict:
                 entry = json.loads(line)
                 if not isinstance(entry, dict):
                     raise TypeError("not an object")
+                if window is not None and not ((at := _epoch(entry)) is not None and window[0] <= at <= window[1]):
+                    continue
                 kind = entry.get("type")
                 msg = entry.get("message")
                 blocks = msg.get("content") if isinstance(msg, dict) else None
@@ -103,7 +141,7 @@ def extract_signals(paths: Sequence[Path]) -> dict:
                     tokens = usage.get("output_tokens") if isinstance(usage, dict) else 0
                     agent["output_tokens"] += tokens if isinstance(tokens, int) else 0
                     for b in blocks if isinstance(blocks, list) else []:
-                        if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str):
+                        if is_subagent and isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str):
                             _guidance_lines(b["text"], out["ignored_guidance"])
                         if isinstance(b, dict) and b.get("type") == "tool_use":
                             key = (str(b.get("name")), json.dumps(b.get("input"), sort_keys=True))
@@ -117,7 +155,6 @@ def extract_signals(paths: Sequence[Path]) -> dict:
                     for b in blocks if isinstance(blocks, list) else []:
                         if not (isinstance(b, dict) and b.get("type") == "tool_result"):
                             continue
-                        _guidance_lines(_result_text(b.get("content")), out["ignored_guidance"])
                         if not b.get("is_error"):
                             continue
                         key = uses.get(str(b.get("tool_use_id")), ("unknown", ""))

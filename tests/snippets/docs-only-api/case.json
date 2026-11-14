@@ -1,0 +1,20 @@
+{
+  "name": "docs-only-api",
+  "calibrated": true,
+  "base": {
+    "TextUtil.java": "package demo;\n\npublic final class TextUtil {\n    private TextUtil() {}\n\n    public static String trim(String s) {\n        return s == null ? \"\" : s.trim();\n    }\n}\n"
+  },
+  "change": {
+    "TextUtil.java": "package demo;\n\npublic final class TextUtil {\n    private TextUtil() {}\n\n    public static String trim(String s) {\n        return s == null ? \"\" : s.trim();\n    }\n\n    public static boolean isBlank(String s) {\n        return s == null || s.trim().isEmpty();\n    }\n}\n"
+  },
+  "expected": [],
+  "must_not_report": [
+    {
+      "file": "TextUtil.java",
+      "severity": [
+        "warning",
+        "critical"
+      ]
+    }
+  ]
+}

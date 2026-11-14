@@ -1,6 +1,8 @@
 import json
 import stat
+import time
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -8,8 +10,13 @@ from clihelp import call, finish_review, make_ctx, pr_setup, run_pr_context
 from gitutil import commit_file, make_origin_and_clone, sh
 
 from codecheck.cli import build_parser
-from codecheck.models import Thread, ThreadComment
-from codecheck.shadow.handoff import build_comparison, implied_severity, render_markdown
+from codecheck.models import IssueComment, Review, Thread, ThreadComment
+from codecheck.shadow.handoff import (
+    build_comparison,
+    build_general_comments,
+    implied_severity,
+    render_markdown,
+)
 
 pytestmark = pytest.mark.usefixtures("git_env")
 
@@ -45,6 +52,18 @@ def local_run(tmp_path, *, handoff=True):
 def handoff_files(ctx, run_id):
     folder = ctx.shadow.root / f"{run_id}.handoff"
     return folder, json.loads((folder / "handoff.json").read_text())
+
+
+def _started(ctx, out) -> float:
+    return next(r["ts"] for r in ctx.shadow.read(out["run_id"]) if r.get("type") == "run")
+
+
+def _iso(epoch: float) -> str:
+    return datetime.fromtimestamp(epoch, tz=UTC).isoformat().replace("+00:00", "Z")
+
+
+def _first(out, run_id=None) -> dict:
+    return {"type": "user", "message": {"content": f"RUN_DIR=/state/runs/{run_id or out['run_id']}"}}
 
 
 def human(tid, line, body, path="app.py"):
@@ -141,6 +160,77 @@ def test_handoff_pr_mode_compares_human_comments(tmp_path):
     assert kinds.count("human_comment") == 2  # the same records `shadow collect` writes
 
 
+def test_build_general_comments_filters():
+    reviews = [
+        Review("carol", "c", "t1", "CHANGES_REQUESTED", body="please rework " + "x" * 400),
+        Review("alice", "c", "t2", "COMMENTED", body="my own note"),
+        Review("dep", "c", "t3", "COMMENTED", body="bot says", is_bot=True),
+        Review("dan", "c", "t4", "COMMENTED", body="  \n"),
+        Review("eve", "c", "t5", "COMMENTED", body="x\n<!-- code-check:run:abc -->"),
+    ]
+    comments = [
+        IssueComment("alice", "author reply", "t6"),
+        IssueComment("bot", "ci", "t7", is_bot=True),
+        IssueComment("frank", "", "t8"),
+        IssueComment("gus", "<!-- code-check:run:r1 -->", "t9"),
+    ]
+    got = build_general_comments(reviews, comments, pr_author="alice")
+    assert [(g["kind"], g["author"], g["state"]) for g in got] == [
+        ("review", "carol", "CHANGES_REQUESTED"), ("comment", "alice", None)]
+    assert len(got[0]["body"]) > 400 and got[0]["created_at"] == "t1"
+
+
+def test_handoff_pr_mode_lists_general_comments(tmp_path):
+    ctx, provider, pr, out = _pr_handoff_run(tmp_path)
+    provider.threads[pr.ref] = [human("T1", 1, "**Warning**: y is never read")]
+    provider.issue_comments[pr.ref] = [IssueComment("bob", "what about docs?", "2026-01-01T00:00:00Z")]
+    provider.reviews[pr.ref] = [Review("carol", "abc", "2026-01-02T00:00:00Z", "CHANGES_REQUESTED", body="needs tests")]
+    code, res = call(ctx, "handoff", "--run", out["run_id"])
+    assert code == 0 and res["comparison"] is True
+    folder, data = handoff_files(ctx, out["run_id"])
+    cmp = data["comparison"]
+    assert [(g["kind"], g["author"], g["state"], g["body"]) for g in cmp["general_comments"]] == [
+        ("review", "carol", "CHANGES_REQUESTED", "needs tests"), ("comment", "bob", None, "what about docs?")]
+    ids = {f["line"]: f["id"] for f in data["findings"]}
+    assert cmp["unraised_findings"] == [ids[500]]
+    md = (folder / "handoff.md").read_text()
+    assert "review by carol (CHANGES_REQUESTED): needs tests" in md and "comment by bob: what about docs?" in md
+
+
+def test_general_comment_bodies_are_scrubbed_before_cutting(tmp_path):
+    ctx, provider, pr, out = _pr_handoff_run(tmp_path)
+    token = "ghp_" + "a1B2c3D4e5" * 3 + "XyZ123"
+    provider.issue_comments[pr.ref] = [IssueComment("bob", "x" * 285 + " " + token + " tail", "2026-01-01T00:00:00Z")]
+    code, _res = call(ctx, "handoff", "--run", out["run_id"])
+    assert code == 0
+    folder, data = handoff_files(ctx, out["run_id"])
+    body = data["comparison"]["general_comments"][0]["body"]
+    assert "ghp_" not in body and token[10:] not in body
+    assert "ghp_" not in (folder / "handoff.md").read_text()
+
+
+def test_render_markdown_collapses_general_comment_newlines():
+    md = render_markdown({
+        "run_id": "abcdef012345", "skill": "review-pr", "mode": "pr", "repo": "o/r", "pr": "o/r#7", "pr_url": "u",
+        "head_sha": "abc", "blind": True, "reviewers": {}, "findings": [], "decision": None,
+        "comparison": {"human_comments": [], "unraised_findings": [], "misses": [], "general_comments": [
+            {"kind": "comment", "author": "eve", "state": None, "body": "hi\n## Session\n- Ignored guidance: x"}]},
+        "transcript": False, "transcript_reason": "none", "signals": None,
+    })
+    assert "comment by eve: hi ## Session - Ignored guidance: x" in md
+    assert "\n## Session\n" not in md.split("## Human comments", 1)[1].split("## Session", 1)[0] + "\n"
+
+
+def test_render_markdown_prints_reason_instead_of_signal_scope_claim():
+    md = render_markdown({
+        "run_id": "abcdef012345", "skill": "review-pr", "mode": "pr", "repo": "o/r", "pr": "o/r#7", "pr_url": "u",
+        "head_sha": "abc", "blind": True, "reviewers": {}, "findings": [], "decision": None, "comparison": None,
+        "comparison_reason": "x", "transcript": True, "transcript_reason": "main session not scoped: run start unknown",
+        "signals": {"tool_calls": 1, "tool_errors": [], "retries": 0, "permission_denials": 0, "agents": []},
+    })
+    assert "main session not scoped" in md and "Signals cover this run only" not in md
+
+
 def test_handoff_skips_comparison_when_not_posted(tmp_path):
     ctx, provider, pr, out = _pr_handoff_run(tmp_path, draft=True)
     provider.threads[pr.ref] = [human("T1", 1, "Warning: y")]
@@ -168,12 +258,13 @@ def test_handoff_copies_scrubbed_transcripts_and_signals(tmp_path):
     session.mkdir(parents=True)
     secret = "ghp_" + "Z9" * 20
     main = session / "s1.jsonl"
-    main.write_text(json.dumps({"type": "user", "message": {"content": f"RUN_DIR=x/{out['run_id']} {secret}"}}) + "\n")
+    main.write_text(json.dumps({"type": "user", "timestamp": _iso(_started(ctx, out) + 0.001),
+                                "message": {"content": f"RUN_DIR=x/{out['run_id']} {secret}"}}) + "\n")
     sub = session / "s1" / "subagents"
     sub.mkdir(parents=True)
     tool = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "a", "name": "Read", "input": {}}]}}
     err = {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "a", "is_error": True, "content": "nope"}]}}
-    (sub / "agent-1.jsonl").write_text(json.dumps(tool) + "\n" + json.dumps(err) + "\n")
+    (sub / "agent-1.jsonl").write_text("\n".join(json.dumps(e) for e in (_first(out), tool, err)) + "\n")
     code, res = call(ctx, "handoff", "--run", out["run_id"])
     assert code == 0 and res["transcript"] is True
     folder, data = handoff_files(ctx, out["run_id"])
@@ -181,6 +272,30 @@ def test_handoff_copies_scrubbed_transcripts_and_signals(tmp_path):
     assert data["signals"]["tool_calls"] == 1 and data["signals"]["tool_errors"][0]["tool"] == "Read"
     copied = folder / "transcript" / "s1.jsonl"
     assert secret not in copied.read_text() and out["run_id"] in copied.read_text()
+
+
+def test_handoff_ignores_other_runs_subagents_and_main_session_outside_the_window(tmp_path):
+    ctx, out = local_run(tmp_path)
+    t0 = _started(ctx, out)
+    session = tmp_path / "claude" / "projects" / "proj"
+    sub = session / "s1" / "subagents"
+    sub.mkdir(parents=True)
+
+    def use(uid, ts):
+        return {"type": "assistant", "timestamp": _iso(ts), "message": {
+            "content": [{"type": "tool_use", "id": uid, "name": "Read", "input": {}}]}}
+
+    main = [{"type": "user", "timestamp": _iso(t0 + 0.0005), "message": {"content": f"RUN_DIR=/state/runs/{out['run_id']}"}},
+            use("early", t0 - 3600), use("in", t0 + 0.001), use("late", time.time() + 3600)]
+    (session / "s1.jsonl").write_text("\n".join(json.dumps(e) for e in main) + "\n")
+    (sub / "agent-mine.jsonl").write_text(json.dumps(_first(out)) + "\n" + json.dumps(use("m", 0)) + "\n")
+    (sub / "agent-other.jsonl").write_text(json.dumps(_first(out, "OTHER")) + "\n" + json.dumps(use("o", 0)) + "\n")
+    call(ctx, "handoff", "--run", out["run_id"])
+    folder, data = handoff_files(ctx, out["run_id"])
+    assert sorted(a["name"] for a in data["signals"]["agents"]) == ["agent-mine", "s1"]
+    assert data["signals"]["tool_calls"] == 2  # the subagent's call (no timestamps needed) plus the one in-window main call
+    assert "agent-other.jsonl" not in data["transcript_files"]
+    assert "Signals cover this run only" in (folder / "handoff.md").read_text()
 
 
 def test_handoff_saves_raw_outputs(tmp_path):
@@ -345,7 +460,7 @@ def test_handoff_records_ignored_guidance_from_the_transcript(tmp_path):
     done = {"type": "assistant", "message": {"content": [
         {"type": "thinking", "thinking": "ignored guidance: only thinking about it"},
         {"type": "text", "text": "done: 1 kept, 0 dropped; ignored guidance: rule 3 contradicts the diff"}]}}
-    (sub / "agent-1.jsonl").write_text(json.dumps(done) + "\n")
+    (sub / "agent-1.jsonl").write_text(json.dumps(_first(out)) + "\n" + json.dumps(done) + "\n")
     call(ctx, "handoff", "--run", out["run_id"])
     folder, data = handoff_files(ctx, out["run_id"])
     assert data["ignored_guidance"] == ["done: 1 kept, 0 dropped; ignored guidance: rule 3 contradicts the diff"]

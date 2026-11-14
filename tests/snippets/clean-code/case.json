@@ -1,6 +1,6 @@
 {
   "name": "clean-code",
-  "calibrated": false,
+  "calibrated": true,
   "base": {
     "series.py": "\"\"\"Helpers for numeric series.\"\"\"\n\n\ndef mean(values):\n    \"\"\"Arithmetic mean; raises ValueError on an empty series.\"\"\"\n    if not values:\n        raise ValueError(\"mean of an empty series\")\n    return sum(values) / len(values)\n"
   },

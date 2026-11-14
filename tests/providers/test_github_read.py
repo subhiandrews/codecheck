@@ -5,8 +5,9 @@ import pytest
 from fakes import FakeRunner
 
 from codecheck.errors import ProviderError
-from codecheck.models import Check, PRRef, Review
+from codecheck.models import Check, IssueComment, PRRef, Review
 from codecheck.providers.github import (
+    _ISSUE_COMMENTS_JQ,
     _REVIEWS_JQ,
     THREADS_QUERY,
     GitHubProvider,
@@ -203,6 +204,24 @@ def test_list_reviews_parses_one_json_object_per_line():
         Review("me", "abc", "2026-01-01T00:00:00Z", "COMMENTED"),
         Review("ghost", "def", "2026-01-02T00:00:00Z", "APPROVED"),
     ]
+
+
+def test_list_reviews_carries_body_and_bot_flag():
+    line = json.dumps({"author": "bot", "commit_id": "a", "submitted_at": "2026-01-01T00:00:00Z", "state": "COMMENTED",
+                       "body": "hi", "is_bot": True})
+    runner = FakeRunner().on("gh", "api", "repos/o/r/pulls/7/reviews", "--paginate", "--jq", _REVIEWS_JQ, stdout=line)
+    assert GitHubProvider(runner).list_reviews(REF) == [Review("bot", "a", "2026-01-01T00:00:00Z", "COMMENTED", "hi", True)]
+
+
+def test_list_issue_comments_parses_lines():
+    lines = "\n".join([
+        json.dumps({"author": "bob", "body": "hello", "created_at": "2026-01-01T00:00:00Z", "is_bot": False}),
+        json.dumps({"author": "ci", "body": None, "created_at": "2026-01-02T00:00:00Z", "is_bot": True}),
+        "",
+    ])
+    runner = FakeRunner().on("gh", "api", "repos/o/r/issues/7/comments", "--paginate", "--jq", _ISSUE_COMMENTS_JQ, stdout=lines)
+    assert GitHubProvider(runner).list_issue_comments(REF) == [
+        IssueComment("bob", "hello", "2026-01-01T00:00:00Z"), IssueComment("ci", "", "2026-01-02T00:00:00Z", True)]
 
 
 def test_list_reviews_tolerates_null_commit_id():

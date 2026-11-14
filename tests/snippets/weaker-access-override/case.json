@@ -1,0 +1,33 @@
+{
+  "name": "weaker-access-override",
+  "calibrated": true,
+  "base": {
+    "Base.java": "package demo;\n\nabstract class Base {\n    void visit(String s) {}\n\n    int count() {\n        return 0;\n    }\n}\n",
+    "Impl.java": "package demo;\n\nclass Impl extends Base {\n    @Override\n    void visit(String s) {}\n}\n"
+  },
+  "change": {
+    "Base.java": "package demo;\n\nabstract class Base {\n    protected void visit(String s) {}\n\n    int count() {\n        return 0; // no elements yet\n    }\n}\n",
+    "Impl.java": "package demo;\n\nclass Impl extends Base {\n    @Override\n    void visit(String s) {}\n}\n"
+  },
+  "expected": [
+    {
+      "file": "Base.java",
+      "line": 4,
+      "category": [
+        "build",
+        "compile",
+        "correctness",
+        "compat",
+        "api"
+      ],
+      "severity": "critical"
+    }
+  ],
+  "must_not_report": [
+    {
+      "file": "Base.java",
+      "line": 7,
+      "severity": ["critical"]
+    }
+  ]
+}

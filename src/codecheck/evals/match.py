@@ -64,6 +64,8 @@ def match_case(expected: Sequence[dict], must_not_report: Sequence[dict], got: S
                 continue
             if rule.get("category") is not None and not _category_ok(rule["category"], g):
                 continue
+            if rule.get("severity") is not None and _sev(g) not in _names(rule["severity"]):
+                continue
             if rule.get("line") is not None and not _near(g.get("line"), rule["line"], tolerance):
                 continue
             forbidden.append({"rule": rule, "got": g})

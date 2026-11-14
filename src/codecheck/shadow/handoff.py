@@ -15,6 +15,8 @@ skill restarts from `precheck` with a new run id, so one run cannot see them).
 import re
 from collections.abc import Sequence
 
+from codecheck.models import IssueComment, Review
+
 SCHEMA = 1
 # Only an explicit leading severity word counts; anything else is left for a person to label.
 _SEVERITY = re.compile(r"\s*[*_]*\s*(critical|warning|suggestion)(?![a-z])", re.IGNORECASE)
@@ -25,7 +27,25 @@ def implied_severity(body: str) -> str | None:
     return m.group(1).lower() if m else None
 
 
-def build_comparison(records: Sequence[dict], findings: Sequence[dict]) -> dict:
+def build_general_comments(reviews: Sequence[Review], issue_comments: Sequence[IssueComment], *, pr_author: str) -> list[dict]:
+    """Review bodies and PR-level comments from people. The caller scrubs the bodies."""
+    out = []
+    for r in reviews:
+        if r.is_bot or r.author == pr_author or _skip_body(r.body):
+            continue
+        out.append({"kind": "review", "author": r.author, "state": r.state, "body": r.body, "created_at": r.submitted_at})
+    for c in issue_comments:
+        if c.is_bot or _skip_body(c.body):
+            continue
+        out.append({"kind": "comment", "author": c.author, "state": None, "body": c.body, "created_at": c.created_at})
+    return out
+
+
+def _skip_body(body: str) -> bool:
+    return not (body or "").strip() or "<!-- code-check:run:" in body
+
+
+def build_comparison(records: Sequence[dict], findings: Sequence[dict], general_comments: Sequence[dict] = ()) -> dict:
     """`records` are a run's shadow records; the newest `human_comment` per thread wins, as in export."""
     latest: dict[str, dict] = {}
     for rec in records:
@@ -50,7 +70,7 @@ def build_comparison(records: Sequence[dict], findings: Sequence[dict]) -> dict:
         else:
             misses.append(rec["thread_id"])
     return {"human_comments": comments, "unraised_findings": [fid for fid in severity if fid not in matched],
-            "misses": misses}
+            "misses": misses, "general_comments": list(general_comments)}
 
 
 def render_markdown(h: dict) -> str:
@@ -79,12 +99,17 @@ def render_markdown(h: dict) -> str:
             match = f"matched {c['matched_finding']}" if c["matched_finding"] else "missed by us"
             lines.append(f"- {c['thread_id']} by {c['author']} at {c['path']}:{c['line']}: {match}"
                          + (f", human says {c['human_severity']}, we said {c['finding_severity']}" if c["human_severity"] else ""))
+        for g in cmp.get("general_comments") or []:
+            state = f" ({g['state']})" if g.get("state") else ""
+            lines.append(f"- {g['kind']} by {g['author']}{state}: {' '.join((g.get('body') or '').split())[:120]}")
         lines.append(f"- Findings no human raised: {', '.join(cmp['unraised_findings']) or 'none'}")
     lines += ["", "## Session", ""]
     signals = h.get("signals")
     if not h.get("transcript"):
         lines.append(f"- No transcript: {h.get('transcript_reason')}")
     elif signals:
+        lines.append(f"- {h['transcript_reason']}" if h.get("transcript_reason")
+                     else "- Signals cover this run only (subagents by RUN_DIR, main session by time window)")
         lines.append(f"- {signals['tool_calls']} tool calls, {len(signals['tool_errors'])} failed, "
                      f"{signals['retries']} retries, {signals['permission_denials']} permission denials")
         lines += [f"- {a['name']}: {a['turns']} turns, {a['output_tokens']} output tokens" for a in signals["agents"]]

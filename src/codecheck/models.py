@@ -65,6 +65,16 @@ class Review:
     commit_id: str
     submitted_at: str
     state: str
+    body: str = ""
+    is_bot: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class IssueComment:
+    author: str
+    body: str
+    created_at: str
+    is_bot: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import time
 from pathlib import Path
 
 from codecheck import __version__
@@ -17,11 +18,17 @@ from codecheck.core.pipeline import finalize_findings
 from codecheck.models import PRRef
 from codecheck.runids import check_run_id
 from codecheck.shadow.collect import collect_outcomes
-from codecheck.shadow.handoff import SCHEMA, build_comparison, render_markdown
+from codecheck.shadow.handoff import (
+    SCHEMA,
+    build_comparison,
+    build_general_comments,
+    render_markdown,
+)
 from codecheck.shadow.recorder import config_hash
 from codecheck.shadow.scrub import scrub, scrub_text
 from codecheck.shadow.store import write_private
 from codecheck.shadow.transcripts import (
+    belongs_to_run,
     copy_scrubbed,
     extract_signals,
     find_transcript,
@@ -55,9 +62,10 @@ def build_handoff(ctx, run_id: str) -> dict:
         "root": meta.get("root"), **({"aggregator": aggregator_raw} if aggregator_raw is not None else {}),
     })
     folder = ctx.shadow.handoff_dir(run_id)
-    transcript, transcript_reason, transcript_files, signals = _transcripts(ctx, run_id, folder)
-    ignored_guidance = signals.pop("ignored_guidance", []) if signals else []
     records = ctx.shadow.read(run_id)
+    started = next((r["ts"] for r in records if r.get("type") == "run" and isinstance(r.get("ts"), (int, float))), None)
+    transcript, transcript_reason, transcript_files, signals = _transcripts(ctx, run_id, folder, started)
+    ignored_guidance = signals.pop("ignored_guidance", []) if signals else []
     decision = next((r for r in reversed(records) if r.get("type") == "decision"), None)
     pr_url = comparison = None
     if meta.get("mode") != "pr" or not meta.get("pr"):
@@ -141,14 +149,17 @@ def _projects_dir(ctx) -> Path:
     return (Path(base).expanduser() if base else Path.home() / ".claude") / "projects"
 
 
-def _transcripts(ctx, run_id: str, folder: Path) -> tuple[bool, str | None, list[str], dict | None]:
+def _transcripts(ctx, run_id: str, folder: Path, started: float | None) -> tuple[bool, str | None, list[str], dict | None]:
     main = find_transcript(_projects_dir(ctx), run_id)
     if main is None:
         return False, "no Claude Code transcript from the last day mentions this run id", [], None
-    paths = [main, *subagent_transcripts(main)]
+    # The main session may hold many runs and the subagents folder every run's agents: keep this run's subagents only.
+    subs = [p for p in subagent_transcripts(main) if belongs_to_run(p, run_id)]
     # Copies are regex-scrubbed raw JSONL; a scrub can occasionally break a line, so they are for reading, not parsing.
-    copied = copy_scrubbed(paths, folder / "transcript")
-    return True, None, copied, extract_signals(paths)
+    copied = copy_scrubbed([main, *subs], folder / "transcript")
+    if started is None:
+        return True, "main session not scoped: run start unknown", copied, extract_signals(subs)
+    return True, None, copied, extract_signals([main, *subs], windows={main: (started, time.time())})
 
 
 def _compare(ctx, ref: PRRef, run_id: str) -> tuple[dict | None, str | None]:
@@ -166,7 +177,16 @@ def _compare(ctx, ref: PRRef, run_id: str) -> tuple[dict | None, str | None]:
         key=lambda r: r.get("ts") if isinstance(r.get("ts"), (int, float)) else 0,
     )
     rematched = [{**r, "matches_finding": _near(ours, r.get("path"), r.get("line"))} for r in comments]
-    return build_comparison(rematched, ours), None
+    return build_comparison(rematched, ours, _general_comments(ctx, ref)), None
+
+
+def _general_comments(ctx, ref: PRRef) -> list[dict]:
+    try:
+        general = build_general_comments(ctx.provider.list_reviews(ref), ctx.provider.list_issue_comments(ref),
+                                         pr_author=ctx.provider.get_pr(ref).author)
+        return [{**g, "body": " ".join(scrub_text(g["body"]).split())[:300]} for g in general]
+    except Exception:  # noqa: BLE001 - the extra feedback is a convenience; the rest of the comparison stands
+        return []
 
 
 def _near(findings: list[dict], path, line) -> str | None:

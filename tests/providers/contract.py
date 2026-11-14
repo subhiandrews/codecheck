@@ -1,6 +1,14 @@
 """Behavioral suite every provider adapter must pass. Subclass and implement make_provider()."""
 
-from codecheck.models import Check, PostResult, PRRef, PullRequest, Review, Thread
+from codecheck.models import (
+    Check,
+    IssueComment,
+    PostResult,
+    PRRef,
+    PullRequest,
+    Review,
+    Thread,
+)
 
 VALID_CHECK_STATES = {"pass", "fail", "pending", "skipped", "cancelled"}
 
@@ -35,6 +43,11 @@ class ProviderContract:
         provider, ref = self.make_provider()
         reviews = provider.list_reviews(ref)
         assert reviews and all(isinstance(r, Review) for r in reviews)
+
+    def test_issue_comments(self):
+        provider, ref = self.make_provider()
+        comments = provider.list_issue_comments(ref)
+        assert isinstance(comments, list) and all(isinstance(c, IssueComment) for c in comments)
 
     def test_checks_have_valid_states(self):
         provider, ref = self.make_provider()

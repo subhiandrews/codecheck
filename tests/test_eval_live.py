@@ -39,6 +39,16 @@ def _write_snippet(directory: Path, snippet: dict) -> None:
     (folder / "case.json").write_text(json.dumps(snippet))
 
 
+def test_must_not_report_severity_is_validated(tmp_path):
+    rule = {"file": "pkg/calc.py", "severity": ["warning", "critical"]}
+    _write_snippet(tmp_path / "ok", {**SNIPPET, "must_not_report": [rule]})
+    assert load_snippets(tmp_path / "ok")[0]["must_not_report"][0]["severity"] == ["warning", "critical"]
+    for n, bad in enumerate((["loud"], "warning", [], [1])):
+        _write_snippet(tmp_path / f"bad{n}", {**SNIPPET, "must_not_report": [{**rule, "severity": bad}]})
+        with pytest.raises(CodeCheckError, match="must_not_report"):
+            load_snippets(tmp_path / f"bad{n}")
+
+
 def _seed_shadow(store_dir: Path, run_id: str = "abcdef123456", aggregator=None, root: str | None = None) -> None:
     """What the review-local skill's hand-off step leaves in the shadow store."""
     store = ShadowStore(store_dir)
@@ -155,12 +165,15 @@ def test_load_snippets_reads_sorted_cases(tmp_path):
     assert [s["name"] for s in load_snippets(tmp_path)] == ["a", "b"]
 
 
-def test_shipped_snippets_load_and_are_marked_uncalibrated():
+def test_shipped_snippets_load_and_are_marked_calibrated():
     assert DEFAULT_SNIPPETS == REPO / "tests" / "snippets"
     snippets = {s["name"]: s for s in load_snippets(DEFAULT_SNIPPETS)}
-    assert set(snippets) == {"off-by-one", "clean-code"}
-    assert all(s["calibrated"] is False for s in snippets.values())
+    assert set(snippets) == {"off-by-one", "clean-code", "weaker-access-override", "docs-only-api"}
+    assert all(s["calibrated"] is True for s in snippets.values())
     assert snippets["off-by-one"]["expected"] and snippets["clean-code"]["expected"] == []
+    assert [e["severity"] for e in snippets["weaker-access-override"]["expected"]] == ["critical"]
+    assert snippets["docs-only-api"]["expected"] == []
+    assert snippets["docs-only-api"]["must_not_report"]
 
 
 def test_only_rejects_unknown_snippet(tmp_path):
@@ -306,7 +319,7 @@ def test_readme_documents_the_live_eval():
     readme = (REPO / "README.md").read_text()
     section = readme.split("### Live snippet eval", 1)[1].split("\n## ", 1)[0]
     for text in ("costs real tokens", "not run in CI", "local only", "--if-reachable", "--only", "--snippets",
-                 f"within {TOLERANCE}", f"{round(RECALL_BAR * 100)}%", '"calibrated": false', "CODE_CHECK_STATE_DIR",
+                 f"within {TOLERANCE}", f"{round(RECALL_BAR * 100)}%", '"calibrated": true', "CODE_CHECK_STATE_DIR",
                  "CODE_CHECK_SHADOW__STORE", "CODE_CHECK_SHADOW__HANDOFF=1", "case-insensitively"):
         assert text in section, text
 

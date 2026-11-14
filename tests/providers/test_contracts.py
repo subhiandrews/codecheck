@@ -2,7 +2,7 @@
 from fakes import FakeProvider, FakeRunner
 
 from codecheck.models import PRRef, Review
-from codecheck.providers.github import _REVIEWS_JQ, GitHubProvider
+from codecheck.providers.github import _ISSUE_COMMENTS_JQ, _REVIEWS_JQ, GitHubProvider
 from providers.contract import ProviderContract
 from providers.test_github_read import CHECKS_JSON, PR_JSON, node, page
 
@@ -31,6 +31,7 @@ class TestGitHubContract(ProviderContract):
             .on_prefix("gh", "api", "graphql", stdout=page([node("T1")]))
             .on("gh", "api", "repos/o/r/pulls/7/reviews", "--paginate", "--jq", _REVIEWS_JQ,
                 stdout='{"author": "me", "commit_id": "abc", "submitted_at": "2026-01-01T00:00:00Z", "state": "COMMENTED"}\n')
+            .on("gh", "api", "repos/o/r/issues/7/comments", "--paginate", "--jq", _ISSUE_COMMENTS_JQ, stdout="")
             .on_prefix("gh", "api", "repos/o/r/pulls/7/reviews", stdout="{}")
             .on_prefix("gh", "api", "repos/o/r/pulls/7/comments/101/replies", stdout="{}")
             .on_prefix("gh", "api", "repos/o/r/pulls/7/requested_reviewers", stdout="{}")
