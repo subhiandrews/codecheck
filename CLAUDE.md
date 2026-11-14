@@ -50,6 +50,8 @@ scripts/install-git-hooks.sh                     # opt in: git config core.hooks
 - `ShadowStore.run_ids()` is not chronological; use `ordered_run_ids()` / `runs_for_pr`.
 - `StateStore` locks itself (`state.json.lock`); loop bookkeeping keys live under `loop:<mode>:<ref>`, never the `review:<ref>` keys that `precheck`/`post` own. Security-sensitive config keys (`state_dir`, `run_pr.*`, `shadow.*`, `review.auto_approve`, `review.attribution`, `review.label`, `loop.review_forks`) are rejected in a repo's `.code-check.toml`; user config beats repo config.
 
+- Unattended hand-off rounds (`.claude/skills/handoff-round/`, `handoff-queue`): the queue and merge guard (`shadow/queue.py`, `commands/handoff_queue.py`, `tests/test_handoff_queue.py`) are protected paths that the guard itself refuses to let a round change, and the skill must run them from the installed plugin, not the branch under test. The owner has authorised that skill, and only that skill, to merge with `gh pr merge --admin` after CI is green and `handoff-queue check` says `ok`; every other merge still needs explicit go-ahead. Golden cases written by it carry `labelled_by: "handoff-round"`.
+
 ## Work in progress
 
 This branch was built via a subagent-driven plan; `.superpowers/sdd/` (git-ignored) holds the run ledger. Real-machine smoke tests of the plugin, installer and unattended `claude -p` runs have not been done; behaviours the spike did not confirm (hook-time env vars, absolute-path `Bash(...)` allow rules, `--add-dir`, which `run-pr` passes by default; `run_pr.add_state_dir=false` disables it) are unverified.
