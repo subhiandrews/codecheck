@@ -1,0 +1,372 @@
+{
+  "version": 1,
+  "case_id": "tokio-rs-tokio-8735-e7aa7747",
+  "repo": "tokio-rs/tokio",
+  "pr": 8735,
+  "head_sha": "e7aa7747e40aa6249a570e0adea3e8c8cf6649ee",
+  "diff": "diff --git a/tokio/src/runtime/driver.rs b/tokio/src/runtime/driver.rs\nindex 82fd513d..9a73e394 100644\n--- a/tokio/src/runtime/driver.rs\n+++ b/tokio/src/runtime/driver.rs\n@@ -102,6 +102,18 @@ impl Handle {\n                 .as_ref()\n                 .expect(\"A Tokio 1.x context was found, but IO is disabled. Call `enable_io` on the runtime builder to enable IO.\")\n         }\n+\n+        /// Closes the I/O driver's registry and waker. Called by the\n+        /// scheduler at shutdown, once the driver is no longer polled.\n+        pub(crate) fn release_io(&self) {\n+            if let Some(io) = self.io.as_ref() {\n+                io.release_resources();\n+            }\n+        }\n+    }\n+\n+    cfg_not_io_driver! {\n+        pub(crate) fn release_io(&self) {}\n     }\n \n     cfg_signal_internal_and_unix! {\ndiff --git a/tokio/src/runtime/io/driver.rs b/tokio/src/runtime/io/driver.rs\nindex d5ab7000..685040ce 100644\n--- a/tokio/src/runtime/io/driver.rs\n+++ b/tokio/src/runtime/io/driver.rs\n@@ -11,7 +11,7 @@ cfg_io_uring! {\n \n use crate::io::interest::Interest;\n use crate::io::ready::Ready;\n-use crate::loom::sync::Mutex;\n+use crate::loom::sync::{Mutex, RwLock};\n use crate::runtime::driver;\n use crate::runtime::io::registration_set;\n use crate::runtime::io::{IoDriverMetrics, RegistrationSet, ScheduledIo};\n@@ -40,8 +40,17 @@ pub(crate) struct Driver {\n \n /// A reference to an I/O driver.\n pub(crate) struct Handle {\n-    /// Registers I/O resources.\n-    registry: mio::Registry,\n+    /// The registry and the waker. Both keep OS resources of the event queue\n+    /// open, so they are dropped when the runtime shuts down.\n+    ///\n+    /// The lock keeps them alive while in use: closing the waker during a\n+    /// concurrent `wake` would write to a file descriptor that may already\n+    /// have been reused.\n+    ///\n+    /// Never acquire this lock while holding `synced`, and never acquire it\n+    /// twice on the same thread: a nested read can deadlock with a queued\n+    /// writer.\n+    resources: RwLock<Option<Resources>>,\n \n     /// Tracks all registrations\n     registrations: RegistrationSet,\n@@ -49,11 +58,6 @@ pub(crate) struct Handle {\n     /// State that should be synchronized\n     synced: Mutex<registration_set::Synced>,\n \n-    /// Used to wake up the reactor from a call to `turn`.\n-    /// Not supported on `Wasi` due to lack of threading support.\n-    #[cfg(not(target_os = \"wasi\"))]\n-    waker: mio::Waker,\n-\n     pub(crate) metrics: IoDriverMetrics,\n \n     #[cfg(all(\n@@ -75,6 +79,16 @@ pub(crate) struct Handle {\n     pub(crate) uring_probe: OnceCell<Option<io_uring::Probe>>,\n }\n \n+struct Resources {\n+    /// Registers I/O resources.\n+    registry: mio::Registry,\n+\n+    /// Used to wake up the reactor from a call to `turn`.\n+    /// Not supported on `Wasi` due to lack of threading support.\n+    #[cfg(not(target_os = \"wasi\"))]\n+    waker: mio::Waker,\n+}\n+\n #[derive(Debug)]\n pub(crate) struct ReadyEvent {\n     pub(super) tick: u16,\n@@ -135,11 +149,13 @@ impl Driver {\n         let (registrations, synced) = RegistrationSet::new();\n \n         let handle = Handle {\n-            registry,\n+            resources: RwLock::new(Some(Resources {\n+                registry,\n+                #[cfg(not(target_os = \"wasi\"))]\n+                waker,\n+            })),\n             registrations,\n             synced: Mutex::new(synced),\n-            #[cfg(not(target_os = \"wasi\"))]\n-            waker,\n             metrics: IoDriverMetrics::default(),\n             #[cfg(all(\n                 tokio_unstable,\n@@ -274,9 +290,32 @@ impl Handle {\n     /// after this method has been called. If the reactor is not currently\n     /// blocked in `turn`, then the next call to `turn` will not block and\n     /// return immediately.\n+    ///\n+    /// Does nothing once the runtime has shut down.\n     pub(crate) fn unpark(&self) {\n-        #[cfg(not(target_os = \"wasi\"))]\n-        self.waker.wake().expect(\"failed to wake I/O driver\");\n+        if let Some(resources) = self.resources.read().as_ref() {\n+            resources.wake();\n+        }\n+    }\n+\n+    /// Closes the registry and the waker, so that a handle outliving the\n+    /// runtime does not keep the system event queue open.\n+    ///\n+    /// Must only be called once the driver is no longer polled.\n+    pub(crate) fn release_resources(&self) {\n+        *self.resources.write() = None;\n+    }\n+\n+    /// Calls `f` with the registry, or fails if the runtime has shut down.\n+    ///\n+    /// `f` must not acquire `resources` again.\n+    fn with_registry<R>(&self, f: impl FnOnce(&mio::Registry) -> io::Result<R>) -> io::Result<R> {\n+        match self.resources.read().as_ref() {\n+            Some(resources) => f(&resources.registry),\n+            None => Err(io::Error::other(\n+                crate::util::error::RUNTIME_SHUTTING_DOWN_ERROR,\n+            )),\n+        }\n     }\n \n     /// Registers an I/O resource with the reactor for a given `mio::Ready` state.\n@@ -287,25 +326,29 @@ impl Handle {\n         source: &mut impl mio::event::Source,\n         interest: Interest,\n     ) -> io::Result<Arc<ScheduledIo>> {\n-        let scheduled_io = self.registrations.allocate(&mut self.synced.lock())?;\n-        let token = [REDACTED];\n-\n-        // we should remove the `scheduled_io` from the `registrations` set if registering\n-        // the `source` with the OS fails. Otherwise it will leak the `scheduled_io`.\n-        if let Err(e) = self.registry.register(source, token, interest.to_mio()) {\n-            // safety: `scheduled_io` is part of the `registrations` set.\n-            unsafe {\n-                self.registrations\n-                    .remove(&mut self.synced.lock(), &scheduled_io)\n-            };\n-\n-            return Err(e);\n-        }\n+        // Holding the registry across `allocate` and `register` means it\n+        // cannot be closed in between.\n+        self.with_registry(|registry| {\n+            let scheduled_io = self.registrations.allocate(&mut self.synced.lock())?;\n+            let token = [REDACTED];\n+\n+            // we should remove the `scheduled_io` from the `registrations` set if registering\n+            // the `source` with the OS fails. Otherwise it will leak the `scheduled_io`.\n+            if let Err(e) = registry.register(source, token, interest.to_mio()) {\n+                // safety: `scheduled_io` is part of the `registrations` set.\n+                unsafe {\n+                    self.registrations\n+                        .remove(&mut self.synced.lock(), &scheduled_io)\n+                };\n+\n+                return Err(e);\n+            }\n \n-        // TODO: move this logic to `RegistrationSet` and use a `CountedLinkedList`\n-        self.metrics.incr_fd_count();\n+            // TODO: move this logic to `RegistrationSet` and use a `CountedLinkedList`\n+            self.metrics.incr_fd_count();\n \n-        Ok(scheduled_io)\n+            Ok(scheduled_io)\n+        })\n     }\n \n     /// Deregisters an I/O resource from the reactor.\n@@ -314,6 +357,18 @@ impl Handle {\n         registration: &Arc<ScheduledIo>,\n         source: &mut impl Source,\n     ) -> io::Result<()> {\n+        let resources = self.resources.read();\n+        let resources = match resources.as_ref() {\n+            Some(resources) => resources,\n+            None => {\n+                // The runtime has shut down. The driver is never polled\n+                // again, so the `ScheduledIo` token can no longer be\n+                // dispatched, and pending releases are never processed.\n+                self.metrics.dec_fd_count();\n+                return Ok(());\n+            }\n+        };\n+\n         // Deregister the source with the OS poller **first**.\n         //\n         // If `deregister` fails (for example, because the caller closed the raw\n@@ -322,13 +377,15 @@ impl Handle {\n         // duplicated before the original fd number was closed, the open file\n         // description remains registered in epoll with the `ScheduledIo` token\n         // pointer even though `EPOLL_CTL_DEL` fails with `EBADF`.\n-        self.registry.deregister(source)?;\n+        resources.registry.deregister(source)?;\n \n         if self\n             .registrations\n             .deregister(&mut self.synced.lock(), registration)\n         {\n-            self.unpark();\n+            // Wake through the guard we already hold: `self.unpark()` would\n+            // take the read lock a second time.\n+            resources.wake();\n         }\n \n         self.metrics.dec_fd_count();\n@@ -343,6 +400,13 @@ impl Handle {\n     }\n }\n \n+impl Resources {\n+    fn wake(&self) {\n+        #[cfg(not(target_os = \"wasi\"))]\n+        self.waker.wake().expect(\"failed to wake I/O driver\");\n+    }\n+}\n+\n /// Dispatches an event received from the poller to the corresponding `ScheduledIo`.\n ///\n /// # Safety\ndiff --git a/tokio/src/runtime/io/driver/signal.rs b/tokio/src/runtime/io/driver/signal.rs\nindex ea3ef07b..19bd84e3 100644\n--- a/tokio/src/runtime/io/driver/signal.rs\n+++ b/tokio/src/runtime/io/driver/signal.rs\n@@ -7,9 +7,9 @@ impl Handle {\n         &self,\n         receiver: &mut mio::net::UnixStream,\n     ) -> io::Result<()> {\n-        self.registry\n-            .register(receiver, TOKEN_SIGNAL, mio::Interest::READABLE)?;\n-        Ok(())\n+        self.with_registry(|registry| {\n+            registry.register(receiver, TOKEN_SIGNAL, mio::Interest::READABLE)\n+        })\n     }\n }\n \ndiff --git a/tokio/src/runtime/io/driver/uring.rs b/tokio/src/runtime/io/driver/uring.rs\nindex 0119d725..bffaa0df 100644\n--- a/tokio/src/runtime/io/driver/uring.rs\n+++ b/tokio/src/runtime/io/driver/uring.rs\n@@ -193,8 +193,9 @@ impl Drop for UringContext {\n impl Handle {\n     fn add_uring_source(&self, uringfd: RawFd) -> io::Result<()> {\n         let mut source = SourceFd(&uringfd);\n-        self.registry\n-            .register(&mut source, TOKEN_WAKEUP, Interest::READABLE.to_mio())\n+        self.with_registry(|registry| {\n+            registry.register(&mut source, TOKEN_WAKEUP, Interest::READABLE.to_mio())\n+        })\n     }\n \n     pub(crate) fn get_uring(&self) -> &Mutex<UringContext> {\ndiff --git a/tokio/src/runtime/io/registration_set.rs b/tokio/src/runtime/io/registration_set.rs\nindex 5ee6a964..e9e6635c 100644\n--- a/tokio/src/runtime/io/registration_set.rs\n+++ b/tokio/src/runtime/io/registration_set.rs\n@@ -71,6 +71,12 @@ impl RegistrationSet {\n     // Returns `true` if the caller should unblock the I/O driver to purge\n     // registrations pending release.\n     pub(super) fn deregister(&self, synced: &mut Synced, registration: &Arc<ScheduledIo>) -> bool {\n+        // After shutdown the driver is never polled again, so nothing would\n+        // ever release the entry.\n+        if synced.is_shutdown {\n+            return false;\n+        }\n+\n         synced.pending_release.push(registration.clone());\n \n         let len = synced.pending_release.len();\n@@ -147,6 +153,22 @@ unsafe impl linked_list::Link for Arc<ScheduledIo> {\n     }\n }\n \n+#[cfg(all(test, not(loom)))]\n+mod tests {\n+    use super::*;\n+\n+    #[test]\n+    fn deregister_after_shutdown_is_not_queued() {\n+        let (set, mut synced) = RegistrationSet::new();\n+        let io = set.allocate(&mut synced).unwrap();\n+\n+        drop(set.shutdown(&mut synced));\n+\n+        assert!(!set.deregister(&mut synced, &io));\n+        assert!(synced.pending_release.is_empty());\n+    }\n+}\n+\n #[cfg(all(test, loom))]\n mod loom_tests {\n     use super::*;\n@@ -183,6 +205,10 @@ mod loom_tests {\n                 self.set.release(&mut self.synced.lock());\n             }\n         }\n+\n+        fn shutdown(&self) {\n+            drop(self.set.shutdown(&mut self.synced.lock()));\n+        }\n     }\n \n     /// Models deregistration racing with delivery of an event already returned by\n@@ -221,4 +247,25 @@ mod loom_tests {\n             assert!(!handle.set.needs_release());\n         });\n     }\n+\n+    /// Models deregistration racing with driver shutdown. Nothing drains\n+    /// `pending_release` after shutdown, so a deregistration that lands after it\n+    /// must not be queued.\n+    #[test]\n+    fn deregister_races_with_shutdown() {\n+        loom::model(|| {\n+            let handle = Arc::new(Registrations::new());\n+            let scheduled_io = handle.allocate();\n+\n+            let handle_clone = handle.clone();\n+            let shutdown_th = thread::spawn(move || handle_clone.shutdown());\n+\n+            handle.deregister(&scheduled_io);\n+            drop(scheduled_io);\n+\n+            shutdown_th.join().unwrap();\n+\n+            assert!(handle.synced.lock().pending_release.is_empty());\n+        });\n+    }\n }\ndiff --git a/tokio/src/runtime/scheduler/current_thread/mod.rs b/tokio/src/runtime/scheduler/current_thread/mod.rs\nindex 3efd6735..cc0f18b9 100644\n--- a/tokio/src/runtime/scheduler/current_thread/mod.rs\n+++ b/tokio/src/runtime/scheduler/current_thread/mod.rs\n@@ -315,6 +315,10 @@ fn shutdown2(mut core: Box<Core>, handle: &Handle) -> Box<Core> {\n         driver.shutdown(&handle.driver);\n     }\n \n+    // Also runs when a panic while parking dropped the driver, so that\n+    // `driver.shutdown` above was skipped.\n+    handle.driver.release_io();\n+\n     core\n }\n \ndiff --git a/tokio/src/runtime/scheduler/multi_thread/park.rs b/tokio/src/runtime/scheduler/multi_thread/park.rs\nindex efe0ff06..a54f29a0 100644\n--- a/tokio/src/runtime/scheduler/multi_thread/park.rs\n+++ b/tokio/src/runtime/scheduler/multi_thread/park.rs\n@@ -49,8 +49,11 @@ const NOTIFIED: usize = 3;\n \n /// Shared across multiple Parker handles\n struct Shared {\n-    /// Shared driver. Only one thread at a time can use this\n-    driver: TryLock<Driver>,\n+    /// Shared driver. Only one thread at a time can use this.\n+    ///\n+    /// Taken and dropped on shutdown, so that a `Handle` that outlives the\n+    /// runtime does not keep the driver's resources open.\n+    driver: TryLock<Option<Driver>>,\n }\n \n impl Parker {\n@@ -61,7 +64,7 @@ impl Parker {\n                 mutex: Mutex::new(()),\n                 condvar: Condvar::new(),\n                 shared: Arc::new(Shared {\n-                    driver: TryLock::new(driver),\n+                    driver: TryLock::new(Some(driver)),\n                 }),\n             }),\n         }\n@@ -88,7 +91,8 @@ impl Parker {\n         duration: Duration,\n     ) -> HadDriver {\n         if let Some(mut driver) = self.inner.shared.driver.try_lock() {\n-            self.inner.park_driver(&mut driver, handle, Some(duration))\n+            let driver = driver.as_mut().expect(\"driver missing\");\n+            self.inner.park_driver(driver, handle, Some(duration))\n         } else if !duration.is_zero() {\n             self.inner.park_condvar(Some(duration));\n             HadDriver::No\n@@ -141,7 +145,8 @@ impl Inner {\n         }\n \n         if let Some(mut driver) = self.shared.driver.try_lock() {\n-            self.park_driver(&mut driver, handle, None)\n+            let driver = driver.as_mut().expect(\"driver missing\");\n+            self.park_driver(driver, handle, None)\n         } else {\n             self.park_condvar(None);\n             HadDriver::No\n@@ -307,8 +312,15 @@ impl Inner {\n     }\n \n     fn shutdown(&self, handle: &driver::Handle) {\n+        // Every core is shut down once all of them have stopped parking, so\n+        // the lock is free. The first core to get here drops the driver.\n         if let Some(mut driver) = self.shared.driver.try_lock() {\n-            driver.shutdown(handle);\n+            if let Some(mut driver) = driver.take() {\n+                driver.shutdown(handle);\n+                handle.release_io();\n+            }\n+        } else {\n+            debug_assert!(false, \"driver locked during shutdown\");\n         }\n \n         self.condvar.notify_all();\ndiff --git a/tokio/tests/io_driver_drop.rs b/tokio/tests/io_driver_drop.rs\nindex 419fa162..ec49ecd3 100644\n--- a/tokio/tests/io_driver_drop.rs\n+++ b/tokio/tests/io_driver_drop.rs\n@@ -106,9 +106,43 @@ fn shutdown_drops_waker_holding_registration() {\n     assert!(dropped.load(Ordering::Relaxed));\n }\n \n+#[test]\n+fn into_std_after_drop_current_thread() {\n+    into_std_after_drop(rt());\n+}\n+\n+#[test]\n+fn into_std_after_drop_multi_thread() {\n+    into_std_after_drop(multi_thread_rt());\n+}\n+\n+fn into_std_after_drop(rt: runtime::Runtime) {\n+    let listener = {\n+        let _enter = rt.enter();\n+        let listener = std::net::TcpListener::bind(\"127.0.0.1:0\").unwrap();\n+\n+        listener.set_nonblocking(true).unwrap();\n+\n+        TcpListener::from_std(listener).unwrap()\n+    };\n+\n+    drop(rt);\n+\n+    // Deregistering from a shut down driver must not fail.\n+    listener.into_std().unwrap();\n+}\n+\n fn rt() -> runtime::Runtime {\n     runtime::Builder::new_current_thread()\n         .enable_all()\n         .build()\n         .unwrap()\n }\n+\n+fn multi_thread_rt() -> runtime::Runtime {\n+    runtime::Builder::new_multi_thread()\n+        .worker_threads(2)\n+        .enable_all()\n+        .build()\n+        .unwrap()\n+}\ndiff --git a/tokio/tests/rt_shutdown_fds.rs b/tokio/tests/rt_shutdown_fds.rs\nnew file mode 100644\nindex 00000000..e51c790d\n--- /dev/null\n+++ b/tokio/tests/rt_shutdown_fds.rs\n@@ -0,0 +1,57 @@\n+#![warn(rust_2018_idioms)]\n+#![cfg(all(feature = \"full\", target_os = \"linux\", not(miri)))]\n+\n+//! Regression test for #8703: dropping a runtime must release its I/O driver's\n+//! file descriptors even while a `RuntimeMetrics` (and so a `Handle`) is alive.\n+//!\n+//! This file has a single test on purpose: tests in one binary run in\n+//! parallel, and any concurrent fd activity would skew the count.\n+\n+use tokio::runtime::{Builder, Runtime, RuntimeMetrics};\n+\n+const ROUNDS: usize = 50;\n+\n+/// Extra fds tolerated for process-wide activity unrelated to the runtimes. A\n+/// leak of even one fd per runtime would exceed it.\n+const SLACK: usize = 2;\n+\n+fn open_fds() -> usize {\n+    std::fs::read_dir(\"/proc/self/fd\").unwrap().count()\n+}\n+\n+fn leaked_fds(build: fn() -> Runtime) -> usize {\n+    // Warm up process-wide state, such as the signal driver's global socket pair.\n+    drop(build());\n+\n+    let before = open_fds();\n+    let mut kept: Vec<RuntimeMetrics> = Vec::with_capacity(ROUNDS);\n+    for _ in 0..ROUNDS {\n+        let rt = build();\n+        rt.block_on(async {\n+            tokio::net::TcpListener::bind(\"127.0.0.1:0\").await.unwrap();\n+        });\n+        kept.push(rt.metrics());\n+        drop(rt);\n+    }\n+    let after = open_fds();\n+    drop(kept);\n+\n+    after.saturating_sub(before)\n+}\n+\n+#[test]\n+fn dropped_runtime_releases_fds_while_metrics_alive() {\n+    let current = leaked_fds(|| Builder::new_current_thread().enable_all().build().unwrap());\n+    let multi = leaked_fds(|| {\n+        Builder::new_multi_thread()\n+            .worker_threads(2)\n+            .enable_all()\n+            .build()\n+            .unwrap()\n+    });\n+\n+    assert!(\n+        current <= SLACK && multi <= SLACK,\n+        \"fds leaked over {ROUNDS} runtimes: current_thread {current}, multi_thread {multi}\"\n+    );\n+}\ndiff --git a/tokio/tests/rt_unstable_metrics.rs b/tokio/tests/rt_unstable_metrics.rs\nindex 0ab505f9..823d5b8d 100644\n--- a/tokio/tests/rt_unstable_metrics.rs\n+++ b/tokio/tests/rt_unstable_metrics.rs\n@@ -788,6 +788,23 @@ fn io_driver_fd_count() {\n     assert_eq!(metrics.io_driver_fd_registered_count(), 1);\n }\n \n+#[cfg(target_os = \"linux\")]\n+#[test]\n+fn io_driver_fd_count_after_drop() {\n+    for rt in [current_thread(), threaded()] {\n+        let metrics = rt.metrics();\n+\n+        let listener =\n+            rt.block_on(async { tokio::net::TcpListener::bind(\"127.0.0.1:0\").await.unwrap() });\n+        assert_eq!(metrics.io_driver_fd_registered_count(), 1);\n+\n+        drop(rt);\n+        drop(listener);\n+\n+        assert_eq!(metrics.io_driver_fd_deregistered_count(), 1);\n+    }\n+}\n+\n #[cfg(any(target_os = \"linux\", target_os = \"macos\"))]\n #[test]\n fn io_driver_ready_count() {\ndiff --git a/tokio/tests/signal_drop_rt.rs b/tokio/tests/signal_drop_rt.rs\nindex 3c909b23..3d277f30 100644\n--- a/tokio/tests/signal_drop_rt.rs\n+++ b/tokio/tests/signal_drop_rt.rs\n@@ -37,6 +37,30 @@ fn dropping_loops_does_not_cause_starvation() {\n     second_rt.block_on(second_signal.recv());\n }\n \n+#[test]\n+fn signal_errors_after_drop_current_thread() {\n+    signal_errors_after_drop(rt());\n+}\n+\n+#[test]\n+fn signal_errors_after_drop_multi_thread() {\n+    signal_errors_after_drop(\n+        tokio::runtime::Builder::new_multi_thread()\n+            .worker_threads(2)\n+            .enable_all()\n+            .build()\n+            .unwrap(),\n+    );\n+}\n+\n+fn signal_errors_after_drop(rt: Runtime) {\n+    let handle = rt.handle().clone();\n+    drop(rt);\n+\n+    let _enter = handle.enter();\n+    assert!(signal(SignalKind::user_defined1()).is_err());\n+}\n+\n fn rt() -> Runtime {\n     tokio::runtime::Builder::new_current_thread()\n         .enable_all()\n",
+  "reviewer_outputs": {
+    "architect": [],
+    "lang-rust": [
+      {
+        "anchor": "",
+        "category": "invariant",
+        "file": "tokio/src/runtime/io/driver.rs",
+        "line": 363,
+        "message": "After shutdown, deregister_source returns Ok without calling registry.deregister. On current_thread the mio Poll is not dropped until the Runtime itself is dropped (shutdown2 returns the core, which keeps core.driver). So the fd stays registered in the epoll/kqueue set with a token that points at a ScheduledIo which can now be freed when the Registration is dropped. This is sound only because nothing polls the Poll after shutdown, and that is a convention rather than something the types enforce. Any later poll or dispatch of that Poll would dereference freed memory. Making the invariant structural is safer: drop the driver in current_thread shutdown2 as well, which also closes the fds at shutdown as the PR intends.",
+        "reviewers": [
+          "lang-rust"
+        ],
+        "severity": "warning",
+        "suggestion": null
+      },
+      {
+        "anchor": "",
+        "category": "invariant",
+        "file": "tokio/src/runtime/scheduler/current_thread/mod.rs",
+        "line": 314,
+        "message": "shutdown2 calls driver.shutdown but keeps core.driver alive, so the mio Poll (epoll/kqueue fd) survives until the Runtime is dropped. This contradicts the PR's goal of releasing the fds at shutdown, and it is the reason the stale-registration concern above exists. Taking the driver here, after shutdown and before release_io, closes the Poll at shutdown too.",
+        "reviewers": [
+          "lang-rust"
+        ],
+        "severity": "suggestion",
+        "suggestion": "    if let Some(mut driver) = core.driver.take() {\n        driver.shutdown(&handle.driver);\n    }\n\n    handle.driver.release_io();"
+      },
+      {
+        "anchor": "",
+        "category": "panic",
+        "file": "tokio/src/runtime/scheduler/multi_thread/park.rs",
+        "line": 94,
+        "message": "park_timeout (and the same pattern in park at line 148) calls expect(\"driver missing\") in non-test code. The driver is taken only in Inner::shutdown, which runs after every worker has stopped parking (shutdown_core waits for all cores). So this is unreachable today, but a panic on a worker thread would be a hard failure if that ordering ever changes. Treating None as 'no driver, use the condvar' would degrade gracefully.",
+        "reviewers": [
+          "lang-rust"
+        ],
+        "severity": "suggestion",
+        "suggestion": "        if let Some(mut driver) = self.inner.shared.driver.try_lock() {\n            if let Some(driver) = driver.as_mut() {\n                self.inner.park_driver(driver, handle, Some(duration))\n            } else {\n                self.inner.park_condvar(Some(duration));\n                HadDriver::No\n            }\n        } else if !duration.is_zero() {"
+      },
+      {
+        "anchor": "",
+        "category": "behavior",
+        "file": "tokio/src/runtime/scheduler/multi_thread/park.rs",
+        "line": 323,
+        "message": "The else branch of Inner::shutdown used to skip silently when the lock was contended. It is now debug_assert!(false), so debug and test builds panic on contention. In release builds the driver is still not dropped and its fds stay open, which is exactly the leak this PR removes. The invariant (no core is parking once shutdown_core runs) makes contention unreachable, so the assert documents that. Consider keeping an explicit comment on the invariant, or returning early with a log instead of a debug-only panic.",
+        "reviewers": [
+          "lang-rust"
+        ],
+        "severity": "suggestion",
+        "suggestion": null
+      }
+    ],
+    "pragmatist": [
+      {
+        "anchor": "",
+        "category": "simplicity",
+        "file": "tokio/src/runtime/scheduler/multi_thread/park.rs",
+        "line": 421,
+        "message": "The `else { debug_assert!(false, ...) }` branch only fires in debug builds, and in release a locked driver silently skips the release, so the fd leak this PR fixes comes back unnoticed. It also conflicts with the PR's own 'not covered: shutdown_background with a worker that never exits' case. Either drop the branch or document why the lock can never be held here.",
+        "reviewers": [
+          "pragmatist"
+        ],
+        "severity": "suggestion",
+        "suggestion": "        }"
+      }
+    ],
+    "skeptic": [
+      {
+        "anchor": "",
+        "category": "error-handling",
+        "file": "tokio/src/runtime/scheduler/multi_thread/park.rs",
+        "line": 322,
+        "message": "If try_lock fails at shutdown, release builds silently skip both driver.shutdown and release_io, so the fds leak again and registrations are never shut down (tasks waiting on I/O would hang). Previously a failed try_lock also skipped driver.shutdown, so this is not a regression, but the new debug_assert only covers debug builds. Consider falling back to a blocking lock, which is safe since all cores have stopped parking.",
+        "reviewers": [
+          "skeptic"
+        ],
+        "severity": "suggestion",
+        "suggestion": "        } else {\n            debug_assert!(false, \"driver locked during shutdown\");\n        }"
+      },
+      {
+        "anchor": "",
+        "category": "tests",
+        "file": "tokio/tests/rt_shutdown_fds.rs",
+        "line": 59,
+        "message": "The test only runs on Linux and uses a combined threshold, so a leak of at most 2 fds across 50 runtimes would pass. It also does not cover the new behavior changes (signal()/ctrl_c() through a dropped multi_thread handle returning an error, register after shutdown returning the shutdown error). Tests for those would pin the documented behavior change.",
+        "reviewers": [
+          "skeptic"
+        ],
+        "severity": "suggestion",
+        "suggestion": null
+      }
+    ]
+  },
+  "aggregator": {
+    "dropped": [
+      {
+        "file": "tokio/src/runtime/io/driver.rs",
+        "line": 363,
+        "message": "Deregister after shutdown leaves the fd registered with a dangling token while the current_thread Poll is still alive.",
+        "reason": "duplicate",
+        "reviewers": [
+          "lang-rust"
+        ]
+      },
+      {
+        "file": "tokio/src/runtime/scheduler/multi_thread/park.rs",
+        "line": 421,
+        "message": "debug_assert!(false) branch silently skips release in release builds.",
+        "reason": "duplicate",
+        "reviewers": [
+          "pragmatist"
+        ]
+      },
+      {
+        "file": "tokio/src/runtime/scheduler/multi_thread/park.rs",
+        "line": 94,
+        "message": "expect(\"driver missing\") in park_timeout/park could panic a worker if shutdown ordering changes.",
+        "reason": "low-value",
+        "reviewers": [
+          "lang-rust"
+        ]
+      },
+      {
+        "file": "tokio/tests/rt_shutdown_fds.rs",
+        "line": 59,
+        "message": "Test threshold too loose and behavior changes (signal after drop) are untested.",
+        "reason": "not-verified",
+        "reviewers": [
+          "skeptic"
+        ]
+      }
+    ],
+    "findings": [
+      {
+        "category": "error-handling",
+        "file": "tokio/src/runtime/scheduler/multi_thread/park.rs",
+        "line": 323,
+        "message": "If `try_lock` fails in `Inner::shutdown`, release builds skip both `driver.shutdown` and `release_io`, so the driver's fds stay open (the leak this PR fixes) and registrations are not shut down, with no signal at all. `debug_assert!(false, ...)` only catches this in debug/test builds. Previously the contended case was also skipped silently, so this is not a regression. The invariant that no core is parking once shutdown runs makes it unreachable today, but the release-build behaviour should be stated explicitly. Either write the invariant down in a comment next to the branch, or make the fallback still call `handle.release_io()` (or retry the lock) so the resources are released even if the invariant is ever broken.",
+        "reviewers": [
+          "skeptic",
+          "lang-rust",
+          "pragmatist"
+        ],
+        "severity": "suggestion"
+      },
+      {
+        "category": "invariant",
+        "file": "tokio/src/runtime/scheduler/current_thread/mod.rs",
+        "line": 314,
+        "message": "`shutdown2` shuts the driver down but keeps it in `core.driver`, so on current_thread the mio `Poll` lives until the `Runtime` itself is dropped. Meanwhile, `deregister_source` after shutdown now returns `Ok` without calling `registry.deregister`, and `RegistrationSet::shutdown` has already released the set's `Arc`s. That means a source can stay in the epoll/kqueue set with a token pointing at a `ScheduledIo` that gets freed once its `Registration` drops. Today this is sound only because nothing polls the driver between `shutdown2` and the drop of the `Runtime`. That is a convention, not something the types enforce. Taking the driver out here, as multi_thread now does, would make the guarantee structural and close the `Poll` at shutdown too.",
+        "reviewers": [
+          "lang-rust"
+        ],
+        "severity": "suggestion",
+        "suggestion": "    if let Some(mut driver) = core.driver.take() {\n        driver.shutdown(&handle.driver);\n    }"
+      }
+    ]
+  },
+  "expected_posted": [
+    {
+      "file": "tokio/src/runtime/scheduler/current_thread/mod.rs",
+      "line": 314,
+      "category": "invariant",
+      "severity": "suggestion",
+      "inline": true
+    },
+    {
+      "file": "tokio/src/runtime/scheduler/multi_thread/park.rs",
+      "line": 323,
+      "category": "error-handling",
+      "severity": "suggestion",
+      "inline": true
+    }
+  ],
+  "expected_decision": "APPROVE",
+  "labels": [
+    {
+      "id": "367b183ed2c8",
+      "file": "tokio/src/runtime/scheduler/current_thread/mod.rs",
+      "line": 314,
+      "severity": "suggestion",
+      "category": "invariant",
+      "message": "`shutdown2` shuts the driver down but keeps it in `core.driver`, so on current_thread the mio `Poll` lives until the `Runtime` itself is dropped. Meanwhile, `deregister_source` after shutdown now returns `Ok` without calling `registry.deregister`, and `RegistrationSet::shutdown` has already released the set's `Arc`s. That means a source can stay in the epoll/kqueue set with a token pointing at a `ScheduledIo` that gets freed once its `Registration` drops. Today this is sound only because nothing polls the driver between `shutdown2` and the drop of the `Runtime`. That is a convention, not something the types enforce. Taking the driver out here, as multi_thread now does, would make the guarantee structural and close the `Poll` at shutdown too.",
+      "label": "not_expected"
+    },
+    {
+      "id": "993779283e53",
+      "file": "tokio/src/runtime/scheduler/multi_thread/park.rs",
+      "line": 323,
+      "severity": "suggestion",
+      "category": "error-handling",
+      "message": "If `try_lock` fails in `Inner::shutdown`, release builds skip both `driver.shutdown` and `release_io`, so the driver's fds stay open (the leak this PR fixes) and registrations are not shut down, with no signal at all. `debug_assert!(false, ...)` only catches this in debug/test builds. Previously the contended case was also skipped silently, so this is not a regression. The invariant that no core is parking once shutdown runs makes it unreachable today, but the release-build behaviour should be stated explicitly. Either write the invariant down in a comment next to the branch, or make the fallback still call `handle.release_io()` (or retry the lock) so the resources are released even if the invariant is ever broken.",
+      "label": "expected"
+    }
+  ],
+  "misses": [],
+  "signals": {
+    "tool_calls": 261,
+    "tool_errors": [
+      {
+        "agent": "agent-a1013e3ded04f4144",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-a1013e3ded04f4144",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-a439a690b2a99f846",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-a439a690b2a99f846",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-a4c5fe1e157d89e41",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-a8635c8ea6827c60c",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-a8635c8ea6827c60c",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-ac3c3353ac5fc5554",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-ac3c3353ac5fc5554",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-afb732e0c87591cec",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-afb732e0c87591cec",
+        "tool": "Read"
+      }
+    ],
+    "retries": 0,
+    "permission_denials": 0,
+    "agents": [
+      {
+        "name": "335086b7-4c1b-47b0-a6fe-bf5e117c1c9d",
+        "tool_calls": 36,
+        "tool_errors": 0,
+        "turns": 68,
+        "output_tokens": 22798
+      },
+      {
+        "name": "agent-a1013e3ded04f4144",
+        "tool_calls": 13,
+        "tool_errors": 2,
+        "turns": 19,
+        "output_tokens": 38244
+      },
+      {
+        "name": "agent-a12c157734a8304e4",
+        "tool_calls": 9,
+        "tool_errors": 0,
+        "turns": 10,
+        "output_tokens": 4387
+      },
+      {
+        "name": "agent-a1bebf08359b88168",
+        "tool_calls": 9,
+        "tool_errors": 0,
+        "turns": 10,
+        "output_tokens": 5535
+      },
+      {
+        "name": "agent-a30ed6b83ac38896f",
+        "tool_calls": 9,
+        "tool_errors": 0,
+        "turns": 10,
+        "output_tokens": 5349
+      },
+      {
+        "name": "agent-a439a690b2a99f846",
+        "tool_calls": 13,
+        "tool_errors": 2,
+        "turns": 16,
+        "output_tokens": 9083
+      },
+      {
+        "name": "agent-a4c5fe1e157d89e41",
+        "tool_calls": 43,
+        "tool_errors": 1,
+        "turns": 57,
+        "output_tokens": 138828
+      },
+      {
+        "name": "agent-a803a0ef88f27a40b",
+        "tool_calls": 19,
+        "tool_errors": 0,
+        "turns": 22,
+        "output_tokens": 16821
+      },
+      {
+        "name": "agent-a8635c8ea6827c60c",
+        "tool_calls": 17,
+        "tool_errors": 2,
+        "turns": 21,
+        "output_tokens": 12773
+      },
+      {
+        "name": "agent-a926a7d3755c5ebd9",
+        "tool_calls": 5,
+        "tool_errors": 0,
+        "turns": 6,
+        "output_tokens": 3975
+      },
+      {
+        "name": "agent-a95a78d5f9add53a7",
+        "tool_calls": 14,
+        "tool_errors": 0,
+        "turns": 17,
+        "output_tokens": 7548
+      },
+      {
+        "name": "agent-aab54b74aadd5d5b6",
+        "tool_calls": 11,
+        "tool_errors": 0,
+        "turns": 14,
+        "output_tokens": 5364
+      },
+      {
+        "name": "agent-ac3c3353ac5fc5554",
+        "tool_calls": 18,
+        "tool_errors": 2,
+        "turns": 23,
+        "output_tokens": 10855
+      },
+      {
+        "name": "agent-ad6286922b1135ad4",
+        "tool_calls": 9,
+        "tool_errors": 0,
+        "turns": 11,
+        "output_tokens": 3897
+      },
+      {
+        "name": "agent-ae58f2d5bfb7474cd",
+        "tool_calls": 5,
+        "tool_errors": 0,
+        "turns": 6,
+        "output_tokens": 3048
+      },
+      {
+        "name": "agent-afb732e0c87591cec",
+        "tool_calls": 31,
+        "tool_errors": 2,
+        "turns": 40,
+        "output_tokens": 79779
+      }
+    ],
+    "unreadable_lines": 0
+  },
+  "label_status": "confirmed",
+  "repo_private": false
+}

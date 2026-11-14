@@ -168,8 +168,14 @@ def test_load_snippets_reads_sorted_cases(tmp_path):
 def test_shipped_snippets_load_and_are_marked_calibrated():
     assert DEFAULT_SNIPPETS == REPO / "tests" / "snippets"
     snippets = {s["name"]: s for s in load_snippets(DEFAULT_SNIPPETS)}
-    assert set(snippets) == {"off-by-one", "clean-code", "weaker-access-override", "docs-only-api"}
-    assert all(s["calibrated"] is True for s in snippets.values())
+    assert set(snippets) == {"off-by-one", "clean-code", "weaker-access-override", "docs-only-api", "rust-shutdown-race"}
+    assert all(s["calibrated"] is True for n, s in snippets.items() if n != "rust-shutdown-race")
+    race = snippets["rust-shutdown-race"]
+    assert race["calibrated"] is False
+    assert [e["severity"] for e in race["expected"]] == ["critical"]
+    line = race["change"]["src/registry.rs"].splitlines()[race["expected"][0]["line"] - 1]
+    assert "pending_release.push" in line
+    assert race["must_not_report"] == []
     assert snippets["off-by-one"]["expected"] and snippets["clean-code"]["expected"] == []
     assert [e["severity"] for e in snippets["weaker-access-override"]["expected"]] == ["critical"]
     assert snippets["docs-only-api"]["expected"] == []

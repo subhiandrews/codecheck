@@ -1,0 +1,27 @@
+{
+  "name": "rust-shutdown-race",
+  "calibrated": false,
+  "base": {
+    "src/registry.rs": "use std::sync::Mutex;\n\nstruct Inner {\n    shut_down: bool,\n    pending_release: Vec<u64>,\n}\n\n/// Tracks registered handles and releases them when they are dropped or at shutdown.\npub struct Registry {\n    inner: Mutex<Inner>,\n}\n\nimpl Registry {\n    /// Creates an empty registry.\n    pub fn new() -> Self {\n        Registry {\n            inner: Mutex::new(Inner { shut_down: false, pending_release: Vec::new() }),\n        }\n    }\n\n    /// Marks the registry shut down and releases every queued handle.\n    pub fn shutdown(&self) {\n        let mut inner = self.inner.lock().unwrap();\n        inner.shut_down = true;\n        for id in inner.pending_release.drain(..) {\n            release(id);\n        }\n    }\n\n    /// Deregisters a handle; it is released at the next shutdown, or at once after one.\n    pub fn deregister(&self, id: u64) {\n        let mut inner = self.inner.lock().unwrap();\n        if inner.shut_down {\n            release(id);\n            return;\n        }\n        inner.pending_release.push(id);\n    }\n}\n\nfn release(id: u64) {\n    println!(\"released {id}\");\n}\n"
+  },
+  "change": {
+    "src/registry.rs": "use std::sync::Mutex;\n\nstruct Inner {\n    shut_down: bool,\n    pending_release: Vec<u64>,\n}\n\n/// Tracks registered handles and releases them when they are dropped or at shutdown.\npub struct Registry {\n    inner: Mutex<Inner>,\n}\n\nimpl Registry {\n    /// Creates an empty registry.\n    pub fn new() -> Self {\n        Registry {\n            inner: Mutex::new(Inner { shut_down: false, pending_release: Vec::new() }),\n        }\n    }\n\n    /// Marks the registry shut down and releases every queued handle.\n    pub fn shutdown(&self) {\n        let mut inner = self.inner.lock().unwrap();\n        inner.shut_down = true;\n        for id in inner.pending_release.drain(..) {\n            release(id);\n        }\n    }\n\n    /// Deregisters a handle; it is released at the next shutdown, or at once after one.\n    pub fn deregister(&self, id: u64) {\n        let mut inner = self.inner.lock().unwrap();\n        inner.pending_release.push(id);\n    }\n}\n\nfn release(id: u64) {\n    println!(\"released {id}\");\n}\n"
+  },
+  "expected": [
+    {
+      "file": "src/registry.rs",
+      "line": 33,
+      "category": [
+        "race",
+        "concurrency",
+        "leak",
+        "lifecycle",
+        "shutdown",
+        "correctness",
+        "logic"
+      ],
+      "severity": "critical"
+    }
+  ],
+  "must_not_report": []
+}

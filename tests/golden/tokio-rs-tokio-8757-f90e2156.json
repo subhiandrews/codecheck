@@ -1,0 +1,355 @@
+{
+  "version": 1,
+  "case_id": "tokio-rs-tokio-8757-f90e2156",
+  "repo": "tokio-rs/tokio",
+  "pr": 8757,
+  "head_sha": "f90e21565cd44aabad596a9a9a6b7ef7ff8d68cd",
+  "diff": "diff --git a/spellcheck.dic b/spellcheck.dic\nindex a8e893e4..06a3e789 100644\n--- a/spellcheck.dic\n+++ b/spellcheck.dic\n@@ -1,4 +1,4 @@\n-334\n+335\n &\n +\n 0o777\n@@ -233,6 +233,7 @@ ntasks\n ok\n oneshot\n opcode\n+opcodes\n os\n parker\n parsers\ndiff --git a/tokio/src/fs/file.rs b/tokio/src/fs/file.rs\nindex 41b28a8d..38335a5f 100644\n--- a/tokio/src/fs/file.rs\n+++ b/tokio/src/fs/file.rs\n@@ -1078,21 +1078,11 @@ impl Inner {\n             target_os = \"linux\",\n         ))]\n         {\n-            if let Ok(handle) = crate::runtime::Handle::try_current() {\n-                if let Some(driver_handle) = handle.inner.driver().io.as_ref() {\n-                    if driver_handle.is_uring_ready(io_uring::opcode::Read::CODE) {\n-                        // Fast path: uring already initialized and Read supported.\n-                        let fd: crate::io::uring::utils::ArcFd = std;\n-                        return Ok(spawn(Self::uring_read(fd, buf, max_buf_size)));\n-                    }\n+            use crate::runtime::io::uring_supports;\n \n-                    if !driver_handle.is_uring_probed() {\n-                        // Not yet probed: lazy init inside an async task so\n-                        // `File::from_std()` can still benefit from io-uring.\n-                        return Ok(spawn(Self::lazy_init_read(std, buf, max_buf_size)));\n-                    }\n-                }\n-                // No IO driver or probed but unsupported: fall through to spawn_blocking.\n+            if uring_supports(io_uring::opcode::Read::CODE) {\n+                let fd: crate::io::uring::utils::ArcFd = std;\n+                return Ok(spawn(Self::uring_read(fd, buf, max_buf_size)));\n             }\n         }\n \n@@ -1140,40 +1130,6 @@ impl Inner {\n         }\n     }\n \n-    /// Attempt lazy io-uring initialization, then read via uring or fall back\n-    /// to a blocking read. Covers the `File::from_std()` path where\n-    /// `check_and_init()` hasn't been called yet.\n-    #[cfg(all(\n-        not(test),\n-        tokio_unstable,\n-        feature = \"io-uring\",\n-        feature = \"rt\",\n-        feature = \"fs\",\n-        target_os = \"linux\",\n-    ))]\n-    async fn lazy_init_read(std: Arc<StdFile>, buf: Buf, max_buf_size: usize) -> (Operation, Buf) {\n-        if let Ok(handle) = crate::runtime::Handle::try_current() {\n-            if let Some(driver_handle) = handle.inner.driver().io.as_ref() {\n-                if driver_handle\n-                    .check_and_init(io_uring::opcode::Read::CODE)\n-                    .await\n-                    .unwrap_or_default()\n-                {\n-                    let fd: crate::io::uring::utils::ArcFd = std;\n-                    return Self::uring_read(fd, buf, max_buf_size).await;\n-                }\n-            }\n-        }\n-\n-        match Self::spawn_blocking_read(buf, std, max_buf_size).await {\n-            Ok(result) => result,\n-            Err(e) => (\n-                Operation::Read(Err(io::Error::other(e))),\n-                Buf::with_capacity(0),\n-            ),\n-        }\n-    }\n-\n     fn spawn_blocking_read(\n         buf: Buf,\n         std: Arc<StdFile>,\ndiff --git a/tokio/src/fs/open_options.rs b/tokio/src/fs/open_options.rs\nindex 23ebc023..4bb7438b 100644\n--- a/tokio/src/fs/open_options.rs\n+++ b/tokio/src/fs/open_options.rs\n@@ -532,15 +532,10 @@ impl OpenOptions {\n                 target_os = \"linux\"\n             ))]\n             Kind::Uring(opts) => {\n-                if let Ok(handle) = crate::runtime::Handle::try_current() {\n-                    if let Some(driver_handle) = handle.inner.driver().io.as_ref() {\n-                        if driver_handle\n-                            .check_and_init(io_uring::opcode::OpenAt::CODE)\n-                            .await?\n-                        {\n-                            return crate::io::uring::open::open(path, opts).await;\n-                        }\n-                    }\n+                use crate::runtime::io::uring_supports;\n+\n+                if uring_supports(io_uring::opcode::OpenAt::CODE) {\n+                    return crate::io::uring::open::open(path, opts).await;\n                 }\n \n                 let opts = opts.clone().into();\ndiff --git a/tokio/src/fs/read.rs b/tokio/src/fs/read.rs\nindex 6a9dd17d..3cd05c45 100644\n--- a/tokio/src/fs/read.rs\n+++ b/tokio/src/fs/read.rs\n@@ -74,16 +74,10 @@ pub async fn read(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {\n     ))]\n     {\n         use crate::fs::read_uring;\n+        use crate::runtime::io::uring_supports;\n \n-        if let Ok(handle) = crate::runtime::Handle::try_current() {\n-            if let Some(driver_handle) = handle.inner.driver().io.as_ref() {\n-                if driver_handle\n-                    .check_and_init(io_uring::opcode::Read::CODE)\n-                    .await?\n-                {\n-                    return read_uring(path).await;\n-                }\n-            }\n+        if uring_supports(io_uring::opcode::Read::CODE) {\n+            return read_uring(path).await;\n         }\n     }\n \ndiff --git a/tokio/src/fs/rename.rs b/tokio/src/fs/rename.rs\nindex f4ce82c8..dc520b95 100644\n--- a/tokio/src/fs/rename.rs\n+++ b/tokio/src/fs/rename.rs\n@@ -23,18 +23,12 @@ pub async fn rename(from: impl AsRef<Path>, to: impl AsRef<Path>) -> io::Result<\n     {\n         use crate::io::uring::rename::Rename;\n         use crate::runtime::driver::op::Op;\n+        use crate::runtime::io::uring_supports;\n \n         type RenameOp = Op<Rename>;\n \n-        if let Ok(handle) = crate::runtime::Handle::try_current() {\n-            if let Some(driver_handle) = handle.inner.driver().io.as_ref() {\n-                if driver_handle\n-                    .check_and_init(io_uring::opcode::RenameAt::CODE)\n-                    .await?\n-                {\n-                    return RenameOp::rename(from, to)?.await;\n-                }\n-            }\n+        if uring_supports(io_uring::opcode::RenameAt::CODE) {\n+            return RenameOp::rename(from, to)?.await;\n         }\n     }\n \ndiff --git a/tokio/src/fs/try_exists.rs b/tokio/src/fs/try_exists.rs\nindex 331f84a1..d6c133a5 100644\n--- a/tokio/src/fs/try_exists.rs\n+++ b/tokio/src/fs/try_exists.rs\n@@ -42,15 +42,10 @@ pub async fn try_exists(path: impl AsRef<Path>) -> io::Result<bool> {\n         any(target_env = \"gnu\", target_os = \"android\")\n     ))]\n     {\n-        if let Ok(handle) = crate::runtime::Handle::try_current() {\n-            if let Some(driver_handle) = handle.inner.driver().io.as_ref() {\n-                if driver_handle\n-                    .check_and_init(io_uring::opcode::Statx::CODE)\n-                    .await?\n-                {\n-                    return try_exists_uring(path).await;\n-                }\n-            }\n+        use crate::runtime::io::uring_supports;\n+\n+        if uring_supports(io_uring::opcode::Statx::CODE) {\n+            return try_exists_uring(path).await;\n         }\n     }\n \ndiff --git a/tokio/src/fs/write.rs b/tokio/src/fs/write.rs\nindex 7e154eb7..87f4b0ce 100644\n--- a/tokio/src/fs/write.rs\n+++ b/tokio/src/fs/write.rs\n@@ -35,15 +35,10 @@ pub async fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> io::Re\n         target_os = \"linux\"\n     ))]\n     {\n-        if let Ok(handle) = crate::runtime::Handle::try_current() {\n-            if let Some(driver_handle) = handle.inner.driver().io.as_ref() {\n-                if driver_handle\n-                    .check_and_init(io_uring::opcode::Write::CODE)\n-                    .await?\n-                {\n-                    return write_uring(path, contents).await;\n-                }\n-            }\n+        use crate::runtime::io::uring_supports;\n+\n+        if uring_supports(io_uring::opcode::Write::CODE) {\n+            return write_uring(path, contents).await;\n         }\n     }\n \ndiff --git a/tokio/src/runtime/builder.rs b/tokio/src/runtime/builder.rs\nindex eca5ae6b..e041f688 100644\n--- a/tokio/src/runtime/builder.rs\n+++ b/tokio/src/runtime/builder.rs\n@@ -64,6 +64,9 @@ pub struct Builder {\n     nevents: usize,\n     nevents_busy: Option<usize>,\n \n+    /// Whether or not to set up io_uring in the I/O driver\n+    enable_io_uring: bool,\n+\n     /// Whether or not to enable the time driver\n     enable_time: bool,\n \n@@ -311,6 +314,9 @@ impl Builder {\n             nevents: 1024,\n             nevents_busy: None,\n \n+            // io_uring defaults to \"off\"\n+            enable_io_uring: false,\n+\n             // Time defaults to \"off\"\n             enable_time: false,\n \n@@ -1199,6 +1205,7 @@ impl Builder {\n                 Kind::MultiThread => false,\n             },\n             enable_io: self.enable_io,\n+            enable_io_uring: self.enable_io_uring,\n             enable_time: self.enable_time,\n             start_paused: self.start_paused,\n             nevents: self.nevents,\n@@ -1959,9 +1966,13 @@ cfg_io_uring! {\n     impl Builder {\n         /// Enables the tokio's io_uring driver.\n         ///\n-        /// Doing this enables using io_uring operations on the runtime.\n+        /// This also enables the I/O driver.\n         ///\n-        /// # Examples\n+        /// io_uring is set up when the runtime is built. If it can't be set\n+        /// up for any reason the runtime is still built, and file system\n+        /// operations fall back to the blocking thread pool.\n+        ///\n+        /// # Example\n         ///\n         /// ```\n         /// use tokio::runtime;\n@@ -1973,8 +1984,8 @@ cfg_io_uring! {\n         /// ```\n         #[cfg_attr(docsrs, doc(cfg(feature = \"io-uring\")))]\n         pub fn enable_io_uring(&mut self) -> &mut Self {\n-            // Currently, the uring flag is equivalent to `enable_io`.\n             self.enable_io = true;\n+            self.enable_io_uring = true;\n             self\n         }\n     }\ndiff --git a/tokio/src/runtime/driver.rs b/tokio/src/runtime/driver.rs\nindex 82fd513d..ee84d854 100644\n--- a/tokio/src/runtime/driver.rs\n+++ b/tokio/src/runtime/driver.rs\n@@ -36,6 +36,7 @@ pub(crate) struct Handle {\n \n pub(crate) struct Cfg {\n     pub(crate) enable_io: bool,\n+    pub(crate) enable_io_uring: bool,\n     pub(crate) enable_time: bool,\n     pub(crate) enable_pause_time: bool,\n     pub(crate) start_paused: bool,\n@@ -46,8 +47,12 @@ pub(crate) struct Cfg {\n \n impl Driver {\n     pub(crate) fn new(cfg: Cfg) -> io::Result<(Self, Handle)> {\n-        let (io_stack, io_handle, signal_handle) =\n-            create_io_stack(cfg.enable_io, cfg.nevents, cfg.nevents_busy)?;\n+        let (io_stack, io_handle, signal_handle) = create_io_stack(\n+            cfg.enable_io,\n+            cfg.enable_io_uring,\n+            cfg.nevents,\n+            cfg.nevents_busy,\n+        )?;\n \n         let clock = create_clock(cfg.enable_pause_time, cfg.start_paused);\n \n@@ -160,12 +165,18 @@ cfg_io_driver! {\n         Disabled(UnparkThread),\n     }\n \n-    fn create_io_stack(enabled: bool, nevents: usize, nevents_busy: Option<usize>) -> io::Result<(IoStack, IoHandle, SignalHandle)> {\n+    fn create_io_stack(enable_io: bool, enable_io_uring: bool, nevents: usize, nevents_busy: Option<usize>) -> io::Result<(IoStack, IoHandle, SignalHandle)> {\n         #[cfg(loom)]\n-        assert!(!enabled);\n+        assert!(!enable_io);\n \n-        let ret = if enabled {\n-            let (io_driver, io_handle) = crate::runtime::io::Driver::new(nevents, nevents_busy)?;\n+        let ret = if enable_io {\n+            let (io_driver, mut io_handle) = crate::runtime::io::Driver::new(nevents, nevents_busy)?;\n+\n+            // A failed io_uring setup leaves io_uring disabled,\n+            // file system operations fall back to the blocking pool.\n+            if enable_io_uring {\n+                io_handle.setup_uring();\n+            }\n \n             let (signal_driver, signal_handle) = create_signal_driver(io_driver, &io_handle)?;\n             let process_driver = create_process_driver(signal_driver);\n@@ -226,7 +237,7 @@ cfg_not_io_driver! {\n     #[derive(Debug)]\n     pub(crate) struct IoStack(ParkThread);\n \n-    fn create_io_stack(_enabled: bool, _nevents: usize, _nevents_busy: Option<usize>) -> io::Result<(IoStack, IoHandle, SignalHandle)> {\n+    fn create_io_stack(_enable_io: bool, _enable_io_uring: bool, _nevents: usize, _nevents_busy: Option<usize>) -> io::Result<(IoStack, IoHandle, SignalHandle)> {\n         let park_thread = ParkThread::new();\n         let unpark_thread = park_thread.unpark();\n         Ok((IoStack(park_thread), unpark_thread, Default::default()))\ndiff --git a/tokio/src/runtime/driver/op.rs b/tokio/src/runtime/driver/op.rs\nindex 679f535f..0d1db48f 100644\n--- a/tokio/src/runtime/driver/op.rs\n+++ b/tokio/src/runtime/driver/op.rs\n@@ -91,6 +91,9 @@ pub(crate) struct Op<T: Cancellable> {\n }\n \n impl<T: Cancellable> Op<T> {\n+    /// Callers must check [`crate::runtime::io::uring_supports`] for the entry's\n+    /// opcode first, and fall back to a blocking implementation if it returns `false`.\n+    ///\n     /// # Safety\n     ///\n     /// Callers must ensure that parameters of the entry (such as buffer) are valid and will\ndiff --git a/tokio/src/runtime/io/driver.rs b/tokio/src/runtime/io/driver.rs\nindex d5ab7000..8bf4cf98 100644\n--- a/tokio/src/runtime/io/driver.rs\n+++ b/tokio/src/runtime/io/driver.rs\n@@ -5,8 +5,7 @@ cfg_signal_internal_and_unix! {\n cfg_io_uring! {\n     mod uring;\n     use uring::UringContext;\n-    pub(crate) use uring::RegisterResult;\n-    use crate::sync::OnceCell;\n+    pub(crate) use uring::{uring_supports, RegisterResult};\n }\n \n use crate::io::interest::Interest;\n@@ -72,7 +71,9 @@ pub(crate) struct Handle {\n         feature = \"fs\",\n         target_os = \"linux\",\n     ))]\n-    pub(crate) uring_probe: OnceCell<Option<io_uring::Probe>>,\n+    /// Opcodes supported by the kernel, or `None` if io_uring is not enabled\n+    /// or unavailable. Set by `Handle::setup_uring`.\n+    pub(crate) uring_probe: Option<io_uring::Probe>,\n }\n \n #[derive(Debug)]\n@@ -156,7 +157,7 @@ impl Driver {\n                 feature = \"fs\",\n                 target_os = \"linux\",\n             ))]\n-            uring_probe: OnceCell::new(),\n+            uring_probe: None,\n         };\n \n         Ok((driver, handle))\n@@ -336,6 +337,28 @@ impl Handle {\n         Ok(())\n     }\n \n+    /// Sets up io_uring for this driver and stores the context and the\n+    /// opcodes supported by the kernel.\n+    ///\n+    /// Called once, right after the driver is created, when the runtime is\n+    /// built with `enable_io_uring`. If io_uring can't be set up for\n+    /// any reason, it stays disabled, and file system operations fall back to\n+    /// the blocking thread pool.\n+    pub(crate) fn setup_uring(&mut self) {\n+        #[cfg(all(\n+            tokio_unstable,\n+            feature = \"io-uring\",\n+            feature = \"rt\",\n+            feature = \"fs\",\n+            target_os = \"linux\",\n+        ))]\n+        {\n+            let (context, probe) = UringContext::setup(&self.registry);\n+            self.uring_context = Mutex::new(context);\n+            self.uring_probe = probe;\n+        }\n+    }\n+\n     fn release_pending_registrations(&self) {\n         if self.registrations.needs_release() {\n             self.registrations.release(&mut self.synced.lock());\ndiff --git a/tokio/src/runtime/io/driver/uring.rs b/tokio/src/runtime/io/driver/uring.rs\nindex 7849cc66..9e7602a3 100644\n--- a/tokio/src/runtime/io/driver/uring.rs\n+++ b/tokio/src/runtime/io/driver/uring.rs\n@@ -25,6 +25,24 @@ fn register_probe(uring: &IoUring, probe: &mut Probe) -> io::Result<()> {\n     }\n }\n \n+/// Creates the ring, probes the opcodes supported by the kernel, and registers\n+/// the ring's file descriptor so completions wake the driver.\n+///\n+/// On error, the ring is dropped, so nothing is left half set up.\n+fn try_setup(registry: &mio::Registry) -> io::Result<(IoUring, Probe)> {\n+    let uring = IoUring::new(DEFAULT_RING_SIZE)?;\n+    let mut probe = Probe::new();\n+    register_probe(&uring, &mut probe)?;\n+\n+    let fd = uring.as_raw_fd();\n+    registry.register(\n+        &mut SourceFd(&fd),\n+        TOKEN_WAKEUP,\n+        Interest::READABLE.to_mio(),\n+    )?;\n+    Ok((uring, probe))\n+}\n+\n /// Outcome of registering an op with the io_uring.\n pub(crate) enum RegisterResult {\n     /// In-flight at this slab index.\n@@ -40,7 +58,7 @@ pub(crate) enum RegisterResult {\n \n pub(crate) struct UringContext {\n     pub(crate) uring: Option<io_uring::IoUring>,\n-    pub(crate) ops: slab::Slab<Lifecycle>,\n+    pub(crate) ops: Slab<Lifecycle>,\n }\n \n impl UringContext {\n@@ -51,6 +69,25 @@ impl UringContext {\n         }\n     }\n \n+    /// Sets up io_uring for an IO driver, returning the context and\n+    /// the opcodes supported by the kernel.\n+    ///\n+    /// If io_uring can't be set up for any reason,\n+    /// this returns an empty context and no probe, and file\n+    /// system operations fall back to the blocking thread pool.\n+    pub(crate) fn setup(registry: &mio::Registry) -> (Self, Option<Probe>) {\n+        match try_setup(registry) {\n+            Ok((uring, probe)) => (\n+                Self {\n+                    uring: Some(uring),\n+                    ops: Slab::new(),\n+                },\n+                Some(probe),\n+            ),\n+            Err(_) => (Self::new(), None),\n+        }\n+    }\n+\n     pub(crate) fn ring(&self) -> &io_uring::IoUring {\n         self.uring.as_ref().expect(\"io_uring not initialized\")\n     }\n@@ -190,102 +227,45 @@ impl Drop for UringContext {\n     }\n }\n \n+/// Returns `true` if the current runtime has io_uring set up and `opcode` is\n+/// supported by the kernel.\n+///\n+/// Returns `false` if there is no current runtime, the runtime has no IO\n+/// driver, or io_uring or opcode is unsupported. In that case the caller\n+/// should fall back to the blocking implementation.\n+pub(crate) fn uring_supports(opcode: u8) -> bool {\n+    crate::runtime::Handle::try_current().is_ok_and(|handle| {\n+        handle\n+            .inner\n+            .driver()\n+            .io\n+            .as_ref()\n+            .is_some_and(|io| io.is_uring_ready(opcode))\n+    })\n+}\n+\n impl Handle {\n     pub(crate) fn get_uring(&self) -> &Mutex<UringContext> {\n         &self.uring_context\n     }\n \n-    /// Returns `true` if io_uring has already been initialized and the given\n-    /// opcode is supported. Returns `false` if io_uring hasn't been\n-    /// initialized yet or is unsupported. Unlike `check_and_init`, this\n-    /// doesn't attempt initialization.\n-    #[cfg_attr(test, allow(dead_code))]\n+    /// Returns `true` if io_uring is set up and the given opcode is supported.\n     pub(crate) fn is_uring_ready(&self, opcode: u8) -> bool {\n         self.uring_probe\n-            .get()\n-            .and_then(|opt| opt.as_ref())\n-            .is_some_and(|probe| probe.is_supported(opcode))\n-    }\n-\n-    /// Returns `true` if the io_uring probe has already been attempted\n-    /// (regardless of whether io_uring is supported). Returns `false` if\n-    /// no probe has been attempted yet.\n-    #[cfg_attr(test, allow(dead_code))]\n-    pub(crate) fn is_uring_probed(&self) -> bool {\n-        self.uring_probe.get().is_some()\n-    }\n-\n-    /// Check if the io_uring context is initialized. If not, it will try to initialize it.\n-    /// Then, check if the provided opcode is supported.\n-    ///\n-    /// If both the context initialization succeeds and the opcode is supported,\n-    /// this returns `Ok(true)`.\n-    /// If either io_uring is unsupported or the opcode is unsupported,\n-    /// this returns `Ok(false)`.\n-    /// An error is returned if an io_uring syscall returns an unexpected error value.\n-    ///\n-    /// TODO: This would like to be a synchronous function,\n-    /// but we require `OnceLock::get_or_try_init`.\n-    /// <https://github.com/rust-lang/rust/issues/109737>\n-    pub(crate) async fn check_and_init(&self, opcode: u8) -> io::Result<bool> {\n-        let probe = self\n-            .uring_probe\n-            .get_or_try_init(|| async {\n-                let mut probe = Probe::new();\n-                match self.try_init(&mut probe) {\n-                    Ok(()) => Ok(Some(probe)),\n-                    // If the system doesn't support io_uring, we set the probe to `None`.\n-                    Err(e) if e.raw_os_error() == Some(libc::ENOSYS) => Ok(None),\n-                    // If we get EPERM, io-uring syscalls may be blocked (for example, by seccomp).\n-                    // In this case, we try to fall back to spawn_blocking for this and future operations.\n-                    // See also: https://github.com/tokio-rs/tokio/issues/7691\n-                    Err(e) if e.raw_os_error() == Some(libc::EPERM) => Ok(None),\n-                    // For other system errors, we just return it.\n-                    Err(e) => Err(e),\n-                }\n-            })\n-            .await?;\n-\n-        Ok(probe\n             .as_ref()\n-            .is_some_and(|probe| probe.is_supported(opcode)))\n-    }\n-\n-    /// Initialize the io_uring context if it hasn't been initialized yet.\n-    ///\n-    /// The ring is stored only after the reactor accepts its fd. A failure\n-    /// there drops the ring, so the following attempt can create another one.\n-    /// An existing ring stays stored, and this call fills `probe` from it.\n-    fn try_init(&self, probe: &mut Probe) -> io::Result<()> {\n-        let mut guard = self.get_uring().lock();\n-        if let Some(uring) = guard.uring.as_ref() {\n-            // The stored ring is already registered. Fill this probe from it.\n-            return register_probe(uring, probe);\n-        }\n-\n-        let uring = IoUring::new(DEFAULT_RING_SIZE)?;\n-        register_probe(&uring, probe)?;\n-\n-        let fd = uring.as_raw_fd();\n-        let mut source = SourceFd(&fd);\n-        self.registry\n-            .register(&mut source, TOKEN_WAKEUP, Interest::READABLE.to_mio())?;\n-        guard.uring = Some(uring);\n-        Ok(())\n+            .is_some_and(|probe| probe.is_supported(opcode))\n     }\n \n     /// Register an operation with the io_uring.\n     ///\n-    /// If this is the first io_uring operation, it will also initialize the io_uring context.\n-    /// If io_uring isn't supported, this function returns an `ENOSYS` error, so the caller can\n-    /// perform custom handling, such as falling back to an alternative mechanism.\n+    /// Callers must check `uring_supports` for the entry's opcode first.\n     ///\n     /// # Safety\n     ///\n     /// Callers must ensure that parameters of the entry (such as buffer) are valid and will\n     /// be valid for the entire duration of the operation, otherwise it may cause memory problems.\n     pub(crate) unsafe fn register_op(&self, entry: Entry, waker: Waker) -> RegisterResult {\n-        assert!(self.uring_probe.initialized());\n+        assert!(self.uring_probe.is_some());\n \n         // Uring is initialized.\n \ndiff --git a/tokio/src/runtime/io/driver/uring/tests.rs b/tokio/src/runtime/io/driver/uring/tests.rs\nindex f16bc313..ba5bc8bd 100644\n--- a/tokio/src/runtime/io/driver/uring/tests.rs\n+++ b/tokio/src/runtime/io/driver/uring/tests.rs\n@@ -1,6 +1,7 @@\n use super::super::{Driver, Handle};\n-use super::RegisterResult;\n+use super::{RegisterResult, UringContext};\n use crate::runtime::driver::op::Lifecycle;\n+use crate::runtime::Builder;\n \n use io_uring::{opcode, Probe};\n use std::io;\n@@ -9,20 +10,25 @@ use std::os::fd::AsRawFd;\n // Builds a driver whose io_uring context is stored and registered, or returns\n // `None` when io_uring is unavailable on the host.\n fn ready_handle() -> Option<(Driver, Handle)> {\n-    let (driver, handle) = Driver::new(1024, None).ok()?;\n-\n-    let mut probe = Probe::new();\n-    handle.try_init(&mut probe).ok()?;\n-    handle.get_uring().lock().uring.as_ref()?;\n-    handle.uring_probe.set(Some(probe)).unwrap();\n-\n-    Some((driver, handle))\n+    let (driver, mut handle) = Driver::new(1024, None).ok()?;\n+    handle.setup_uring();\n+    handle.uring_probe.is_some().then_some((driver, handle))\n }\n \n fn unsupported_uring(err: &io::Error) -> bool {\n     matches!(err.raw_os_error(), Some(libc::ENOSYS) | Some(libc::EPERM))\n }\n \n+// Returns `true` if this host can set up io_uring and\n+// supports the `Read` opcode.\n+fn host_supports_uring_read() -> bool {\n+    let Ok(uring) = io_uring::IoUring::new(super::DEFAULT_RING_SIZE) else {\n+        return false;\n+    };\n+    let mut probe = Probe::new();\n+    super::register_probe(&uring, &mut probe).is_ok() && probe.is_supported(opcode::Read::CODE)\n+}\n+\n // Makes the next submission fail with a non-`EBUSY` error by pointing the ring's\n // file descriptor at `/dev/null`, then restores it so the driver can shut down.\n struct BrokenRing {\n@@ -54,7 +60,7 @@ impl Drop for BrokenRing {\n }\n \n // Points the reactor registration fd at `/dev/null` for the duration of a\n-// `try_init`, then puts the original epoll fd back.\n+// `try_setup`, then puts the original epoll fd back.\n struct BrokenRegistry {\n     ep: i32,\n     saved: i32,\n@@ -83,45 +89,38 @@ impl Drop for BrokenRegistry {\n     }\n }\n \n-// A failed reactor registration must not leave the ring stored. The next\n-// `try_init` would otherwise see a stored ring and skip registration.\n-// A later call fills a new probe from that ring and does not replace it.\n+// A failed reactor registration must leave io_uring disabled: `setup` returns\n+// a context without a ring and no probe, so nothing half set up is stored.\n #[test]\n #[cfg_attr(miri, ignore)]\n fn register_failure_does_not_store_the_ring() {\n-    let (_driver, handle) = Driver::new(1024, None).unwrap();\n+    let (_driver, mut handle) = Driver::new(1024, None).unwrap();\n     match io_uring::IoUring::new(super::DEFAULT_RING_SIZE) {\n         Ok(_) => {}\n         Err(err) if unsupported_uring(&err) => return,\n         Err(err) => panic!(\"unexpected setup error: {err}\"),\n     }\n \n-    {\n-        let _broken = BrokenRegistry::new(&handle);\n-        let mut probe = Probe::new();\n-        let err = handle\n-            .try_init(&mut probe)\n-            .expect_err(\"registration against /dev/null\");\n-        assert_ne!(err.raw_os_error(), Some(libc::ENOSYS));\n-        assert!(\n-            handle.get_uring().lock().uring.is_none(),\n-            \"failed registration stored the ring\"\n-        );\n-    }\n+    let _broken = BrokenRegistry::new(&handle);\n \n-    let mut probe = Probe::new();\n-    handle\n-        .try_init(&mut probe)\n-        .expect(\"retry after a registration failure\");\n-    let fd = handle.get_uring().lock().ring().as_raw_fd();\n+    let Err(err) = super::try_setup(&handle.registry) else {\n+        panic!(\"registration against /dev/null should fail\");\n+    };\n+    assert_ne!(err.raw_os_error(), Some(libc::ENOSYS));\n \n-    let mut probe = Probe::new();\n-    handle.try_init(&mut probe).expect(\"existing ring\");\n+    let (ctx, probe) = UringContext::setup(&handle.registry);\n+    assert!(ctx.uring.is_none(), \"failed registration stored the ring\");\n+    assert!(probe.is_none(), \"failed registration returned a probe\");\n+\n+    handle.setup_uring();\n+    assert!(\n+        handle.get_uring().lock().uring.is_none(),\n+        \"setup_uring stored a ring after a failed registration\"\n+    );\n     assert!(\n-        probe.is_supported(opcode::Nop::CODE),\n-        \"stored ring did not fill the probe\"\n+        handle.uring_probe.is_none(),\n+        \"setup_uring stored a probe after a failed registration\"\n     );\n-    assert_eq!(handle.get_uring().lock().ring().as_raw_fd(), fd);\n }\n \n // Once an entry is pushed onto the submission queue the kernel may already own\n@@ -152,3 +151,53 @@ fn register_op_keeps_entry_on_submit_failure() {\n \n     drop(broken);\n }\n+\n+// `setup_uring` sets up the ring and probe before any operation is submitted.\n+#[test]\n+#[cfg_attr(miri, ignore)]\n+fn driver_with_uring_sets_up_ring() {\n+    let Some((_driver, handle)) = ready_handle() else {\n+        return;\n+    };\n+\n+    assert!(handle.get_uring().lock().uring.is_some());\n+    assert!(handle.is_uring_ready(opcode::Read::CODE));\n+}\n+\n+// Without `setup_uring`, the driver doesn't create a ring.\n+#[test]\n+#[cfg_attr(miri, ignore)]\n+fn driver_without_uring_has_no_ring() {\n+    let (_driver, handle) = Driver::new(1024, None).unwrap();\n+\n+    assert!(handle.uring_probe.is_none());\n+    assert!(handle.get_uring().lock().uring.is_none());\n+    assert!(!handle.is_uring_ready(opcode::Read::CODE));\n+}\n+\n+// A runtime built with only `enable_io` doesn't set up io_uring.\n+#[test]\n+#[cfg_attr(miri, ignore)]\n+fn runtime_with_enable_io_has_no_uring() {\n+    let rt = Builder::new_current_thread().enable_io().build().unwrap();\n+\n+    rt.block_on(async {\n+        assert!(!super::uring_supports(opcode::Read::CODE));\n+    });\n+}\n+\n+// A runtime built with `enable_io_uring` uses io_uring when the host\n+// supports it, and falls back otherwise.\n+#[test]\n+#[cfg_attr(miri, ignore)]\n+fn runtime_with_enable_io_uring_matches_host_support() {\n+    let expected = host_supports_uring_read();\n+    let rt = Builder::new_current_thread()\n+        .enable_io_uring()\n+        .build()\n+        .unwrap();\n+\n+    rt.block_on(async {\n+        assert_eq!(super::uring_supports(opcode::Read::CODE), expected);\n+    });\n+}\ndiff --git a/tokio/src/runtime/io/mod.rs b/tokio/src/runtime/io/mod.rs\nindex 08ca4118..8e66280a 100644\n--- a/tokio/src/runtime/io/mod.rs\n+++ b/tokio/src/runtime/io/mod.rs\n@@ -6,7 +6,7 @@ mod driver;\n use driver::{Direction, Tick};\n pub(crate) use driver::{Driver, Handle, ReadyEvent};\n cfg_io_uring! {\n-    pub(crate) use driver::RegisterResult;\n+    pub(crate) use driver::{uring_supports, RegisterResult};\n }\n \n mod registration;\n",
+  "reviewer_outputs": {
+    "architect": [
+      {
+        "anchor": "",
+        "category": "error-handling",
+        "file": "tokio/src/runtime/io/driver/uring.rs",
+        "line": 58,
+        "message": "setup() discards every error from try_setup (`Err(_)`). The old code fell back only on ENOSYS/EPERM and surfaced other errors (e.g. ENOMEM, EMFILE, memlock limits). Now those failures silently degrade to spawn_blocking with no signal to the user. The behavior is documented on enable_io_uring, but consider limiting the swallow to ENOSYS/EPERM and returning other errors from build(), or at least noting the behavior change in the PR.",
+        "reviewers": [
+          "architect"
+        ],
+        "severity": "suggestion",
+        "suggestion": null
+      }
+    ],
+    "lang-rust": [
+      {
+        "anchor": "",
+        "category": "error-handling",
+        "file": "tokio/src/runtime/io/driver/uring.rs",
+        "line": 87,
+        "message": "UringContext::setup maps every setup error to `None` with `Err(_)`. Before this PR, check_and_init only collapsed ENOSYS and EPERM and returned other errors (ENOMEM, EMFILE, registration failures) to the fs call. Those unexpected failures now fall back to spawn_blocking with no error, log, or metric, so a misconfigured host looks identical to an unsupported kernel. The doc comment states the fallback, so this is a deliberate trade-off, but it removes the only signal a user has when io_uring silently stops being used. Consider at least keeping ENOSYS/EPERM as the quiet path and recording other errors somewhere observable.",
+        "reviewers": [
+          "lang-rust"
+        ],
+        "severity": "suggestion",
+        "suggestion": null
+      },
+      {
+        "anchor": "",
+        "category": "behavior",
+        "file": "tokio/src/runtime/builder.rs",
+        "line": 419,
+        "message": "`enable_all()` calls `enable_io_uring()` under the io-uring cfg. That now sets `enable_io_uring = true`, so every runtime built with `enable_all()` on a build with this feature eagerly creates a 256-entry io_uring ring and registers its fd with the reactor at build time, even if the runtime never performs an fs operation. Before this PR the same call only enabled the I/O driver, and the ring was created lazily. The PR description does not mention this consequence for enable_all users. Confirm this eager allocation is intended for the default builder path, or gate it separately.",
+        "reviewers": [
+          "lang-rust"
+        ],
+        "severity": "suggestion",
+        "suggestion": null
+      },
+      {
+        "anchor": "",
+        "category": "test",
+        "file": "tokio/src/runtime/io/driver/uring/tests.rs",
+        "line": 158,
+        "message": "`driver_with_uring_sets_up_ring` (and the other ready_handle-based tests) return early when io_uring is unavailable, so on hosts that block io_uring (seccomp, io_uring_disabled sysctl) the test passes without asserting anything. This matches the existing pattern in `register_op_keeps_entry_on_submit_failure`, so it is not a regression, but the new test adds no coverage on those hosts. Acceptable as-is because the other tests skip the same way.",
+        "reviewers": [
+          "lang-rust"
+        ],
+        "severity": "suggestion",
+        "suggestion": null
+      }
+    ],
+    "pragmatist": [
+      {
+        "anchor": "",
+        "category": "behavior",
+        "file": "tokio/src/runtime/io/driver/uring.rs",
+        "line": 58,
+        "message": "Every setup error is now swallowed (`Err(_)`). Before, only ENOSYS and EPERM fell back and other errors, such as EMFILE or ENOMEM, reached the caller. Now a user who asked for io_uring and hit a resource limit gets silent blocking-pool fallback with no way to find out. The docs do state the fallback. Consider limiting the fallback to the previous ENOSYS/EPERM cases and returning other errors from `build()`, since `build()` can now fail anyway. Otherwise, say in the PR that this change is intentional.",
+        "reviewers": [
+          "pragmatist"
+        ],
+        "severity": "suggestion",
+        "suggestion": "            Err(_) => (Self::new(), None),"
+      }
+    ],
+    "skeptic": [
+      {
+        "anchor": "",
+        "category": "error-handling",
+        "file": "tokio/src/runtime/io/driver/uring.rs",
+        "line": 58,
+        "message": "setup() discards every error with `Err(_)`. The old code fell back only for ENOSYS and EPERM and returned other errors (ENOMEM, EMFILE, a failed mio register) to the caller. Those failures are now silent. A user who opted in with enable_io_uring() gets blocking-pool fallback with no signal, and a resource problem looks the same as a kernel without io_uring. Consider falling back only for ENOSYS and EPERM and propagating the rest from build(), or at least document the choice and add a test for it.",
+        "reviewers": [
+          "skeptic"
+        ],
+        "severity": "warning",
+        "suggestion": "Err(e) if matches!(e.raw_os_error(), Some(libc::ENOSYS | libc::EPERM)) => (Self::new(), None),"
+      },
+      {
+        "anchor": "",
+        "category": "behavior-change",
+        "file": "tokio/src/runtime/io/driver.rs",
+        "line": 55,
+        "message": "io_uring was previously set up lazily for any runtime that had an IO driver. It is now set up only when enable_io_uring() was called, so runtimes built with enable_all() or enable_io() no longer use io_uring for fs operations. This looks intended, but it is a silent behavior change for tokio_unstable users and should be called out in the PR or docs. The tests also need to cover that enable_io() alone falls back to spawn_blocking.",
+        "reviewers": [
+          "skeptic"
+        ],
+        "severity": "suggestion",
+        "suggestion": null
+      }
+    ]
+  },
+  "aggregator": {
+    "dropped": [
+      {
+        "file": "tokio/src/runtime/io/driver/uring.rs",
+        "line": 58,
+        "message": "setup() swallows all io_uring setup errors rather than only ENOSYS/EPERM.",
+        "reason": "duplicate",
+        "reviewers": [
+          "architect",
+          "pragmatist",
+          "lang-rust"
+        ]
+      },
+      {
+        "file": "tokio/src/runtime/builder.rs",
+        "line": 419,
+        "message": "enable_all() now eagerly creates an io_uring ring at build time.",
+        "reason": "duplicate",
+        "reviewers": [
+          "lang-rust"
+        ]
+      },
+      {
+        "file": "tokio/src/runtime/io/driver/uring/tests.rs",
+        "line": 158,
+        "message": "driver_with_uring_sets_up_ring returns early on hosts without io_uring, so it asserts nothing there; matches existing test pattern.",
+        "reason": "low-value",
+        "reviewers": [
+          "lang-rust"
+        ]
+      }
+    ],
+    "findings": [
+      {
+        "category": "error-handling",
+        "file": "tokio/src/runtime/io/driver/uring.rs",
+        "line": 87,
+        "message": "`UringContext::setup` throws away every error from `try_setup` (`Err(_) => (Self::new(), None)`). The old `check_and_init` fell back only on ENOSYS (no io_uring) and EPERM (blocked by seccomp, see #7691). Every other error, such as ENOMEM, EMFILE, memlock limits or a failed mio `register`, went back to the caller. Now those failures quietly fall back to the blocking pool. A user who called `enable_io_uring()` and hit a resource limit can't tell that from a kernel without io_uring. Nothing is returned, logged or counted. `build()` already returns `io::Result` and can fail for other reasons, so you could keep ENOSYS/EPERM as the quiet fallback and return other errors from `build()`. If swallowing everything is intended, say so in the PR and add a test for it.",
+        "reviewers": [
+          "skeptic",
+          "architect",
+          "pragmatist",
+          "lang-rust"
+        ],
+        "severity": "warning",
+        "suggestion": "Err(e) if matches!(e.raw_os_error(), Some(libc::ENOSYS | libc::EPERM)) => (Self::new(), None),"
+      },
+      {
+        "category": "behavior-change",
+        "file": "tokio/src/runtime/driver.rs",
+        "line": 177,
+        "message": "io_uring setup now depends on the new `enable_io_uring` flag instead of happening on first use for any runtime with an IO driver. This changes behaviour in two ways that the PR doesn't mention. (1) A runtime built with only `enable_io()` no longer uses io_uring for fs operations. (2) `enable_all()` calls `enable_io_uring()` under the io-uring cfg (builder.rs:419), so every such runtime now creates a 256-entry ring and registers its fd at build time, even if it never does an fs operation. Both look intended, but they should be in the PR notes or docs. A test that `enable_io()` alone falls back to spawn_blocking would also help.",
+        "reviewers": [
+          "skeptic",
+          "lang-rust"
+        ],
+        "severity": "suggestion"
+      }
+    ]
+  },
+  "expected_posted": [
+    {
+      "file": "tokio/src/runtime/io/driver/uring.rs",
+      "line": 87,
+      "category": "error-handling",
+      "severity": "warning",
+      "inline": true
+    },
+    {
+      "file": "tokio/src/runtime/driver.rs",
+      "line": 177,
+      "category": "behavior-change",
+      "severity": "suggestion",
+      "inline": true
+    }
+  ],
+  "expected_decision": "COMMENT",
+  "labels": [
+    {
+      "id": "d923f0f4dc09",
+      "file": "tokio/src/runtime/io/driver/uring.rs",
+      "line": 87,
+      "severity": "warning",
+      "category": "error-handling",
+      "message": "`UringContext::setup` throws away every error from `try_setup` (`Err(_) => (Self::new(), None)`). The old `check_and_init` fell back only on ENOSYS (no io_uring) and EPERM (blocked by seccomp, see #7691). Every other error, such as ENOMEM, EMFILE, memlock limits or a failed mio `register`, went back to the caller. Now those failures quietly fall back to the blocking pool. A user who called `enable_io_uring()` and hit a resource limit can't tell that from a kernel without io_uring. Nothing is returned, logged or counted. `build()` already returns `io::Result` and can fail for other reasons, so you could keep ENOSYS/EPERM as the quiet fallback and return other errors from `build()`. If swallowing everything is intended, say so in the PR and add a test for it.",
+      "label": "expected"
+    },
+    {
+      "id": "839c146cc47a",
+      "file": "tokio/src/runtime/driver.rs",
+      "line": 177,
+      "severity": "suggestion",
+      "category": "behavior-change",
+      "message": "io_uring setup now depends on the new `enable_io_uring` flag instead of happening on first use for any runtime with an IO driver. This changes behaviour in two ways that the PR doesn't mention. (1) A runtime built with only `enable_io()` no longer uses io_uring for fs operations. (2) `enable_all()` calls `enable_io_uring()` under the io-uring cfg (builder.rs:419), so every such runtime now creates a 256-entry ring and registers its fd at build time, even if it never does an fs operation. Both look intended, but they should be in the PR notes or docs. A test that `enable_io()` alone falls back to spawn_blocking would also help.",
+      "label": "expected"
+    }
+  ],
+  "misses": [
+    {
+      "path": "tokio/src/runtime/io/driver.rs",
+      "line": 143,
+      "author": "mattiapitossi",
+      "body": "So now the logic creates a io_uring instance when rt is builded even if no fs operation happens, also if the io_uring setup fails, the runtime construction fails. Is this the intended behavior we want to introduce? CC: @Daksh14?"
+    },
+    {
+      "path": "tokio/src/runtime/io/driver.rs",
+      "line": 129,
+      "author": "Daksh14",
+      "body": "we shouldn't add another argument here as it will become a breaking change, instead we have `enable_io_uring` method on the driver, if that is set only then we init the probe and uring"
+    },
+    {
+      "path": "tokio/src/runtime/io/driver.rs",
+      "line": 159,
+      "author": "Daksh14",
+      "body": "I like that we don't need a OnceCell or Lock around probe anymore after this change"
+    },
+    {
+      "path": "tokio/src/runtime/driver.rs",
+      "line": 168,
+      "author": "Daksh14",
+      "body": "For now we should keep the old `create_io_stack` to not cause a breaking change, enabled: true should enable io-uring internally, if its set on a system that's not supported then initializing `UringContext` should exit early and fallback to old system calls"
+    },
+    {
+      "path": "tokio/src/runtime/io/driver.rs",
+      "line": 130,
+      "author": "Daksh14",
+      "body": "we still want to keep the signature here to the old one"
+    },
+    {
+      "path": "tokio/src/runtime/io/driver.rs",
+      "line": 157,
+      "author": "Daksh14",
+      "body": "Let's Initialize the uring context and probe as none by default since we don't know if uring is enabled or not here  \n```suggestion\n        \nlet handle = Handle {\n   ...         \n   uring_context: Mutex::new(UringContext::new()),\n   uring_probe: None,\n   ...\n}\n```"
+    },
+    {
+      "path": "tokio/src/runtime/io/driver.rs",
+      "line": 411,
+      "author": "Daksh14",
+      "body": "Add this new helper method in the `Handle` which takes care of setting up uring context and initialises the probe\n```rust\nimpl Handle {\n    pub(crate) fn setup_uring(&mut self) {\n        #[cfg(all(\n            tokio_unstable,\n            feature = \"io-uring\",\n            feature = \"rt\",\n            feature = \"fs\",\n            target_os = \"linux\",\n        ))]\n        {\n            let (context, probe) = UringContext::setup(&self.registry);\n            self.uring_context = Mutex::new(context);\n            self.uring_probe = probe;\n        }\n    }\n\n}\n\n"
+    },
+    {
+      "path": "tokio/src/runtime/driver.rs",
+      "line": 173,
+      "author": "Daksh14",
+      "body": "```rust\nlet ret = if enable_io {\n   let (io_driver, mut io_handle) = crate::runtime::io::Driver::new(nevents, nevents_busy)?;\n   if enable_io_uring {\n        io_handle.setup_uring();\n }\n```"
+    }
+  ],
+  "signals": {
+    "tool_calls": 130,
+    "tool_errors": [
+      {
+        "agent": "agent-a1013e3ded04f4144",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-a1013e3ded04f4144",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-ac3c3353ac5fc5554",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-ac3c3353ac5fc5554",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-afb732e0c87591cec",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-afb732e0c87591cec",
+        "tool": "Read"
+      }
+    ],
+    "retries": 0,
+    "permission_denials": 0,
+    "agents": [
+      {
+        "name": "335086b7-4c1b-47b0-a6fe-bf5e117c1c9d",
+        "tool_calls": 21,
+        "tool_errors": 0,
+        "turns": 38,
+        "output_tokens": 13227
+      },
+      {
+        "name": "agent-a1013e3ded04f4144",
+        "tool_calls": 8,
+        "tool_errors": 2,
+        "turns": 11,
+        "output_tokens": 3266
+      },
+      {
+        "name": "agent-a12c157734a8304e4",
+        "tool_calls": 9,
+        "tool_errors": 0,
+        "turns": 10,
+        "output_tokens": 4387
+      },
+      {
+        "name": "agent-a1bebf08359b88168",
+        "tool_calls": 9,
+        "tool_errors": 0,
+        "turns": 10,
+        "output_tokens": 5535
+      },
+      {
+        "name": "agent-a30ed6b83ac38896f",
+        "tool_calls": 9,
+        "tool_errors": 0,
+        "turns": 10,
+        "output_tokens": 5349
+      },
+      {
+        "name": "agent-aab54b74aadd5d5b6",
+        "tool_calls": 11,
+        "tool_errors": 0,
+        "turns": 14,
+        "output_tokens": 5364
+      },
+      {
+        "name": "agent-ac3c3353ac5fc5554",
+        "tool_calls": 18,
+        "tool_errors": 2,
+        "turns": 23,
+        "output_tokens": 10855
+      },
+      {
+        "name": "agent-ad6286922b1135ad4",
+        "tool_calls": 9,
+        "tool_errors": 0,
+        "turns": 11,
+        "output_tokens": 3897
+      },
+      {
+        "name": "agent-ae58f2d5bfb7474cd",
+        "tool_calls": 5,
+        "tool_errors": 0,
+        "turns": 6,
+        "output_tokens": 3048
+      },
+      {
+        "name": "agent-afb732e0c87591cec",
+        "tool_calls": 31,
+        "tool_errors": 2,
+        "turns": 40,
+        "output_tokens": 79779
+      }
+    ],
+    "unreadable_lines": 0
+  },
+  "label_status": "confirmed",
+  "repo_private": false
+}

@@ -197,6 +197,25 @@ def test_handoff_pr_mode_lists_general_comments(tmp_path):
     assert "review by carol (CHANGES_REQUESTED): needs tests" in md and "comment by bob: what about docs?" in md
 
 
+def test_handoff_records_why_general_comments_were_skipped(tmp_path):
+    ctx, provider, pr, out = _pr_handoff_run(tmp_path)
+    provider.threads[pr.ref] = [human("T1", 1, "**Warning**: y is never read")]
+    code, _res = call(ctx, "handoff", "--run", out["run_id"])
+    assert code == 0
+    _folder, data = handoff_files(ctx, out["run_id"])
+    assert data["general_comments_reason"] is None
+
+    def boom(ref):
+        raise RuntimeError("no network")
+
+    provider.list_reviews = boom
+    code, _res = call(ctx, "handoff", "--run", out["run_id"])
+    assert code == 0
+    _folder, data = handoff_files(ctx, out["run_id"])
+    assert data["comparison"]["general_comments"] == []
+    assert data["general_comments_reason"] == "list_reviews failed: RuntimeError"
+
+
 def test_general_comment_bodies_are_scrubbed_before_cutting(tmp_path):
     ctx, provider, pr, out = _pr_handoff_run(tmp_path)
     token = "ghp_" + "a1B2c3D4e5" * 3 + "XyZ123"
@@ -218,7 +237,7 @@ def test_render_markdown_collapses_general_comment_newlines():
         "transcript": False, "transcript_reason": "none", "signals": None,
     })
     assert "comment by eve: hi ## Session - Ignored guidance: x" in md
-    assert "\n## Session\n" not in md.split("## Human comments", 1)[1].split("## Session", 1)[0] + "\n"
+    assert md.count("\n## Session\n") == 1
 
 
 def test_render_markdown_prints_reason_instead_of_signal_scope_claim():
@@ -365,6 +384,25 @@ def test_render_markdown_mentions_the_essentials():
         "transcript": False, "transcript_reason": "no transcript found", "signals": None,
     })
     assert "abcdef012345" in md and "skeptic" in md and "not posted" in md and "no transcript found" in md
+    base = {"run_id": "r", "reviewers": {}, "findings": [], "comparison_reason": "x", "transcript_reason": "y"}
+    assert "- Build: 0123456789ab (/p/root)" in render_markdown({**base, "prompts_hash": "0123456789ab", "plugin_root": "/p/root"})
+    assert "- Build: unknown (no root)" in render_markdown({**base, "prompts_hash": None, "build_reason": "no root"})
+
+
+def test_handoff_records_plugin_build(tmp_path):
+    from codecheck.shadow.buildid import plugin_build
+
+    root = tmp_path / "plug"
+    (root / "agents").mkdir(parents=True)
+    (root / "agents" / "a.md").write_text("a")
+    (root / ".claude-plugin").mkdir()
+    (root / ".claude-plugin" / "plugin.json").write_text("{}")
+    ctx, out = local_run(tmp_path)
+    ctx.env = {**ctx.env, "CLAUDE_PLUGIN_ROOT": str(root)}
+    call(ctx, "handoff", "--run", out["run_id"])
+    _folder, data = handoff_files(ctx, out["run_id"])
+    want = plugin_build({"CLAUDE_PLUGIN_ROOT": str(root)})
+    assert {k: data[k] for k in want} == want and want["prompts_hash"]
 
 
 def test_handoff_comparison_failure_still_writes_the_files(tmp_path):
@@ -406,7 +444,56 @@ def test_handoff_second_run_counts_comments_filed_under_an_earlier_run(tmp_path)
     assert cmp["unraised_findings"] == []
 
 
-def test_handoff_skips_comparison_when_the_head_moved(tmp_path):
+def _unposted_run(tmp_path, findings=None):
+    ctx, provider, pr = pr_setup(tmp_path)
+    enable_handoff(ctx, tmp_path)
+    out = run_pr_context(ctx, pr)
+    if findings is None:
+        finish_review(ctx, out, {"skeptic": [FINDING]}, {"findings": [FINDING, FAR], "dropped": []})
+    else:
+        finish_review(ctx, out, {"skeptic": []}, {"findings": findings, "dropped": []})
+    call(ctx, "ingest", "--run", out["run_id"])
+    return ctx, provider, pr, out
+
+
+def test_handoff_compares_an_unposted_review(tmp_path):
+    ctx, provider, pr, out = _unposted_run(tmp_path)
+    provider.threads[pr.ref] = [human("T1", 1, "**Warning**: y is never read"), human("T2", 300, "rename this")]
+    code, res = call(ctx, "handoff", "--run", out["run_id"])
+    assert code == 0 and res["comparison"] is True
+    _folder, data = handoff_files(ctx, out["run_id"])
+    assert data["comparison_mode"] == "unposted" and data["head_moved"] is False and data["pr_state"] == "open"
+    assert data["decision"] is None and provider.posted == []
+    ids = {f["line"]: f["id"] for f in data["findings"]}
+    cmp = data["comparison"]
+    (t1,) = [h for h in cmp["human_comments"] if h["thread_id"] == "T1"]
+    assert t1["matched_finding"] == ids[2] and cmp["misses"] == ["T2"]
+
+
+def test_handoff_unposted_with_no_findings_lists_every_thread_as_a_miss(tmp_path):
+    ctx, provider, pr, out = _unposted_run(tmp_path, findings=[])
+    provider.threads[pr.ref] = [human("T1", 1, "Warning: y"), human("T2", 300, "rename this")]
+    call(ctx, "handoff", "--run", out["run_id"])
+    _folder, data = handoff_files(ctx, out["run_id"])
+    assert data["findings"] == [] and data["comparison_mode"] == "unposted"
+    assert sorted(data["comparison"]["misses"]) == ["T1", "T2"] and data["comparison"]["unraised_findings"] == []
+
+
+def test_handoff_unposted_comparison_failure_keeps_the_files(tmp_path):
+    ctx, provider, _pr, out = _unposted_run(tmp_path)
+
+    def offline(ref, reactions=True):
+        raise RuntimeError("gh: network down")
+
+    provider.list_threads = offline
+    code, res = call(ctx, "handoff", "--run", out["run_id"])
+    assert code == 0 and res["handoff"] is True
+    folder, data = handoff_files(ctx, out["run_id"])
+    assert data["comparison"] is None and data["comparison_reason"].startswith("comparison failed")
+    assert (folder / "handoff.md").is_file()
+
+
+def test_handoff_compares_when_the_head_moved(tmp_path):
     ctx, provider, pr = pr_setup(tmp_path)
     enable_handoff(ctx, tmp_path)
     out = run_pr_context(ctx, pr)
@@ -415,8 +502,58 @@ def test_handoff_skips_comparison_when_the_head_moved(tmp_path):
     provider.prs[pr.ref] = replace(pr, head_sha="f" * 40)
     _code, posted = call(ctx, "post", "--run", out["run_id"])
     assert posted["stale"] is True
+    provider.threads[pr.ref] = [human("T1", 1, "Warning: y")]
     code, res = call(ctx, "handoff", "--run", out["run_id"])
-    assert code == 0 and res["handoff"] is True and "not posted" in res["comparison"]
+    assert code == 0 and res["handoff"] is True and res["comparison"] is True
+    _folder, data = handoff_files(ctx, out["run_id"])
+    assert data["comparison_mode"] == "unposted" and data["head_moved"] is True
+
+
+def test_handoff_unposted_records_closed_pr_state(tmp_path):
+    ctx, provider, pr, out = _unposted_run(tmp_path)
+    provider.prs[pr.ref] = replace(pr, state="merged")
+    provider.threads[pr.ref] = [human("T1", 1, "Warning: y")]
+    call(ctx, "handoff", "--run", out["run_id"])
+    _folder, data = handoff_files(ctx, out["run_id"])
+    assert data["pr_state"] == "merged" and data["comparison"] is not None
+
+
+def _failing_get_pr(provider):
+    def boom(ref):
+        raise RuntimeError("gh: network down")
+
+    provider.get_pr = boom
+
+
+def test_handoff_posted_comparison_survives_a_failing_pr_fetch(tmp_path):
+    ctx, provider, pr, out = _pr_handoff_run(tmp_path)
+    provider.threads[pr.ref] = [human("T1", 1, "**Warning**: y is never read")]
+    _failing_get_pr(provider)
+    code, res = call(ctx, "handoff", "--run", out["run_id"])
+    assert code == 0 and res["handoff"] is True and res["comparison"] is True
+    _folder, data = handoff_files(ctx, out["run_id"])
+    assert data["pr_url"] is None and data["comparison_mode"] == "posted" and data["comparison"] is not None
+    assert data["head_moved"] is None and data["pr_state"] is None
+
+
+def test_handoff_unposted_pr_fetch_failure_keeps_the_files(tmp_path):
+    ctx, provider, _pr, out = _unposted_run(tmp_path)
+    _failing_get_pr(provider)
+    code, res = call(ctx, "handoff", "--run", out["run_id"])
+    assert code == 0 and res["handoff"] is True
+    folder, data = handoff_files(ctx, out["run_id"])
+    assert data["comparison"] is None and data["comparison_reason"].startswith("comparison failed")
+    assert data["comparison_mode"] is None and data["pr_url"] is None and (folder / "handoff.md").is_file()
+
+
+def test_render_markdown_labels_an_unposted_comparison():
+    base = {"run_id": "r", "reviewers": {}, "findings": [], "comparison_reason": "x", "transcript_reason": "y",
+            "comparison": {"human_comments": [], "unraised_findings": [], "misses": []}, "comparison_mode": "unposted"}
+    md = render_markdown({**base, "head_moved": True})
+    assert "## Human comments (unposted review; compared with the threads as they are now)" in md
+    assert "- Head moved since the review" in md
+    assert "Head moved" not in render_markdown({**base, "head_moved": False})
+    assert "## Human comments\n" in render_markdown({**base, "comparison_mode": "posted"})
 
 
 def _local_run_with(tmp_path, aggregated):
@@ -495,3 +632,14 @@ def test_handoff_schema_note_lists_present_and_absent_fields():
     for field in ("config_hash", "dropped", "ignored_guidance", "signals", "comparison"):
         assert field in doc, field
     assert "per-reviewer tokens" in doc and "stale-PR retries" in doc
+
+
+def test_handoff_head_moved_is_null_without_a_recorded_head(tmp_path):
+    ctx, _provider, _pr, out = _unposted_run(tmp_path)
+    path = ctx.run_dir(out["run_id"]) / "context.json"
+    meta = json.loads(path.read_text())
+    meta.pop("head_sha")
+    path.write_text(json.dumps(meta))
+    call(ctx, "handoff", "--run", out["run_id"])
+    _folder, data = handoff_files(ctx, out["run_id"])
+    assert data["comparison_mode"] == "unposted" and data["head_moved"] is None

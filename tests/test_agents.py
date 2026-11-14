@@ -139,3 +139,34 @@ def test_aggregator_states_severity_mirror_and_cap_rules():
 def test_aggregator_reads_context_and_run_files_before_findings():
     body = render_all(ModelsConfig())["aggregator.md"]
     assert body.index("context.json") < body.index("run_files") < body.index("CODE_CHECK.md") < body.index("ingest.json") < body.index("findings/<member>.json")
+
+
+def test_aggregator_grep_hint_sits_in_the_verification_step():
+    body = render_all(ModelsConfig())["aggregator.md"]
+    hint = "Grep is ripgrep: escape literal parentheses and brackets"
+    steps = {line.split(".", 1)[0]: line for line in body.splitlines() if line[:2].rstrip(". ").isdigit()}
+    verify = next(s for s in steps.values() if s.split(". ", 1)[1].startswith("Verify every critical and warning"))
+    invent = next(s for s in steps.values() if s.split(". ", 1)[1].startswith("Do not invent findings"))
+    assert hint in verify
+    assert hint not in invent
+
+
+def test_every_agent_falls_back_when_run_files_is_absent():
+    for name, body in render_all(ModelsConfig()).items():
+        assert "no `run_files` key" in body, name
+        assert "`RUN_DIR/CODE_CHECK.md`" in body and "`RUN_DIR/existing-comments.md`" in body, name
+
+
+LIFECYCLE_PHRASE = "Shutdown and lifecycle check"
+
+
+def test_rust_owning_reviewers_get_the_lifecycle_checklist_once():
+    files = render_all(ModelsConfig())
+    for name in ("lang-rust.md", "skeptic.md", "architect.md"):
+        assert files[name].count(LIFECYCLE_PHRASE) == 1, name
+    text = files["lang-rust.md"]
+    assert "arrives AFTER shutdown" in text
+    assert "concrete sequence of steps" in text
+    for name, body in files.items():
+        if name not in ("lang-rust.md", "skeptic.md", "architect.md"):
+            assert LIFECYCLE_PHRASE not in body, name

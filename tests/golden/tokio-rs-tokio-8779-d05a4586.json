@@ -1,0 +1,316 @@
+{
+  "version": 1,
+  "case_id": "tokio-rs-tokio-8779-d05a4586",
+  "repo": "tokio-rs/tokio",
+  "pr": 8779,
+  "head_sha": "d05a45862626c29232257ab42bd5e600cb0445e5",
+  "diff": "diff --git a/tokio/src/runtime/driver/op.rs b/tokio/src/runtime/driver/op.rs\nindex 679f535f..4cffdde8 100644\n--- a/tokio/src/runtime/driver/op.rs\n+++ b/tokio/src/runtime/driver/op.rs\n@@ -178,11 +178,17 @@ impl<T: Cancellable + Completable + Send> Future for Op<T> {\n                 let waker = cx.waker().clone();\n \n                 let driver = this.handle.inner.driver().io();\n-                // SAFETY: entry is valid for the entire duration of the operation\n-                let result = unsafe { driver.register_op(entry, waker) };\n+                // SAFETY: entry is valid for the entire duration of the operation.\n+                // Record the slab index as soon as the SQE is pushed so a\n+                // panic in a completion waker still cancels the in-flight op.\n+                let result = unsafe {\n+                    driver.register_op(entry, waker, |idx| {\n+                        this.state = State::Polled(idx);\n+                    })\n+                };\n \n                 match result {\n-                    RegisterResult::Submitted(idx) => this.state = State::Polled(idx),\n+                    RegisterResult::Submitted => {}\n \n                     // The kernel never saw the entry, so the resources go back to\n                     // the caller with the error.\ndiff --git a/tokio/src/runtime/io/driver/uring.rs b/tokio/src/runtime/io/driver/uring.rs\nindex 7849cc66..e60a7bae 100644\n--- a/tokio/src/runtime/io/driver/uring.rs\n+++ b/tokio/src/runtime/io/driver/uring.rs\n@@ -27,8 +27,8 @@ fn register_probe(uring: &IoUring, probe: &mut Probe) -> io::Result<()> {\n \n /// Outcome of registering an op with the io_uring.\n pub(crate) enum RegisterResult {\n-    /// In-flight at this slab index.\n-    Submitted(usize),\n+    /// In-flight; the caller already got the slab index from `after_push`.\n+    Submitted,\n \n     /// Submit failed before reaching the kernel; the slot was removed.\n     NotPushed(io::Error),\n@@ -276,15 +276,22 @@ impl Handle {\n \n     /// Register an operation with the io_uring.\n     ///\n-    /// If this is the first io_uring operation, it will also initialize the io_uring context.\n-    /// If io_uring isn't supported, this function returns an `ENOSYS` error, so the caller can\n-    /// perform custom handling, such as falling back to an alternative mechanism.\n+    /// `after_push` is invoked once the SQE is on the submission queue and\n+    /// before any completion waker can run, so the caller can record the slab\n+    /// index first. If a waker then panics, `Op::drop` can cancel the\n+    /// in-flight operation instead of treating it as never registered.\n     ///\n     /// # Safety\n     ///\n-    /// Callers must ensure that parameters of the entry (such as buffer) are valid and will\n-    /// be valid for the entire duration of the operation, otherwise it may cause memory problems.\n-    pub(crate) unsafe fn register_op(&self, entry: Entry, waker: Waker) -> RegisterResult {\n+    /// Callers must ensure that parameters of the entry (such as buffer) are\n+    /// valid and will be valid for the entire duration of the operation,\n+    /// otherwise it may cause memory problems.\n+    pub(crate) unsafe fn register_op(\n+        &self,\n+        entry: Entry,\n+        waker: Waker,\n+        after_push: impl FnOnce(usize),\n+    ) -> RegisterResult {\n         assert!(self.uring_probe.initialized());\n \n         // Uring is initialized.\n@@ -312,6 +319,10 @@ impl Handle {\n             }\n         }\n \n+        // The kernel may now own the buffer this entry points at. Record the\n+        // index before running completion wakers or submitting.\n+        after_push(index);\n+\n         // Ensure that the completion queue is not full before submitting the entry.\n         while ctx.ring_mut().completion().is_full() {\n             ctx.dispatch_completions();\n@@ -326,7 +337,7 @@ impl Handle {\n             return RegisterResult::Pushed { index, error: e };\n         }\n \n-        RegisterResult::Submitted(index)\n+        RegisterResult::Submitted\n     }\n \n     pub(crate) fn cancel_op<T: Cancellable>(&self, index: usize, data: Option<T>) {\ndiff --git a/tokio/src/runtime/io/driver/uring/tests.rs b/tokio/src/runtime/io/driver/uring/tests.rs\nindex f16bc313..7f8aafa3 100644\n--- a/tokio/src/runtime/io/driver/uring/tests.rs\n+++ b/tokio/src/runtime/io/driver/uring/tests.rs\n@@ -138,7 +138,7 @@ fn register_op_keeps_entry_on_submit_failure() {\n \n     let entry = opcode::Nop::new().build();\n     // SAFETY: the no-op entry does not reference any buffer.\n-    let res = unsafe { handle.register_op(entry, futures::task::noop_waker()) };\n+    let res = unsafe { handle.register_op(entry, futures::task::noop_waker(), |_| {}) };\n \n     // The entry was pushed before the submit failed, so the slot is kept and its\n     // index handed back for the caller to cancel.\n@@ -152,3 +152,72 @@ fn register_op_keeps_entry_on_submit_failure() {\n \n     drop(broken);\n }\n+\n+// If a completion waker panics after the new SQE is pushed, the caller must\n+// already have been told the slab index so `Op::drop` can cancel the op\n+// instead of freeing its buffer while the kernel still holds it.\n+#[cfg(panic = \"unwind\")]\n+#[test]\n+#[cfg_attr(miri, ignore)]\n+fn register_op_records_index_before_completion_waker_panic() {\n+    use std::sync::atomic::{AtomicUsize, Ordering};\n+    use std::sync::Arc;\n+    use std::task::{Wake, Waker};\n+\n+    struct PanicWaker;\n+\n+    impl Wake for PanicWaker {\n+        fn wake(self: Arc<Self>) {\n+            panic!(\"completion waker panic\");\n+        }\n+\n+        fn wake_by_ref(self: &Arc<Self>) {\n+            panic!(\"completion waker panic\");\n+        }\n+    }\n+\n+    let Some((_driver, handle)) = ready_handle() else {\n+        return;\n+    };\n+\n+    let panic_waker = Waker::from(Arc::new(PanicWaker));\n+    for i in 0..512 {\n+        let w = if i == 0 {\n+            panic_waker.clone()\n+        } else {\n+            futures::task::noop_waker()\n+        };\n+        // SAFETY: NOP entries do not reference a buffer.\n+        unsafe { handle.register_op(opcode::Nop::new().build(), w, |_| {}) };\n+    }\n+\n+    let recorded = Arc::new(AtomicUsize::new(usize::MAX));\n+    let recorded_cb = recorded.clone();\n+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {\n+        handle.register_op(\n+            opcode::Nop::new().build(),\n+            futures::task::noop_waker(),\n+            |idx| {\n+                recorded_cb.store(idx, Ordering::SeqCst);\n+            },\n+        )\n+    }));\n+\n+    assert!(\n+        res.is_err(),\n+        \"expected the completion waker to panic during registration\"\n+    );\n+    let idx = recorded.load(Ordering::SeqCst);\n+    assert_ne!(\n+        idx,\n+        usize::MAX,\n+        \"slab index must be recorded before a completion waker panics\"\n+    );\n+    assert!(\n+        matches!(\n+            handle.get_uring().lock().ops.get(idx),\n+            Some(Lifecycle::Waiting(_))\n+        ),\n+        \"in-flight slot was dropped after the waker panic\"\n+    );\n+}\n",
+  "reviewer_outputs": {
+    "architect": [
+      {
+        "anchor": "",
+        "category": "docs",
+        "file": "tokio/src/runtime/io/driver/uring.rs",
+        "line": 283,
+        "message": "The rewritten doc comment on `register_op` dropped the existing paragraph about lazy io_uring initialization and the `ENOSYS` fallback contract, which this change does not alter. Restore it next to the new `after_push` paragraph so the documented contract is not lost.",
+        "reviewers": [
+          "architect"
+        ],
+        "severity": "suggestion",
+        "suggestion": null
+      }
+    ],
+    "lang-rust": [
+      {
+        "anchor": "",
+        "category": "panic-safety",
+        "file": "tokio/src/runtime/io/driver/uring.rs",
+        "line": 317,
+        "message": "The doc on register_op (lines 279-282) says after_push runs 'before any completion waker can run', but the SQ-full push loop calls submit_before_push -> ctx.submit() -> dispatch_completions on EBUSY before the SQE is pushed. A completion waker that panics there unwinds out of register_op after `index` was inserted as Lifecycle::Waiting(waker). The Op is still in State::Initialize(None), so Op::drop does nothing and the slab slot leaks. No SQE references it, so there is no buffer UB, but UringContext::drop keeps every non-Completed slot and then blocks in submit_and_wait(1) with nothing in flight, which hangs driver shutdown. This is pre-existing and not changed by this PR, but the new doc claim is inaccurate and the PR's panic-safety goal does not cover this path. Either correct the doc wording to say the claim applies only once the SQE is pushed, or remove the slot on unwind (for example with a drop guard around the push loop).",
+        "reviewers": [
+          "lang-rust"
+        ],
+        "severity": "warning",
+        "suggestion": "// in the push loop, guard the inserted slot until the SQE is pushed\n// (or document that wakers may run here, before after_push)"
+      },
+      {
+        "anchor": "",
+        "category": "docs",
+        "file": "tokio/src/runtime/io/driver/uring.rs",
+        "line": 279,
+        "message": "The phrase 'before any completion waker can run' is only true after the SQE is pushed. Wakers can run earlier, in the SQ-full path (submit_before_push). Narrow the wording to 'once the SQE is on the submission queue and before the completion-queue drain or submit below can run any completion waker'.",
+        "reviewers": [
+          "lang-rust"
+        ],
+        "severity": "suggestion",
+        "suggestion": "    /// `after_push` is invoked once the SQE is on the submission queue and\n    /// before the completion queue is drained or the entry is submitted, so the\n    /// caller can record the slab index first."
+      },
+      {
+        "anchor": "",
+        "category": "test-robustness",
+        "file": "tokio/src/runtime/io/driver/uring/tests.rs",
+        "line": 184,
+        "message": "The test assumes the completion queue holds exactly 512 entries (the kernel default of 2x the 256-entry SQ) and that Nop completions are posted inline. Only then does the CQ fill on the 513th call, which is the one wrapped in catch_unwind. If the capacity differs, the panic fires inside the uncaught 512-iteration loop and the test fails with an unexplained panic. If the CQE is not posted inline, the final call does not panic and the assert fails. Derive the bound from the ring so the test does not depend on that constant.",
+        "reviewers": [
+          "lang-rust"
+        ],
+        "severity": "suggestion",
+        "suggestion": "let cq_cap = handle.get_uring().lock().ring().completion().capacity();\n    for i in 0..cq_cap {"
+      }
+    ],
+    "pragmatist": [
+      {
+        "anchor": "",
+        "category": "docs",
+        "file": "tokio/src/runtime/io/driver/uring.rs",
+        "line": 279,
+        "message": "The doc rewrite deleted the existing paragraph about lazy io_uring initialization and the ENOSYS fallback contract. That behavior is unchanged and unrelated to this fix, so keep it and add only the new `after_push` paragraph.",
+        "reviewers": [
+          "pragmatist"
+        ],
+        "severity": "suggestion",
+        "suggestion": "    /// If this is the first io_uring operation, it will also initialize the io_uring context.\n    /// If io_uring isn't supported, this function returns an `ENOSYS` error, so the caller can\n    /// perform custom handling, such as falling back to an alternative mechanism.\n    ///"
+      }
+    ],
+    "skeptic": [
+      {
+        "anchor": "",
+        "category": "test",
+        "file": "tokio/src/runtime/io/driver/uring/tests.rs",
+        "line": 187,
+        "message": "The test hard-codes 512 pre-registered ops so the 513th hits a full completion queue. This relies on DEFAULT_RING_SIZE (256) and the kernel's default CQ size of 2x SQ, and on NOPs completing inline. If either changes, no waker runs, `res.is_err()` fails, and the failure looks like a regression in the fix. Derive the count from the ring (for example the completion queue capacity) or comment the dependency. The test also doesn't cover `Op::drop` cancelling after the panic; it only checks the callback and slot state.",
+        "reviewers": [
+          "skeptic"
+        ],
+        "severity": "suggestion",
+        "suggestion": "for i in 0..512 { // == 2 * DEFAULT_RING_SIZE, the default CQ capacity"
+      }
+    ]
+  },
+  "aggregator": {
+    "dropped": [
+      {
+        "file": "tokio/src/runtime/io/driver/uring.rs",
+        "line": 279,
+        "message": "Doc phrase 'before any completion waker can run' is only true after the SQE is pushed; narrow the wording.",
+        "reason": "duplicate",
+        "reviewers": [
+          "lang-rust"
+        ]
+      },
+      {
+        "file": "tokio/src/runtime/io/driver/uring.rs",
+        "line": 279,
+        "message": "Doc rewrite deleted the paragraph about lazy io_uring initialization and the ENOSYS fallback; restore it.",
+        "reason": "not-verified",
+        "reviewers": [
+          "architect",
+          "pragmatist"
+        ]
+      }
+    ],
+    "findings": [
+      {
+        "category": "panic-safety",
+        "file": "tokio/src/runtime/io/driver/uring.rs",
+        "line": 279,
+        "message": "The new doc says `after_push` runs 'before any completion waker can run', but that is only true once the SQE is pushed. When the submission queue is full, the push loop (line 315) calls `submit_before_push` -> `ctx.submit()`, and on `EBUSY` that runs `dispatch_completions` before `after_push`. If a waker panics there, unwinding leaves the slot inserted at line 301 as `Lifecycle::Waiting`, and the `Op` is still in `State::Initialize(None)`, so `Op::drop` does nothing. No SQE references the slot, so there is no buffer use-after-free. But the slot leaks, and `UringContext::drop` keeps every non-`Completed` slot and then calls `submit_and_wait(1)` with nothing in flight, which can hang driver shutdown. This gap existed before the PR, but the PR's panic-safety fix does not cover it and the new doc overstates the guarantee. Either remove the slot on unwind in the pre-push loop (for example with a drop guard that is disarmed after the push), or narrow the doc wording.",
+        "reviewers": [
+          "lang-rust"
+        ],
+        "severity": "warning",
+        "suggestion": "    /// `after_push` is invoked once the SQE is on the submission queue and\n    /// before the completion queue is drained or the entry is submitted, so the\n    /// caller can record the slab index first. (Wakers may still run earlier,\n    /// while flushing a full submission queue before the push.)"
+      },
+      {
+        "category": "test",
+        "file": "tokio/src/runtime/io/driver/uring/tests.rs",
+        "line": 184,
+        "message": "The test hard-codes 512 pre-registered NOPs so that the CQ is full on the 513th call. That number depends on `DEFAULT_RING_SIZE` (256), on the kernel's default CQ size of 2x the SQ, and on NOP CQEs being posted by the time each submit returns. If any of these change, either the panic fires inside the uncaught loop or no waker runs, and `res.is_err()` fails. Either failure looks like a regression in the fix. Derive the bound from the ring's completion-queue capacity, or at least document the dependency. The test also only checks the callback and the slot state; it does not exercise `Op::drop` cancelling after the panic.",
+        "reviewers": [
+          "skeptic",
+          "lang-rust"
+        ],
+        "severity": "suggestion",
+        "suggestion": "let cq_cap = handle.get_uring().lock().ring().completion().capacity();\nfor i in 0..cq_cap {"
+      }
+    ]
+  },
+  "expected_posted": [
+    {
+      "file": "tokio/src/runtime/io/driver/uring.rs",
+      "line": 279,
+      "category": "panic-safety",
+      "severity": "warning",
+      "inline": true
+    },
+    {
+      "file": "tokio/src/runtime/io/driver/uring/tests.rs",
+      "line": 184,
+      "category": "test",
+      "severity": "suggestion",
+      "inline": true
+    }
+  ],
+  "expected_decision": "COMMENT",
+  "labels": [
+    {
+      "id": "09dde3e6651c",
+      "file": "tokio/src/runtime/io/driver/uring.rs",
+      "line": 279,
+      "severity": "warning",
+      "category": "panic-safety",
+      "message": "The new doc says `after_push` runs 'before any completion waker can run', but that is only true once the SQE is pushed. When the submission queue is full, the push loop (line 315) calls `submit_before_push` -> `ctx.submit()`, and on `EBUSY` that runs `dispatch_completions` before `after_push`. If a waker panics there, unwinding leaves the slot inserted at line 301 as `Lifecycle::Waiting`, and the `Op` is still in `State::Initialize(None)`, so `Op::drop` does nothing. No SQE references the slot, so there is no buffer use-after-free. But the slot leaks, and `UringContext::drop` keeps every non-`Completed` slot and then calls `submit_and_wait(1)` with nothing in flight, which can hang driver shutdown. This gap existed before the PR, but the PR's panic-safety fix does not cover it and the new doc overstates the guarantee. Either remove the slot on unwind in the pre-push loop (for example with a drop guard that is disarmed after the push), or narrow the doc wording.",
+      "label": "expected"
+    },
+    {
+      "id": "878d598296e0",
+      "file": "tokio/src/runtime/io/driver/uring/tests.rs",
+      "line": 184,
+      "severity": "suggestion",
+      "category": "test",
+      "message": "The test hard-codes 512 pre-registered NOPs so that the CQ is full on the 513th call. That number depends on `DEFAULT_RING_SIZE` (256), on the kernel's default CQ size of 2x the SQ, and on NOP CQEs being posted by the time each submit returns. If any of these change, either the panic fires inside the uncaught loop or no waker runs, and `res.is_err()` fails. Either failure looks like a regression in the fix. Derive the bound from the ring's completion-queue capacity, or at least document the dependency. The test also only checks the callback and the slot state; it does not exercise `Op::drop` cancelling after the panic.",
+      "label": "not_expected"
+    }
+  ],
+  "misses": [
+    {
+      "path": "tokio/src/runtime/io/driver/uring/tests.rs",
+      "line": 222,
+      "author": "carabistouflette",
+      "body": "```suggestion\n    assert!(\n        res.is_err(),\n        \"expected the completion waker to panic during registration\"\n    );\n    let idx = recorded.load(Ordering::SeqCst);\n    assert_ne!(\n        idx,\n        usize::MAX,\n        \"slab index must be recorded before a completion waker panics\"\n    );\n    assert!(\n        matches!(\n            handle.get_uring().lock().ops.get(idx),\n            Some(Lifecycle::Waiting(_))\n        ),\n        \"in-flight slot was dropped after the waker panic\"\n    );\n```\n\nThe `else` branch allows the test to silently pass if `res` is `Ok(_)`. If ring capacity or completion queue behavior changes such that the 512 operations do not trigger completion dispatch during registration, `res.is_err()` will be false and the test will pass without actually verifying panic safety or slot retention. Explicitly asserting that `res.is_err()` ensures any failure to trigger the waker panic fails loudly."
+    },
+    {
+      "path": "tokio/src/runtime/driver/op.rs",
+      "line": 191,
+      "author": "carabistouflette",
+      "body": "Because `after_push` sets `this.state = State::Polled(idx)` before `register_op` returns, `_idx` here is discarded.\n\nSince `RegisterResult` is internal (`pub(crate)`), `RegisterResult::Submitted(usize)` can be simplified to the unit variant `RegisterResult::Submitted` to avoid carrying redundant state."
+    },
+    {
+      "path": "tokio/src/runtime/io/driver/uring.rs",
+      "line": 288,
+      "author": "Daksh14",
+      "body": "If the after_push panics then we will get the same UAF because the state wasn't recorded so add a section that says the `after_push` should ensure the index of the operation is recorded as Polled state "
+    }
+  ],
+  "signals": {
+    "tool_calls": 152,
+    "tool_errors": [
+      {
+        "agent": "agent-a1013e3ded04f4144",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-a1013e3ded04f4144",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-a439a690b2a99f846",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-a439a690b2a99f846",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-ac3c3353ac5fc5554",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-ac3c3353ac5fc5554",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-afb732e0c87591cec",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-afb732e0c87591cec",
+        "tool": "Read"
+      }
+    ],
+    "retries": 0,
+    "permission_denials": 0,
+    "agents": [
+      {
+        "name": "335086b7-4c1b-47b0-a6fe-bf5e117c1c9d",
+        "tool_calls": 25,
+        "tool_errors": 0,
+        "turns": 46,
+        "output_tokens": 15104
+      },
+      {
+        "name": "agent-a1013e3ded04f4144",
+        "tool_calls": 13,
+        "tool_errors": 2,
+        "turns": 19,
+        "output_tokens": 38244
+      },
+      {
+        "name": "agent-a12c157734a8304e4",
+        "tool_calls": 9,
+        "tool_errors": 0,
+        "turns": 10,
+        "output_tokens": 4387
+      },
+      {
+        "name": "agent-a1bebf08359b88168",
+        "tool_calls": 9,
+        "tool_errors": 0,
+        "turns": 10,
+        "output_tokens": 5535
+      },
+      {
+        "name": "agent-a30ed6b83ac38896f",
+        "tool_calls": 9,
+        "tool_errors": 0,
+        "turns": 10,
+        "output_tokens": 5349
+      },
+      {
+        "name": "agent-a439a690b2a99f846",
+        "tool_calls": 13,
+        "tool_errors": 2,
+        "turns": 16,
+        "output_tokens": 9083
+      },
+      {
+        "name": "agent-aab54b74aadd5d5b6",
+        "tool_calls": 11,
+        "tool_errors": 0,
+        "turns": 14,
+        "output_tokens": 5364
+      },
+      {
+        "name": "agent-ac3c3353ac5fc5554",
+        "tool_calls": 18,
+        "tool_errors": 2,
+        "turns": 23,
+        "output_tokens": 10855
+      },
+      {
+        "name": "agent-ad6286922b1135ad4",
+        "tool_calls": 9,
+        "tool_errors": 0,
+        "turns": 11,
+        "output_tokens": 3897
+      },
+      {
+        "name": "agent-ae58f2d5bfb7474cd",
+        "tool_calls": 5,
+        "tool_errors": 0,
+        "turns": 6,
+        "output_tokens": 3048
+      },
+      {
+        "name": "agent-afb732e0c87591cec",
+        "tool_calls": 31,
+        "tool_errors": 2,
+        "turns": 40,
+        "output_tokens": 79779
+      }
+    ],
+    "unreadable_lines": 0
+  },
+  "label_status": "confirmed",
+  "repo_private": false
+}
