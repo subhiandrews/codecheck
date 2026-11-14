@@ -69,7 +69,7 @@ def build_handoff(ctx, run_id: str) -> dict:
     ignored_guidance = signals.pop("ignored_guidance", []) if signals else []
     decision = next((r for r in reversed(records) if r.get("type") == "decision"), None)
     findings = _findings(run_dir, meta, aggregator_raw)
-    pr_url = comparison = comparison_mode = head_moved = pr_state = None
+    pr_url = comparison = comparison_mode = head_moved = pr_state = general_reason = None
     if meta.get("mode") != "pr" or not meta.get("pr"):
         comparison_reason = "local review: there is no pull request to compare with"
     else:
@@ -82,7 +82,7 @@ def build_handoff(ctx, run_id: str) -> dict:
         pr_url = (pr.url or None) if pr is not None else None
         if decision is not None:  # the posted comparison does not need the PR object
             comparison_mode = "posted"
-            comparison, comparison_reason = _compare(ctx, ref, run_id)
+            comparison, comparison_reason, general_reason = _compare(ctx, ref, run_id)
         elif pr is None:
             comparison_reason = fetch_reason
         elif pr.is_draft:
@@ -90,7 +90,7 @@ def build_handoff(ctx, run_id: str) -> dict:
         else:
             comparison_mode, pr_state = "unposted", pr.state
             head_moved = pr.head_sha != meta.get("head_sha")
-            comparison, comparison_reason = _compare(ctx, ref, run_id, findings=findings)
+            comparison, comparison_reason, general_reason = _compare(ctx, ref, run_id, findings=findings)
     handoff = {
         "schema": SCHEMA, "run_id": run_id, "skill": meta.get("skill"), "mode": meta.get("mode"), "repo": meta.get("repo"),
         "pr": meta.get("pr"), "pr_url": pr_url, "head_sha": meta.get("head_sha"), "tool_version": __version__,
@@ -100,7 +100,7 @@ def build_handoff(ctx, run_id: str) -> dict:
         "findings": findings, "dropped": _dropped(aggregator_raw),
         "ignored_guidance": ignored_guidance,
         "decision": {k: decision.get(k) for k in ("event", "reason", "incomplete")} if decision else None,
-        "comparison": comparison, "comparison_reason": comparison_reason,
+        "comparison": comparison, "comparison_reason": comparison_reason, "general_comments_reason": general_reason,
         "comparison_mode": comparison_mode, "head_moved": head_moved, "pr_state": pr_state,
         "transcript": transcript, "transcript_reason": transcript_reason, "transcript_files": transcript_files,
     }
@@ -178,15 +178,15 @@ def _transcripts(ctx, run_id: str, folder: Path, started: float | None) -> tuple
     return True, None, copied, extract_signals([main, *subs], windows={main: (started, time.time())})
 
 
-def _compare(ctx, ref: PRRef, run_id: str, *, findings: list[dict] | None = None) -> tuple[dict | None, str | None]:
+def _compare(ctx, ref: PRRef, run_id: str, *, findings: list[dict] | None = None) -> tuple[dict | None, str | None, str | None]:
     """Record human comments the way `shadow collect` does, then compare them with this run's findings.
 
     A posted run's findings are its shadow `finding` records; an unposted run has none, so the caller passes the
-    hand-off's own findings."""
+    hand-off's own findings. The third element is why the general comments were skipped, if they were."""
     try:
         collect_outcomes(ctx.provider, ctx.shadow, ref, ctx.provider.whoami())
     except Exception as e:  # noqa: BLE001 - offline or a gh failure: keep the rest of the hand-off
-        return None, scrub_text(f"comparison failed: {type(e).__name__}: {e}")[:500]
+        return None, scrub_text(f"comparison failed: {type(e).__name__}: {e}")[:500], None
     ours = findings if findings is not None else [r for r in ctx.shadow.read(run_id) if r.get("type") == "finding"]
     # collect files a comment under the newest run whose findings it is near, so on a re-reviewed PR some of
     # this PR's comments live in older runs' records. Take every thread's latest record across the PR's runs
@@ -196,16 +196,22 @@ def _compare(ctx, ref: PRRef, run_id: str, *, findings: list[dict] | None = None
         key=lambda r: r.get("ts") if isinstance(r.get("ts"), (int, float)) else 0,
     )
     rematched = [{**r, "matches_finding": _near(ours, r.get("path"), r.get("line"))} for r in comments]
-    return build_comparison(rematched, ours, _general_comments(ctx, ref)), None
+    general, general_reason = _general_comments(ctx, ref)
+    return build_comparison(rematched, ours, general), None, general_reason
 
 
-def _general_comments(ctx, ref: PRRef) -> list[dict]:
+def _general_comments(ctx, ref: PRRef) -> tuple[list[dict], str | None]:
+    """The PR's review summaries and conversation comments, and why there are none when fetching failed."""
+    step = "list_reviews"
     try:
-        general = build_general_comments(ctx.provider.list_reviews(ref), ctx.provider.list_issue_comments(ref),
-                                         pr_author=ctx.provider.get_pr(ref).author)
-        return [{**g, "body": " ".join(scrub_text(g["body"]).split())[:300]} for g in general]
-    except Exception:  # noqa: BLE001 - the extra feedback is a convenience; the rest of the comparison stands
-        return []
+        reviews = ctx.provider.list_reviews(ref)
+        step = "list_issue_comments"
+        issue_comments = ctx.provider.list_issue_comments(ref)
+        step = "get_pr"
+        general = build_general_comments(reviews, issue_comments, pr_author=ctx.provider.get_pr(ref).author)
+        return [{**g, "body": " ".join(scrub_text(g["body"]).split())[:300]} for g in general], None
+    except Exception as e:  # noqa: BLE001 - the extra feedback is a convenience; the rest of the comparison stands
+        return [], scrub_text(f"{step} failed: {type(e).__name__}")[:500]
 
 
 def _near(findings: list[dict], path, line) -> str | None:

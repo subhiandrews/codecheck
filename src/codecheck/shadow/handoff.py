@@ -5,7 +5,7 @@
 prompts) and `build_reason` (why they are null), `config_hash`, `models`, `panel`, `blind`), each reviewer's ingest status
 (`reviewers`), the aggregated `findings` (ids and order as `post` gives them), the aggregator's `dropped` list, the
 `decision`, transcript `signals` (tool calls and errors, retries, permission denials, turns and output tokens per
-transcript file), `ignored_guidance` lines from the transcripts, the human `comparison` (or `comparison_reason`) with `comparison_mode` (`posted`, `unposted` or null), `head_moved`
+transcript file), `ignored_guidance` lines from the transcripts, the human `comparison` (or `comparison_reason`; `general_comments_reason` says why its general comments are missing, null when fine) with `comparison_mode` (`posted`, `unposted` or null), `head_moved`
 and `pr_state` (`open`, `closed`, `merged`; null for local runs), and
 `transcript`, `transcript_reason`, `transcript_files`.
 

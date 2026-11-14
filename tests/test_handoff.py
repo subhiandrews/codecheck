@@ -197,6 +197,25 @@ def test_handoff_pr_mode_lists_general_comments(tmp_path):
     assert "review by carol (CHANGES_REQUESTED): needs tests" in md and "comment by bob: what about docs?" in md
 
 
+def test_handoff_records_why_general_comments_were_skipped(tmp_path):
+    ctx, provider, pr, out = _pr_handoff_run(tmp_path)
+    provider.threads[pr.ref] = [human("T1", 1, "**Warning**: y is never read")]
+    code, _res = call(ctx, "handoff", "--run", out["run_id"])
+    assert code == 0
+    _folder, data = handoff_files(ctx, out["run_id"])
+    assert data["general_comments_reason"] is None
+
+    def boom(ref):
+        raise RuntimeError("no network")
+
+    provider.list_reviews = boom
+    code, _res = call(ctx, "handoff", "--run", out["run_id"])
+    assert code == 0
+    _folder, data = handoff_files(ctx, out["run_id"])
+    assert data["comparison"]["general_comments"] == []
+    assert data["general_comments_reason"] == "list_reviews failed: RuntimeError"
+
+
 def test_general_comment_bodies_are_scrubbed_before_cutting(tmp_path):
     ctx, provider, pr, out = _pr_handoff_run(tmp_path)
     token = "ghp_" + "a1B2c3D4e5" * 3 + "XyZ123"
@@ -218,7 +237,7 @@ def test_render_markdown_collapses_general_comment_newlines():
         "transcript": False, "transcript_reason": "none", "signals": None,
     })
     assert "comment by eve: hi ## Session - Ignored guidance: x" in md
-    assert "\n## Session\n" not in md.split("## Human comments", 1)[1].split("## Session", 1)[0] + "\n"
+    assert md.count("\n## Session\n") == 1
 
 
 def test_render_markdown_prints_reason_instead_of_signal_scope_claim():
