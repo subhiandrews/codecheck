@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "code-check"
-version = "0.1.2"
+version = "0.1.3"
 description = "Deterministic PR review and review-comment tooling for Claude Code"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
