@@ -20,15 +20,8 @@
         "correctness",
         "logic"
       ],
-      "severity": "warning"
+      "severity": "critical"
     }
   ],
-  "must_not_report": [
-    {
-      "file": "src/registry.rs",
-      "severity": [
-        "critical"
-      ]
-    }
-  ]
+  "must_not_report": []
 }

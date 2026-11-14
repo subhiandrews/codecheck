@@ -19,7 +19,7 @@ The work is evidence-driven. Fix the tooling gaps the runs exposed, add a test t
 
 1. Every hand-off identifies the plugin build that produced it, so a stale cache is detectable from `handoff.json` alone.
 2. A PR-mode review that was not posted still gets a comparison with the human threads, marked as unposted.
-3. A live Rust snippet reproduces the shutdown-race class of bug (a lock-protected release set that a late deregistration can repopulate after shutdown), expected as a warning.
+3. A live Rust snippet reproduces the shutdown-race class of bug (a lock-protected release set that a late deregistration can repopulate after shutdown), expected as a critical.
 4. A real-run golden case for #8735 at `53de1f6b` (the commit before `f3dda518`, where the humans commented) records whether the full panel catches the real race.
 5. Tune a prompt only if goal 3 or 4 fails (see Decision rule).
 6. The three baseline runs become golden cases (labels confirmed by the user).
@@ -61,7 +61,7 @@ In PR mode, when no `decision` record exists, run the same comparison against th
 
 ### Race snippet (goal 3)
 
-A new live snippet `rust-shutdown-race/` in `tests/snippets/`: a small Rust module with a `Mutex`/`RwLock`-guarded registry holding a `pending_release` list and a `shut_down` flag. The change makes `deregister` push onto `pending_release` without checking `shut_down`, after `shutdown` has already drained the list, so entries leak and are never released. `expected`: one finding at the pushing line (within 2), severity `warning`, categories `race`, `concurrency`, `leak`, `lifecycle`, `shutdown`, `correctness`. `must_not_report`: criticals on unrelated lines. It is marked `calibrated` only after the user has run it twice against a real model.
+A new live snippet `rust-shutdown-race/` in `tests/snippets/`: a small Rust module with a `Mutex`/`RwLock`-guarded registry holding a `pending_release` list and a `shut_down` flag. The change makes `deregister` push onto `pending_release` without checking `shut_down`, after `shutdown` has already drained the list, so entries leak and are never released. `expected`: one finding at the pushing line (within 2), severity `critical`, categories `race`, `concurrency`, `leak`, `lifecycle`, `shutdown`, `correctness`. `must_not_report`: empty (the format requires the key); a permanent leak after shutdown is defensibly critical, and the aggregator keeps the highest verifiable severity. It is marked `calibrated` only after the user has run it twice against a real model.
 
 ### Real-run golden case (goal 4)
 
@@ -110,3 +110,8 @@ Task order and sizing; how the plugin root and prompt hash are resolved; the exa
   - The three posted baselines (98596b385d5b, 2c3b00d46689, 8c75582f3970) draft cleanly and replay with `check_case`; the tokio repo is public so `repo_private` is false.
   - The unposted run 84048732c6dd is accepted: `expected_posted` comes from the aggregator view, not the posted findings, so it holds 3 findings and replays. Its `labels` and `misses` are empty (no `finding` records are written without `post`), so there is nothing to confirm and `finalize` would accept it. Its case id `tokio-rs-tokio-8735-e7aa7747` collides with the posted baseline on the same head sha, so `--finalize` would need `--force` or another sha.
   - A local run (pr null) is accepted and the case id uses `local` (`<repo>-local-<sha8>`). If the run carries no `repo_private`, finalize refuses without `--allow-private`. Checked against a synthetic run in a temp store.
+- Race snippet, later runs (Task 8 prompts): in four live runs in total the panel found the defect at `registry.rs:33` every time (lifecycle or correctness), rating it critical three times and warning once. The expectation was therefore changed from warning to critical (user's decision), and the `must_not_report` rule against criticals was removed. The snippet stays `calibrated: false` until the user reruns it twice with `--only`.
+- All-snippets live rerun by the user, twice, with the Task 8 prompts: clean-code, docs-only-api, off-by-one and weaker-access-override passed both times (no added noise on the clean snippets). The race snippet was found at `registry.rs:33` both times but rated critical.
+- The user declined to rerun `review-local` at tokio `53de1f6b` with the checklist, so the checklist's effect on the real two-thread interleaving race at `io/driver.rs:360` is unmeasured.
+- The real-run golden case `tokio-rs-tokio-local-53de1f6b` and the three baseline cases were finalized with the user's confirmed labels (the #8757 `uring.rs:87` warning labelled expected; the three stale darkraider01 misses dropped from the #8735 baseline).
+- Candidate for the next round: `rt_shutdown_fds.rs:57` and `park.rs:323` were raised by our reviewers but dropped by the aggregator as low-value, while humans raised the same points.
