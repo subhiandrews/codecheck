@@ -106,4 +106,7 @@ Task order and sizing; how the plugin root and prompt hash are resolved; the exa
 
 - Race snippet results, two runs: pending.
 - Real-run golden case at `53de1f6b`: pending.
-- Whether `shadow promote` accepts an unposted run (and a local run): pending, builder verifies against `promote.py`.
+- `shadow promote` probe (done):
+  - The three posted baselines (98596b385d5b, 2c3b00d46689, 8c75582f3970) draft cleanly and replay with `check_case`; the tokio repo is public so `repo_private` is false.
+  - The unposted run 84048732c6dd is accepted: `expected_posted` comes from the aggregator view, not the posted findings, so it holds 3 findings and replays. Its `labels` and `misses` are empty (no `finding` records are written without `post`), so there is nothing to confirm and `finalize` would accept it. Its case id `tokio-rs-tokio-8735-e7aa7747` collides with the posted baseline on the same head sha, so `--finalize` would need `--force` or another sha.
+  - A local run (pr null) is accepted and the case id uses `local` (`<repo>-local-<sha8>`). If the run carries no `repo_private`, finalize refuses without `--allow-private`. Checked against a synthetic run in a temp store.
