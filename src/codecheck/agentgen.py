@@ -111,6 +111,19 @@ Your task message gives you RUN_DIR.
 """
 
 
+LIFECYCLE = (
+    "Shutdown and lifecycle check: for code with locks, queues, registries, handles or shutdown paths, ask (a) what a call "
+    "that arrives AFTER shutdown, or concurrently with it, can still push, register, queue or re-queue, and whether "
+    "anything ever drains it; (b) what each lock guard protects across an early return, a panic or an `.await`, and whether "
+    "another thread can run the other half of a two-step sequence (check then act, deregister then shutdown) between the "
+    "steps; (c) when shutdown clears a set under one lock, whether a holder of a different lock can still repopulate it. "
+    "Report a problem only when you can spell it out as a concrete sequence of steps (thread A does X, thread B does Y); "
+    "do not report orderings you cannot spell out."
+)
+
+LIFECYCLE_ROLES = ("skeptic", "architect")
+
+
 def render_agent(name: str, description: str, model: str, body: str) -> str:
     return f"---\nname: {name}\ndescription: {description}\ntools: {TOOLS}\nmodel: {model}\n---\n\n{body.rstrip()}\n"
 
@@ -118,11 +131,14 @@ def render_agent(name: str, description: str, model: str, body: str) -> str:
 def render_all(models: ModelsConfig) -> dict[str, str]:
     files: dict[str, str] = {}
     for name, (description, focus) in ROLES.items():
-        files[f"{name}.md"] = render_agent(name, description, model_for(models, "reviewers"), f"{focus}\n\n{COMMON}")
+        lifecycle = f"{LIFECYCLE}\n\n" if name in LIFECYCLE_ROLES else ""
+        files[f"{name}.md"] = render_agent(name, description, model_for(models, "reviewers"), f"{focus}\n\n{lifecycle}{COMMON}")
     for lang, (display, focus) in LANGUAGE_FOCUS.items():
         name = f"lang-{lang}"
+        lifecycle = f"{LIFECYCLE}\n\n" if lang == "rust" else ""
         body = (f"You are a senior {display} engineer. You own only the {display} files named in your task message. "
-                f"Review them for correctness against {display} and its ecosystem. Focus on: {focus}\n\n{COMMON}")
+                f"Review them for correctness against {display} and its ecosystem. Focus on: {focus}\n\n"
+                f"{lifecycle}{COMMON}")
         files[f"{name}.md"] = render_agent(
             name, f"{display} language expert for code-check reviews. Use only when dispatched by a code-check skill.",
             model_for(models, "language_expert", lang), body)

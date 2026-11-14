@@ -155,3 +155,18 @@ def test_every_agent_falls_back_when_run_files_is_absent():
     for name, body in render_all(ModelsConfig()).items():
         assert "no `run_files` key" in body, name
         assert "`RUN_DIR/CODE_CHECK.md`" in body and "`RUN_DIR/existing-comments.md`" in body, name
+
+
+LIFECYCLE_PHRASE = "Shutdown and lifecycle check"
+
+
+def test_rust_owning_reviewers_get_the_lifecycle_checklist_once():
+    files = render_all(ModelsConfig())
+    for name in ("lang-rust.md", "skeptic.md", "architect.md"):
+        assert files[name].count(LIFECYCLE_PHRASE) == 1, name
+    text = files["lang-rust.md"]
+    assert "arrives AFTER shutdown" in text
+    assert "concrete sequence of steps" in text
+    for name, body in files.items():
+        if name not in ("lang-rust.md", "skeptic.md", "architect.md"):
+            assert LIFECYCLE_PHRASE not in body, name
