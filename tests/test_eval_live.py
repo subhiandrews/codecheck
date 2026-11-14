@@ -158,9 +158,12 @@ def test_load_snippets_reads_sorted_cases(tmp_path):
 def test_shipped_snippets_load_and_are_marked_uncalibrated():
     assert DEFAULT_SNIPPETS == REPO / "tests" / "snippets"
     snippets = {s["name"]: s for s in load_snippets(DEFAULT_SNIPPETS)}
-    assert set(snippets) == {"off-by-one", "clean-code"}
+    assert set(snippets) == {"off-by-one", "clean-code", "weaker-access-override", "docs-only-api"}
     assert all(s["calibrated"] is False for s in snippets.values())
     assert snippets["off-by-one"]["expected"] and snippets["clean-code"]["expected"] == []
+    assert [e["severity"] for e in snippets["weaker-access-override"]["expected"]] == ["critical"]
+    assert snippets["docs-only-api"]["expected"] == []
+    assert snippets["docs-only-api"]["must_not_report"]
 
 
 def test_only_rejects_unknown_snippet(tmp_path):
