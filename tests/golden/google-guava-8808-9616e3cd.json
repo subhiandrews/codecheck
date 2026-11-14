@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "case_id": "google-guava-8808-9616e3cd",
+  "repo": "google/guava",
+  "pr": 8808,
+  "head_sha": "9616e3cdf84617dda10618c82163d143b59d1cce",
+  "diff": "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\nindex 6f5376a375..a16d4c5206 100644\n--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ -28,6 +28,9 @@ jobs:\n           - os: windows-latest\n             java: 25\n             root-pom: pom.xml\n+          - os: macos-latest\n+            java: 25\n+            root-pom: pom.xml\n     runs-on: ${{ matrix.os }}\n     env:\n       ROOT_POM: ${{ matrix.root-pom }}\n",
+  "reviewer_outputs": {
+    "architect": [
+      {
+        "anchor": "",
+        "category": "ci",
+        "file": ".github/workflows/ci.yml",
+        "line": 31,
+        "message": "The new macos-latest matrix entry is part of the `test` job. `publish_snapshot` and `generate_docs` both declare `needs: [test, gradle-test]`, so any macOS-only failure or flake will also block snapshot publishing and docs generation on master. The Windows entry already has this coupling, so it matches existing convention. If macOS is still experimental, consider `continue-on-error` for that entry, or confirm that gating releases on it is intended. The `macos-latest` label is also a moving alias (currently arm64), unlike pinned images.",
+        "reviewers": [
+          "architect"
+        ],
+        "severity": "suggestion",
+        "suggestion": ""
+      }
+    ],
+    "pragmatist": [],
+    "skeptic": [
+      {
+        "anchor": "",
+        "category": "ci",
+        "file": ".github/workflows/ci.yml",
+        "line": 31,
+        "message": "The new macos-latest matrix entry is part of the `test` job. `publish_snapshot` and `generate_docs` both declare `needs: [ test, gradle-test ]`. Any macOS-only failure or flake (macos-latest is a floating arm64 image, and the file-system and timing-sensitive tests differ from Linux) will therefore block snapshot publishing and doc generation on master pushes. The PR description says it is probably DO NOT SUBMIT. If it is merged, consider `continue-on-error` for the mac entry, or keep it out of the `needs` gate, until it has proven stable.",
+        "reviewers": [
+          "skeptic"
+        ],
+        "severity": "warning",
+        "suggestion": "          - os: macos-latest\n            java: 25\n            root-pom: pom.xml\n            experimental: true"
+      }
+    ]
+  },
+  "aggregator": {
+    "dropped": [],
+    "findings": [
+      {
+        "category": "ci",
+        "file": ".github/workflows/ci.yml",
+        "line": 31,
+        "message": "The new macos-latest entry is part of the `test` matrix. `publish_snapshot` (line 93) and `generate_docs` (line 122) both declare `needs: [ test, gradle-test ]`, so a macOS-only failure or flake would block snapshot publishing and docs generation on master pushes. The existing windows-latest entry already gates these jobs the same way, so this is consistent with current practice. `macos-latest` is also a floating label (currently arm64). If the Mac run is still experimental, mark that entry as non-blocking. Note that a matrix flag on its own does nothing: the job also needs a `continue-on-error` that reads it.",
+        "reviewers": [
+          "skeptic",
+          "architect"
+        ],
+        "severity": "suggestion",
+        "suggestion": "          - os: macos-latest\n            java: 25\n            root-pom: pom.xml\n            experimental: true\n    # and at job level:\n    continue-on-error: ${{ matrix.experimental == true }}"
+      }
+    ]
+  },
+  "expected_posted": [
+    {
+      "file": ".github/workflows/ci.yml",
+      "line": 31,
+      "category": "ci",
+      "severity": "suggestion",
+      "inline": true
+    }
+  ],
+  "expected_decision": "APPROVE",
+  "labels": [
+    {
+      "id": "02e03a47b37d",
+      "file": ".github/workflows/ci.yml",
+      "line": 31,
+      "severity": "suggestion",
+      "category": "ci",
+      "message": "The new macos-latest entry is part of the `test` matrix. `publish_snapshot` (line 93) and `generate_docs` (line 122) both declare `needs: [ test, gradle-test ]`, so a macOS-only failure or flake would block snapshot publishing and docs generation on master pushes. The existing windows-latest entry already gates these jobs the same way, so this is consistent with current practice. `macos-latest` is also a floating label (currently arm64). If the Mac run is still experimental, mark that entry as non-blocking. Note that a matrix flag on its own does nothing: the job also needs a `continue-on-error` that reads it.",
+      "label": "expected"
+    }
+  ],
+  "misses": [],
+  "signals": {
+    "tool_calls": 42,
+    "tool_errors": [
+      {
+        "agent": "b83d354c-b2f1-4bba-8c8c-04065ebabbeb",
+        "tool": "Bash"
+      },
+      {
+        "agent": "agent-a13055a41e78afe5d",
+        "tool": "Read"
+      },
+      {
+        "agent": "agent-a13055a41e78afe5d",
+        "tool": "Read"
+      }
+    ],
+    "retries": 0,
+    "permission_denials": 0,
+    "agents": [
+      {
+        "name": "b83d354c-b2f1-4bba-8c8c-04065ebabbeb",
+        "tool_calls": 14,
+        "tool_errors": 1,
+        "turns": 24,
+        "output_tokens": 6432
+      },
+      {
+        "name": "agent-a13055a41e78afe5d",
+        "tool_calls": 10,
+        "tool_errors": 2,
+        "turns": 11,
+        "output_tokens": 4664
+      },
+      {
+        "name": "agent-a1ead983c0247144e",
+        "tool_calls": 6,
+        "tool_errors": 0,
+        "turns": 7,
+        "output_tokens": 1439
+      },
+      {
+        "name": "agent-a1fcb5d990b0f84cc",
+        "tool_calls": 6,
+        "tool_errors": 0,
+        "turns": 7,
+        "output_tokens": 2245
+      },
+      {
+        "name": "agent-a23df64366c856120",
+        "tool_calls": 6,
+        "tool_errors": 0,
+        "turns": 7,
+        "output_tokens": 3319
+      }
+    ],
+    "unreadable_lines": 0
+  },
+  "label_status": "confirmed",
+  "repo_private": false
+}
