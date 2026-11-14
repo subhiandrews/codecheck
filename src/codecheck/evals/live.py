@@ -70,6 +70,10 @@ def _category_ok(value: object) -> bool:
     return isinstance(value, list) and bool(value) and all(isinstance(v, str) and v.strip() for v in value)
 
 
+def _severities_ok(value: object) -> bool:
+    return isinstance(value, list) and bool(value) and all(v in SEVERITIES for v in value)
+
+
 def _int_line(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 1
 
@@ -108,8 +112,10 @@ def _problems(snippet: object) -> list[str]:
         for i, r in enumerate(rules):
             if not (isinstance(r, dict) and _path_ok(r.get("file"))
                     and (r.get("category") is None or _category_ok(r["category"]))
-                    and (r.get("line") is None or _int_line(r["line"]))):
-                out.append(f"must_not_report[{i}] needs file, and optionally category and line")
+                    and (r.get("line") is None or _int_line(r["line"]))
+                    and (r.get("severity") is None or _severities_ok(r["severity"]))):
+                out.append(f"must_not_report[{i}] needs file, and optionally category, line and severity "
+                           f"(a non-empty list of {', '.join(SEVERITIES)})")
     if "calibrated" in snippet and not isinstance(snippet["calibrated"], bool):
         out.append("calibrated must be true or false")
     return out

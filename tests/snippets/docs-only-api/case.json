@@ -11,11 +11,9 @@
   "must_not_report": [
     {
       "file": "TextUtil.java",
-      "category": [
-        "docs",
-        "documentation",
-        "javadoc",
-        "since"
+      "severity": [
+        "warning",
+        "critical"
       ]
     }
   ]

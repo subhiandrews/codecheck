@@ -73,3 +73,14 @@ def test_exact_severity_match_preferred_over_nearer_mismatch():
     # The nearer finding has the wrong severity; the right-severity one must still be matched.
     res = match_case([_f(10, "critical")], [], [_f(10, "warning"), _f(12, "critical")])
     assert res["matched"] == 1 and res["severity_mismatches"] == []
+
+
+def test_forbidden_rule_with_severity_list():
+    rule = {"file": "a.py", "severity": ["warning", "critical"]}
+    assert match_case([], [rule], [_f(3, "warning", "style")])["forbidden_hits"]  # any category when none given
+    assert match_case([], [rule], [_f(3, "Critical")])["forbidden_hits"]
+    assert match_case([], [rule], [_f(3, "suggestion", "docs")])["forbidden_hits"] == []
+    both = {"file": "a.py", "category": ["docs"], "severity": ["warning"]}
+    assert match_case([], [both], [_f(3, "warning", "style")])["forbidden_hits"] == []
+    assert match_case([], [both], [_f(3, "warning", "docs")])["forbidden_hits"]
+    assert match_case([], [{"file": "a.py"}], [_f(3, "suggestion")])["forbidden_hits"]  # no key: as before
