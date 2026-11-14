@@ -165,11 +165,11 @@ def test_load_snippets_reads_sorted_cases(tmp_path):
     assert [s["name"] for s in load_snippets(tmp_path)] == ["a", "b"]
 
 
-def test_shipped_snippets_load_and_are_marked_uncalibrated():
+def test_shipped_snippets_load_and_are_marked_calibrated():
     assert DEFAULT_SNIPPETS == REPO / "tests" / "snippets"
     snippets = {s["name"]: s for s in load_snippets(DEFAULT_SNIPPETS)}
     assert set(snippets) == {"off-by-one", "clean-code", "weaker-access-override", "docs-only-api"}
-    assert all(s["calibrated"] is False for s in snippets.values())
+    assert all(s["calibrated"] is True for s in snippets.values())
     assert snippets["off-by-one"]["expected"] and snippets["clean-code"]["expected"] == []
     assert [e["severity"] for e in snippets["weaker-access-override"]["expected"]] == ["critical"]
     assert snippets["docs-only-api"]["expected"] == []
@@ -319,7 +319,7 @@ def test_readme_documents_the_live_eval():
     readme = (REPO / "README.md").read_text()
     section = readme.split("### Live snippet eval", 1)[1].split("\n## ", 1)[0]
     for text in ("costs real tokens", "not run in CI", "local only", "--if-reachable", "--only", "--snippets",
-                 f"within {TOLERANCE}", f"{round(RECALL_BAR * 100)}%", '"calibrated": false', "CODE_CHECK_STATE_DIR",
+                 f"within {TOLERANCE}", f"{round(RECALL_BAR * 100)}%", '"calibrated": true', "CODE_CHECK_STATE_DIR",
                  "CODE_CHECK_SHADOW__STORE", "CODE_CHECK_SHADOW__HANDOFF=1", "case-insensitively"):
         assert text in section, text
 

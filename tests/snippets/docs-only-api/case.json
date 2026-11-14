@@ -1,6 +1,6 @@
 {
   "name": "docs-only-api",
-  "calibrated": false,
+  "calibrated": true,
   "base": {
     "TextUtil.java": "package demo;\n\npublic final class TextUtil {\n    private TextUtil() {}\n\n    public static String trim(String s) {\n        return s == null ? \"\" : s.trim();\n    }\n}\n"
   },

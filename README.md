@@ -315,7 +315,7 @@ Matching is tolerant, because live reviews vary from run to run. A reported find
 
 **Not yet verified on a real machine.** Real-machine smoke tests of `eval --live` have not been done, so these real-CLI behaviours are unverified: whether `--plugin-dir` loads the plugin twice when it is also installed as a plugin, whether a headless `claude -p` discovers the `review-local` skill from `--plugin-dir`, and whether `bin/code-check` bootstraps its runtime correctly inside the nested `claude -p` process.
 
-**Calibration still to do.** The two shipped snippets (`off-by-one`, `clean-code`) are marked `"calibrated": false`: their expected categories and severities were chosen from the reviewers' instructions, not from a real run. Run `code-check eval --live` once by hand, then adjust each snippet's category list and severity to what the panel reports where that is a defensible judgment, and set `calibrated` to true.
+**Calibration.** All four shipped snippets are marked `"calibrated": true`. They were run by hand twice against a real model on 2026-11-13 and passed every time, with the expected finding at the expected line (`weaker-access-override` is reported under the category `compile`; `docs-only-api` yields at most a suggestion, such as the `isBlank` versus `trim()` semantics point). Live results still vary from run to run, so rerun a snippet that fails once before changing it.
 
 ## Development
 

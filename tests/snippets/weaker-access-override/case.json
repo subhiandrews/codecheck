@@ -1,6 +1,6 @@
 {
   "name": "weaker-access-override",
-  "calibrated": false,
+  "calibrated": true,
   "base": {
     "Base.java": "package demo;\n\nabstract class Base {\n    void visit(String s) {}\n\n    int count() {\n        return 0;\n    }\n}\n",
     "Impl.java": "package demo;\n\nclass Impl extends Base {\n    @Override\n    void visit(String s) {}\n}\n"
