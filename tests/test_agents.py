@@ -124,14 +124,15 @@ def test_every_agent_reads_run_files_and_knows_grep_is_ripgrep():
         assert "run_files" in body, name
         assert "if `RUN_DIR/CODE_CHECK.md` exists" not in body, name
     for name, body in render_all(ModelsConfig()).items():
-        if name != "aggregator.md":
-            assert "Grep is ripgrep: escape literal parentheses and brackets" in body, name
+        assert "Grep is ripgrep: escape literal parentheses and brackets" in body, name
 
 
 def test_aggregator_states_severity_mirror_and_cap_rules():
     body = render_all(ModelsConfig())["aggregator.md"]
     for phrase in ("highest severity", "parallel trees", "at most `suggestion`", "after the merge",
-                   "already-raised", "unsupported-style", "existing-comments.md"):
+                   "already-raised", "unsupported-style", "existing-comments.md",
+                   "Never apply it to a correctness, build or security defect", "Whenever you lower a severity",
+                   "the tree whose copy sits on a changed line", "skip the scope kind"):
         assert phrase in body, phrase
 
 
