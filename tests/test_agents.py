@@ -126,3 +126,15 @@ def test_every_agent_reads_run_files_and_knows_grep_is_ripgrep():
     for name, body in render_all(ModelsConfig()).items():
         if name != "aggregator.md":
             assert "Grep is ripgrep: escape literal parentheses and brackets" in body, name
+
+
+def test_aggregator_states_severity_mirror_and_cap_rules():
+    body = render_all(ModelsConfig())["aggregator.md"]
+    for phrase in ("highest severity", "parallel trees", "at most `suggestion`", "after the merge",
+                   "already-raised", "unsupported-style", "existing-comments.md"):
+        assert phrase in body, phrase
+
+
+def test_aggregator_reads_context_and_run_files_before_findings():
+    body = render_all(ModelsConfig())["aggregator.md"]
+    assert body.index("context.json") < body.index("run_files") < body.index("CODE_CHECK.md") < body.index("ingest.json") < body.index("findings/<member>.json")
