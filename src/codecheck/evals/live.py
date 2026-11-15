@@ -146,7 +146,7 @@ def load_snippets(directory: Path) -> list[dict]:
 # --- the model -------------------------------------------------------------------------------------------------
 
 
-def _claude_bin(ctx) -> str:
+def claude_bin(ctx) -> str:
     binary = ctx.config.run_pr.claude_bin
     # After `env`, a leading '-' would be an env option and an '=' would make it another assignment.
     if not binary.strip() or binary.lstrip().startswith("-") or "=" in binary:
@@ -156,7 +156,7 @@ def _claude_bin(ctx) -> str:
 
 def unreachable_reason(ctx) -> str | None:
     """None when a cheap `claude -p` probe answers with non-error JSON, else why not."""
-    argv = [_claude_bin(ctx), "-p", "reply with ok", "--output-format", "json", "--permission-mode", "dontAsk"]
+    argv = [claude_bin(ctx), "-p", "reply with ok", "--output-format", "json", "--permission-mode", "dontAsk"]
     res = ctx.runner.run(argv, timeout=PROBE_TIMEOUT, input="")  # input="" closes stdin
     try:
         data = json.loads(res.stdout)
@@ -214,7 +214,7 @@ def review_argv(ctx, workdir: Path) -> list[str]:
                # A user's review.security would add an Opus security agent to every snippet.
                "CODE_CHECK_REVIEW__SECURITY=0"]
     # The prompt comes first: --allowedTools and --add-dir are variadic and would swallow a later positional.
-    return ["env", *UNSET_GIT_REPO_VARS, *isolate, _claude_bin(ctx), "-p", REVIEW_PROMPT, "--plugin-dir", str(root),
+    return ["env", *UNSET_GIT_REPO_VARS, *isolate, claude_bin(ctx), "-p", REVIEW_PROMPT, "--plugin-dir", str(root),
             "--output-format", "json", "--permission-mode", cfg.permission_mode, "--permission-prompts", "none",
             "--add-dir", str(workdir), "--allowedTools", *cfg.review_allowed_tools]
 

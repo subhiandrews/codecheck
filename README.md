@@ -126,6 +126,7 @@ language_experts = "haiku"
 reviewers = "sonnet"           # architect, pragmatist, skeptic
 deep = "sonnet"
 security = "opus"             # the opt-in security reviewer
+judge = "opus"                # `eval --calibrate` only: the model that judges findings (developer tooling)
 [models.per_language]          # for example: rust = "sonnet"
 
 [deep_reviewer]
@@ -317,6 +318,18 @@ Matching is tolerant, because live reviews vary from run to run. A reported find
 **Not yet verified on a real machine.** Real-machine smoke tests of `eval --live` have not been done, so these real-CLI behaviours are unverified: whether `--plugin-dir` loads the plugin twice when it is also installed as a plugin, whether a headless `claude -p` discovers the `review-local` skill from `--plugin-dir`, and whether `bin/code-check` bootstraps its runtime correctly inside the nested `claude -p` process.
 
 **Calibration.** All four shipped snippets are marked `"calibrated": true`. They were run by hand twice against a real model on 2026-11-13 and passed every time, with the expected finding at the expected line (`weaker-access-override` is reported under the category `compile`; `docs-only-api` yields at most a suggestion, such as the `isBlank` versus `trim()` semantics point). Live results still vary from run to run, so rerun a snippet that fails once before changing it.
+
+### Judge calibration (developer tooling)
+
+`eval --calibrate` measures an LLM judge before anything relies on it. It asks the judge model (`models.judge`, default `opus`) about every human-labelled finding in `tests/golden` (`expected` means a person acted on or agreed with it, `not_expected` means a person disputed it): is this finding worth raising for this diff? It prints `{"passed", "agreement": {"n", "agree", "rate", "kappa", "errors"}, "controls": {"n", "said_same", "errors"}, "cost_usd", "cases": [...]}`. It passes when the judge agrees with the humans on at least 80% of the findings and no answer was unusable. The human comments the review missed are asked against the findings in the same file as negative controls; they are listed for a person to read and do not decide `passed`.
+
+```bash
+code-check eval --calibrate                    # every golden case
+code-check eval --calibrate --only CASE_ID     # one case
+code-check eval --calibrate --cases path/to/dir
+```
+
+Like `--live` it is local only, costs real tokens and probes that a model is reachable first. The judge gets no tools, its prompt goes on stdin, and findings, comments and diffs are fenced as untrusted data. A reply must be one JSON object with a real boolean and a short reason, otherwise it counts as an error and as a disagreement. The judge is advisory: it is not run in CI or by the commit gates, and `handoff-queue check` does not depend on it. First real run (2026-11-15, `opus`): 14 findings judged, 50% agreement, kappa -0.32, so it fails the 80% bar; a diff-only "worth raising" question does not track human reactions, and nothing should rely on it yet. The run cost about $1 for 23 calls. Findings without message text are skipped and counted under `skipped`. Design and results: `docs/superpowers/specs/2026-11-15-judge-eval-design.md`.
 
 ## Hand-off rounds (maintainers)
 
