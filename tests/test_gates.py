@@ -32,7 +32,8 @@ def sandbox(tmp_path, git_env, monkeypatch):
     for name in ("gates.sh", "gate-paths.txt", "install-git-hooks.sh"):
         shutil.copy2(REPO / "scripts" / name, repo / "scripts" / name)
     (repo / ".githooks").mkdir()
-    shutil.copy2(REPO / ".githooks/pre-commit", repo / ".githooks/pre-commit")
+    for hook in ("pre-commit", "pre-push"):
+        shutil.copy2(REPO / ".githooks" / hook, repo / ".githooks" / hook)
     fake_dir = tmp_path / "fake"
     fake_dir.mkdir()
     fake = fake_dir / "fake-cli"
@@ -75,14 +76,150 @@ def test_gates_runs_replay_always(sandbox):
     assert sandbox.calls() == ["eval --replay"]
 
 
-def test_gates_runs_live_only_for_gated_paths(sandbox):
-    sandbox.stage("README.md")
+LIVE = ["eval --replay", "eval --live --if-reachable"]
+
+
+def on_branch(box, *paths):
+    """Commit a base, mark it as origin/main, then commit `paths` on top: the branch a PR would carry."""
+    box.stage("base.txt")
+    git(box.repo, "commit", "-qm", "base", "--no-verify")
+    git(box.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    box.stage(*paths)
+    git(box.repo, "commit", "-qm", "change", "--no-verify")
+    box.log.unlink(missing_ok=True)
+
+
+def test_commit_gate_never_runs_the_live_eval(sandbox):
+    sandbox.stage("agents/x.md", "src/codecheck/evals/live.py")
     assert run_gates(sandbox).returncode == 0
     assert sandbox.calls() == ["eval --replay"]
+    assert run_gates(sandbox, "--if-no-git-hook").returncode == 0
+    assert sandbox.calls() == ["eval --replay", "eval --replay"]
+
+
+def test_pr_gate_runs_live_only_for_gated_paths(sandbox):
+    on_branch(sandbox, "README.md")
+    assert run_gates(sandbox, "--pr").returncode == 0
+    assert sandbox.calls() == ["eval --replay"]
+
+
+def test_pr_gate_runs_live_for_a_gated_path(sandbox):
+    on_branch(sandbox, "README.md", "agents/x.md")
+    assert run_gates(sandbox, "--pr").returncode == 0
+    assert sandbox.calls() == LIVE
+
+
+def test_pr_gate_ignores_uncommitted_changes(sandbox):
+    on_branch(sandbox, "README.md")
+    (sandbox.repo / "agents").mkdir()
+    (sandbox.repo / "agents/y.md").write_text("y\n")
+    git(sandbox.repo, "add", "agents/y.md")
+    assert run_gates(sandbox, "--pr").returncode == 0
+    assert sandbox.calls() == ["eval --replay"]
+
+
+def test_pr_gate_without_a_base_runs_the_live_eval(sandbox):
+    sandbox.stage("README.md")
+    git(sandbox.repo, "commit", "-qm", "only", "--no-verify")
+    assert run_gates(sandbox, "--pr").returncode == 0
+    assert sandbox.calls() == LIVE
+
+
+def test_pr_gate_base_can_be_overridden(sandbox, monkeypatch):
+    on_branch(sandbox, "agents/x.md")
+    git(sandbox.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    assert run_gates(sandbox, "--pr").returncode == 0
+    assert sandbox.calls() == ["eval --replay"]
+    git(sandbox.repo, "update-ref", "refs/heads/other", "HEAD~1")
+    monkeypatch.setenv("CODE_CHECK_BASE", "other")
     sandbox.log.unlink()
+    assert run_gates(sandbox, "--pr").returncode == 0
+    assert sandbox.calls() == LIVE
+
+
+def test_gates_reject_an_unknown_argument(sandbox):
+    res = run_gates(sandbox, "--bogus")
+    assert res.returncode == 2 and "unknown argument" in res.stderr and sandbox.calls() == []
+
+
+def test_pre_push_runs_the_live_gate_only_for_a_new_branch(sandbox, tmp_path):
+    remote = tmp_path / "remote.git"
+    git(tmp_path, "init", "-q", "--bare", str(remote))
+    git(sandbox.repo, "config", "core.hooksPath", ".githooks")
+    git(sandbox.repo, "remote", "add", "origin", str(remote))
+    sandbox.stage("base.txt")
+    git(sandbox.repo, "commit", "-qm", "base", "--no-verify")
+    git(sandbox.repo, "branch", "-M", "main")
+    git(sandbox.repo, "push", "-q", "origin", "main")
+    git(sandbox.repo, "switch", "-qc", "feature")
     sandbox.stage("agents/x.md")
-    assert run_gates(sandbox).returncode == 0
-    assert sandbox.calls() == ["eval --replay", "eval --live --if-reachable"]
+    git(sandbox.repo, "commit", "-qm", "change", "--no-verify")
+    sandbox.log.unlink(missing_ok=True)
+
+    git(sandbox.repo, "push", "-q", "origin", "feature")
+    assert sandbox.calls() == LIVE
+
+    sandbox.log.unlink()
+    sandbox.stage("agents/y.md")
+    git(sandbox.repo, "commit", "-qm", "more", "--no-verify")
+    git(sandbox.repo, "push", "-q", "origin", "feature")
+    assert sandbox.calls() == []
+
+    git(sandbox.repo, "tag", "v1")
+    git(sandbox.repo, "push", "-q", "origin", "v1")
+    git(sandbox.repo, "push", "-q", "origin", ":feature")
+    assert sandbox.calls() == []
+
+
+def test_pre_push_gates_the_pushed_commit_not_the_checked_out_one(sandbox, tmp_path):
+    remote = tmp_path / "remote.git"
+    git(tmp_path, "init", "-q", "--bare", str(remote))
+    git(sandbox.repo, "config", "core.hooksPath", ".githooks")
+    git(sandbox.repo, "remote", "add", "origin", str(remote))
+    sandbox.stage("base.txt")
+    git(sandbox.repo, "commit", "-qm", "base", "--no-verify")
+    git(sandbox.repo, "branch", "-M", "main")
+    git(sandbox.repo, "push", "-q", "origin", "main")
+    git(sandbox.repo, "fetch", "-q", "origin")
+    git(sandbox.repo, "switch", "-qc", "gated")
+    sandbox.stage("agents/x.md")
+    git(sandbox.repo, "commit", "-qm", "gated change", "--no-verify")
+    git(sandbox.repo, "switch", "-qc", "plain", "main")
+    sandbox.stage("README.md")
+    git(sandbox.repo, "commit", "-qm", "plain change", "--no-verify")
+
+    # HEAD is the ungated branch; the commit pushed touches a gated path.
+    sandbox.log.unlink(missing_ok=True)
+    git(sandbox.repo, "push", "-q", "origin", "gated")
+    assert sandbox.calls() == LIVE
+
+    # And the reverse: HEAD is gated, the pushed commit is not.
+    git(sandbox.repo, "switch", "-q", "gated")
+    sandbox.log.unlink()
+    git(sandbox.repo, "push", "-q", "origin", "plain")
+    assert sandbox.calls() == ["eval --replay"]
+
+
+def test_pr_gate_rejects_a_ref_that_looks_like_an_option(sandbox, monkeypatch):
+    on_branch(sandbox, "agents/x.md")
+    monkeypatch.setenv("CODE_CHECK_REF", "--output=evil")
+    res = run_gates(sandbox, "--pr")
+    assert res.returncode == 2 and "CODE_CHECK_REF" in res.stderr
+    assert not (sandbox.repo / "evil").exists()
+
+
+def test_pre_push_blocks_a_new_branch_when_the_live_gate_fails(sandbox, tmp_path):
+    remote = tmp_path / "remote.git"
+    git(tmp_path, "init", "-q", "--bare", str(remote))
+    git(sandbox.repo, "config", "core.hooksPath", ".githooks")
+    git(sandbox.repo, "remote", "add", "origin", str(remote))
+    sandbox.stage("agents/x.md")
+    git(sandbox.repo, "commit", "-qm", "change", "--no-verify")
+    (sandbox.fake_dir / "fail-live").write_text("")
+    res = subprocess.run(["git", "push", "-q", "origin", "HEAD:refs/heads/feature"], cwd=sandbox.repo,
+                         capture_output=True, text=True, check=False)
+    assert res.returncode != 0 and "eval --live failed" in res.stderr
+    assert git(remote, "branch", "--list").stdout.strip() == ""
 
 
 def test_gates_fail_when_replay_fails(sandbox):
@@ -96,8 +233,8 @@ def test_gates_fail_when_replay_fails(sandbox):
 
 def test_gates_fail_when_live_fails(sandbox):
     (sandbox.fake_dir / "fail-live").write_text("")
-    sandbox.stage("agents/x.md")
-    res = run_gates(sandbox)
+    on_branch(sandbox, "agents/x.md")
+    res = run_gates(sandbox, "--pr")
     assert res.returncode != 0
     assert "eval --live failed" in res.stderr and "boom-case" in res.stderr
 
@@ -167,7 +304,7 @@ def test_gate_paths_patterns_match_expected_files():
 
 
 def test_gates_work_with_git_env_exported(sandbox, tmp_path):
-    sandbox.stage("agents/x.md")
+    on_branch(sandbox, "agents/x.md")
     env = {
         **os.environ,
         "GIT_DIR": str(sandbox.repo / ".git"),
@@ -175,9 +312,9 @@ def test_gates_work_with_git_env_exported(sandbox, tmp_path):
     }
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
-    res = run_gates(sandbox, cwd=elsewhere, env=env)
+    res = run_gates(sandbox, "--pr", cwd=elsewhere, env=env)
     assert res.returncode == 0, res.stderr
-    assert sandbox.calls() == ["eval --replay", "eval --live --if-reachable"]
+    assert sandbox.calls() == LIVE
 
 
 def test_install_script_sets_hookspath_in_temp_repo_only(sandbox):
@@ -218,7 +355,9 @@ def test_precommit_hook_runs_gates(sandbox):
     assert git(sandbox.repo, "rev-list", "--count", "HEAD").stdout.strip() == "1"
 
 
-@pytest.mark.parametrize("script", ["scripts/gates.sh", "scripts/install-git-hooks.sh", ".githooks/pre-commit"])
+@pytest.mark.parametrize(
+    "script", ["scripts/gates.sh", "scripts/install-git-hooks.sh", ".githooks/pre-commit", ".githooks/pre-push"],
+)
 def test_scripts_parse_and_are_executable(script):
     assert subprocess.run(["bash", "-n", str(REPO / script)], check=False).returncode == 0
     assert os.access(REPO / script, os.X_OK)
@@ -230,10 +369,13 @@ def test_claude_settings_has_gates_hook():
     import json
 
     hooks = json.loads((REPO / ".claude/settings.json").read_text())["hooks"]["PreToolUse"][0]["hooks"]
-    assert len(hooks) == 3
-    last = hooks[2]
-    assert last["if"] == "Bash(git commit*)" and last["timeout"] == 900
-    assert "scripts/gates.sh" in last["command"] and '"$G" --if-no-git-hook' in last["command"]
+    assert len(hooks) == 4
+    commit, pr = hooks[2], hooks[3]
+    assert commit["if"] == "Bash(git commit*)" and commit["timeout"] == 900
+    assert "scripts/gates.sh" in commit["command"] and '"$G" --if-no-git-hook' in commit["command"]
+    assert "--pr" not in commit["command"]
+    assert pr["if"] == "Bash(gh pr create*)" and pr["timeout"] == 900
+    assert '"$G" --pr --if-no-git-hook' in pr["command"]
 
 
 def test_gates_work_when_repo_path_has_a_space(tmp_path, git_env, monkeypatch):
@@ -273,52 +415,6 @@ def test_gates_show_stderr_on_failing_run(sandbox):
     assert "shadow recording failed" in res.stderr and '"passed": false' in res.stderr
 
 
-def _commit_base(box):
-    box.stage("base.txt", "agents/x.md")
-    git(box.repo, "commit", "-qm", "base", "--no-verify")
-    box.log.unlink(missing_ok=True)
-
-
-def test_claude_hook_mode_counts_unstaged_tracked_changes(sandbox):
-    _commit_base(sandbox)
-    (sandbox.repo / "agents/x.md").write_text("changed\n")
-    assert run_gates(sandbox, "--if-no-git-hook").returncode == 0
-    assert sandbox.calls() == ["eval --replay", "eval --live --if-reachable"]
-
-
-def test_claude_hook_mode_counts_untracked_gated_files(sandbox):
-    _commit_base(sandbox)
-    (sandbox.repo / "skills").mkdir()
-    (sandbox.repo / "skills/new.md").write_text("n\n")
-    assert run_gates(sandbox, "--if-no-git-hook").returncode == 0
-    assert sandbox.calls() == ["eval --replay", "eval --live --if-reachable"]
-
-
-def test_normal_mode_ignores_unstaged_changes(sandbox):
-    _commit_base(sandbox)
-    (sandbox.repo / "agents/x.md").write_text("changed\n")
-    (sandbox.repo / "skills").mkdir()
-    (sandbox.repo / "skills/new.md").write_text("n\n")
-    assert run_gates(sandbox).returncode == 0
-    assert sandbox.calls() == ["eval --replay"]
-    sandbox.log.unlink()
-    git(sandbox.repo, "add", "agents/x.md")
-    assert run_gates(sandbox).returncode == 0
-    assert sandbox.calls() == ["eval --replay", "eval --live --if-reachable"]
-
-
-def test_claude_hook_mode_without_head_does_not_crash(sandbox):
-    (sandbox.repo / "README.md").write_text("r\n")
-    res = run_gates(sandbox, "--if-no-git-hook")
-    assert res.returncode == 0, res.stderr
-    assert sandbox.calls() == ["eval --replay"]
-    sandbox.log.unlink()
-    (sandbox.repo / "agents").mkdir()
-    (sandbox.repo / "agents/y.md").write_text("y\n")
-    assert run_gates(sandbox, "--if-no-git-hook").returncode == 0
-    assert sandbox.calls() == ["eval --replay", "eval --live --if-reachable"]
-
-
 def _bin_without_python(tmp_path, extra=None):
     """A PATH holding only the tools gates.sh and the fake CLI use: no python3, unless `extra` adds a fake one."""
     bindir = tmp_path / "nopy-bin"
@@ -335,12 +431,12 @@ def _bin_without_python(tmp_path, extra=None):
 
 def test_gates_parse_without_python3_on_path(sandbox, tmp_path):
     env = _bin_without_python(tmp_path)
-    sandbox.stage("agents/x.md")
-    res = run_gates(sandbox, env=env)
+    on_branch(sandbox, "agents/x.md")
+    res = run_gates(sandbox, "--pr", env=env)
     assert res.returncode == 0, res.stderr
-    assert sandbox.calls() == ["eval --replay", "eval --live --if-reachable"]
+    assert sandbox.calls() == LIVE
     (sandbox.fake_dir / "fail-live").write_text("")
-    res = run_gates(sandbox, env=env)
+    res = run_gates(sandbox, "--pr", env=env)
     assert res.returncode != 0 and "eval --live failed" in res.stderr
 
 
@@ -386,13 +482,19 @@ def test_gates_default_cli_parses_with_its_own_interpreter(tmp_path, git_env, mo
 
 
 def test_gates_print_one_summary_line_on_success(sandbox):
-    sandbox.stage("README.md")
     res = run_gates(sandbox)
     assert res.returncode == 0 and res.stdout == ""
-    assert res.stderr.strip().splitlines()[-1] == "gates: replay passed; live skipped (no gated path)"
-    sandbox.stage("agents/x.md")
-    res = run_gates(sandbox)
+    assert res.stderr.strip().splitlines()[-1] == "gates: replay passed; live eval runs when a new branch is pushed"
+    on_branch(sandbox, "README.md")
+    res = run_gates(sandbox, "--pr")
+    assert res.stdout == "" and res.stderr.strip().splitlines()[-1] == "gates: replay passed; live skipped (no gated path)"
+    on_branch_more = sandbox.repo / "agents"
+    on_branch_more.mkdir()
+    (on_branch_more / "x.md").write_text("x\n")
+    git(sandbox.repo, "add", "agents/x.md")
+    git(sandbox.repo, "commit", "-qm", "gated", "--no-verify")
+    res = run_gates(sandbox, "--pr")
     assert res.stdout == "" and res.stderr.strip().splitlines()[-1] == "gates: replay passed; live passed"
     _fake(sandbox, "echo '{\"passed\": true, \"skipped\": \"model not reachable: x\", \"cases\": []}'\n")
-    res = run_gates(sandbox)
+    res = run_gates(sandbox, "--pr")
     assert res.stderr.strip().splitlines()[-1] == "gates: replay passed; live skipped (no model reachable)"
