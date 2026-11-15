@@ -98,7 +98,7 @@ def parse_verdict(stdout: str, returncode: int, stderr: str, *, key: str) -> dic
         text = m.group(1).strip()
     try:
         obj, end = json.JSONDecoder().raw_decode(text)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         return _failure("the reply is not one JSON object", cost)
     if text[end:].strip() or not isinstance(obj, dict):
         return _failure("the reply is not one JSON object", cost)
@@ -151,12 +151,13 @@ def judge_case(ctx, expected: list[dict], forbidden: list[dict], findings: list[
     """
     used: set[int] = set()
     matches, unmatched, forbidden_hits = [], [], []
-    errors, cost = 0, 0.0
+    errors, cost, unpriced = 0, 0.0, 0
 
     def ask(concept, i):
-        nonlocal errors, cost
+        nonlocal errors, cost, unpriced
         v = judge_pair(ctx, concept, findings[i])
         cost += v["cost"] or 0.0
+        unpriced += v["cost"] is None
         errors += 0 if v["ok"] else 1
         return v
 
@@ -179,7 +180,7 @@ def judge_case(ctx, expected: list[dict], forbidden: list[dict], findings: list[
     return {"passed": recall >= RECALL_BAR and not forbidden_hits and errors == 0,
             "matched": len(matches), "expected": len(expected), "recall": round(recall, 3), "matches": matches,
             "unmatched_concepts": unmatched, "unmatched_findings": [f for i, f in enumerate(findings) if i not in used],
-            "forbidden_hits": forbidden_hits, "errors": errors, "cost_usd": cost}
+            "forbidden_hits": forbidden_hits, "errors": errors, "cost_usd": cost, "unpriced_calls": unpriced}
 
 
 def agreement(pairs: list[tuple[bool, bool]]) -> dict:
@@ -214,7 +215,7 @@ def _calibrate_case(ctx, case: dict) -> dict:
         human = f["label"] == "expected"
         rows.append({"id": f.get("id"), "file": f.get("file"), "line": f.get("line"), "human": human,
                      "judge": v["value"], "agree": v["ok"] and v["value"] == human, "reason": v["reason"],
-                     "error": v["error"], "cost": v["cost"] or 0.0})
+                     "error": v["error"], "cost": v["cost"]})
     for miss in case["misses"]:
         if not isinstance(miss, dict) or not isinstance(miss.get("body"), str):
             continue
@@ -228,7 +229,7 @@ def _calibrate_case(ctx, case: dict) -> dict:
             v = judge_pair(ctx, concept, f)
             controls.append({"comment": miss["body"], "file": miss.get("path"), "line": miss.get("line"),
                              "finding_id": f.get("id"), "judge": v["value"] if v["ok"] else None,
-                             "reason": v["reason"], "error": v["error"], "cost": v["cost"] or 0.0})
+                             "reason": v["reason"], "error": v["error"], "cost": v["cost"]})
     return {"case_id": case["case_id"], "findings": rows, "controls": controls, "skipped": skipped}
 
 
@@ -246,21 +247,25 @@ def run_calibration(ctx, cases_dir: Path, only: str | None = None) -> dict:
             raise CodeCheckError(f"unknown case {only!r}; known: {', '.join(names) or 'none'}")
         cases = [c for c in cases if c["case_id"] == only]
     results = [_calibrate_case(ctx, c) for c in cases]
-    pairs, errors, cost = [], 0, 0.0
+    pairs, errors, cost, unpriced = [], 0, 0.0, 0
     for r in results:
         for row in r["findings"]:
-            cost += row.pop("cost")
+            c = row.pop("cost")
+            cost += c or 0.0
+            unpriced += c is None
             if row["judge"] is None:
                 errors += 1  # reported in `errors` and fails the run, but kept out of agreement and kappa
             else:
                 pairs.append((row["human"], row["judge"]))
-        for c in r["controls"]:
-            cost += c.pop("cost")
+        for ctl_row in r["controls"]:
+            c = ctl_row.pop("cost")
+            cost += c or 0.0
+            unpriced += c is None
     ctl = [c for r in results for c in r["controls"]]
     out = {"agreement": {**agreement(pairs), "errors": errors},
            "controls": {"n": len(ctl), "said_same": sum(1 for c in ctl if c["judge"] is True),
                         "errors": sum(1 for c in ctl if c["judge"] is None)},
-           "skipped": sum(r["skipped"] for r in results), "cost_usd": round(cost, 4), "cases": results}
+           "skipped": sum(r["skipped"] for r in results), "cost_usd": round(cost, 4), "unpriced_calls": unpriced, "cases": results}
     a = out["agreement"]
     out["passed"] = a["n"] > 0 and a["agree"] / a["n"] >= AGREEMENT_BAR and errors == 0  # unrounded, as judge_case does
     if not pairs and not errors:

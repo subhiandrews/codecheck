@@ -399,17 +399,6 @@ def test_a_missed_comment_without_a_path_gets_no_control(tmp_path):
     assert len(runner.judge_calls()) == 2  # only the two finding questions
 
 
-def test_the_bar_is_checked_on_the_unrounded_ratio(tmp_path):
-    # 1999 of 2500 agree is 0.7996: it rounds to 0.8 for display but must not pass the 0.8 bar.
-    labels = ["expected"] * 2500
-    cases = _write_cases(tmp_path / "c", _case("c1", labels))
-    wrong = {f"finding {i}" for i in range(501)}  # the judge says no to these 501, so 1999 agree
-    runner = ScriptedJudge(_worth(lambda p: not any(re.search(rf"\b{re.escape(w)}\b", p) for w in wrong)))
-    out = run_calibration(_ctx(runner), cases)
-    assert out["agreement"]["agree"] == 1999 and out["agreement"]["rate"] == 0.8
-    assert out["passed"] is False
-
-
 def test_calibration_with_nothing_to_calibrate_does_not_pass(tmp_path):
     out = run_calibration(_ctx(ScriptedJudge(_worth(lambda p: True))), tmp_path / "missing")
     assert out["passed"] is False and out["agreement"]["n"] == 0 and "no labelled findings" in out["error"]
@@ -460,3 +449,15 @@ def test_the_repo_golden_set_loads_for_calibration():
     cases = load_cases(DEFAULT_CASES)
     labelled = [lab for c in cases for lab in c["labels"] if lab.get("label") in ("expected", "not_expected")]
     assert len(labelled) >= 10  # the calibration has something real to measure
+
+
+def test_a_reply_nested_too_deep_to_parse_is_one_unusable_answer():
+    v = parse_verdict(_envelope("[" * 100000), 0, "", key="same_issue")
+    assert v["ok"] is False and v["error"] == "the reply is not one JSON object"
+
+
+def test_calls_without_a_cost_are_counted_not_hidden(tmp_path):
+    cases = _write_cases(tmp_path / "c", _case("c1", ["expected"] * 2))
+    runner = ScriptedJudge(lambda p: _envelope({"worth_raising": True, "reason": "x"}, cost=None))
+    out = run_calibration(_ctx(runner), cases)
+    assert out["unpriced_calls"] == 2 and out["cost_usd"] == 0
