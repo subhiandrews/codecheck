@@ -44,7 +44,7 @@ For each item write the evidence (field and value from the hand-off) and one dec
 
 **8. Release bump.** If the branch changed anything the installed plugin ships (`agents/`, `skills/`, `src/`), bump the patch version in the eight places a release touches (`VERSION`, `pyproject.toml`, `package.json`, `package-lock.json`, `src/codecheck/__init__.py`, `tests/test_smoke.py`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`: see commit 8172ce3), one step only. Docs-only and test-only rounds do not bump.
 
-**9. PR.** Commit in small logical commits (conventional style, end with the co-author line the session gives you). `git push -u origin handoff-round/<run>` and `gh pr create --base main` with a body that has the analysis summary, what changed and why, the evidence, the notes, and the eval results. Note the PR number and its URL.
+**9. PR.** Commit in small logical commits (conventional style, end with the co-author line the session gives you). `git push -u origin handoff-round/<run>` and `gh pr create --base main --title <title> --body-file <file>`: write the body to a file in the scratchpad or run directory with the Write tool first, never inline it as a multi-line quoted `--body` (backticks and newlines in the argument make the unattended permission check deny the command). Run every Bash command on its own, never chained with `&&` or `;`, because a chained command is allowed only if every part is on the allow-list. The body has the analysis summary, what changed and why, the evidence, the notes, and the eval results. Note the PR number and its URL.
 
 **10. CI.** `gh pr checks <n> --watch --fail-fast`. Failing check: fix on the branch, push, watch again, at most twice; then release and exit.
 
