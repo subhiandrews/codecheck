@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/subhiandrews/codecheck/security/policy
+    about: Do not open a public issue for a vulnerability. Follow SECURITY.md.
+  - name: Ask a question or offer to help
+    url: https://github.com/subhiandrews/codecheck/discussions
+    about: Questions, ideas, and "I would like to contribute" go in Discussions.

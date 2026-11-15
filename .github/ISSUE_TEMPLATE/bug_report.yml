@@ -1,0 +1,27 @@
+name: Bug report
+description: Something code-check does is wrong or surprising.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The command or skill you ran and the smallest input that shows it. Do not paste secrets, tokens or private code.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: code-check version
+      description: Output of `code-check doctor`, or the contents of `VERSION`.
+  - type: textarea
+    id: output
+    attributes:
+      label: Output or logs
+      render: shell

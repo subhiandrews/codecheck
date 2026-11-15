@@ -33,6 +33,16 @@ CI runs the same three checks. `main` is protected: changes land through a pull 
 - **Security-sensitive input.** Anything that comes from a pull request, a repository's config or reviewer output must never act as a command-line option, must stay inside the directory it is meant for, and must never be force-pushed. Read `CLAUDE.md` for the invariants.
 - Keep changes focused, and explain the why in the pull request description.
 
+## Getting involved
+
+You do not need access to the repository to contribute. Fork it, make your change on a branch and open a pull request. For anything larger than a small fix, open a [proposal issue](../../issues/new/choose) or start a [discussion](../../discussions) first so we can agree on the approach before you spend time on it. Issues labelled `good first issue` and `help wanted` are a good place to start.
+
+## Becoming a maintainer
+
+Write access is by invitation. We usually offer it after a contributor has had several pull requests merged and has reviewed other people's changes carefully. If you would like to be considered, say so in a discussion or in a pull request. Maintainers review pull requests, triage issues and keep the gates in `CLAUDE.md` working.
+
+Changes to the hand-off queue and merge guard, the commit and PR gates (`scripts/`, `.githooks/`), and the CI and release workflows always need the repository owner's review; `.github/CODEOWNERS` lists them.
+
 ## Reporting security problems
 
 Please do not open a public issue for a vulnerability; see [SECURITY.md](SECURITY.md).
