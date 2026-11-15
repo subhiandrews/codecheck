@@ -92,6 +92,45 @@ code-check list-work --mode babysit       # which of my PRs have something new?
 code-check doctor                         # prerequisites
 ```
 
+## How it works
+
+The work is split on purpose. A deterministic CLI (`code-check`) does everything that must be exact: diff parsing, finding validation, deduplication, anchoring comments to lines, approval policy, state, and every `git` and `gh` call. Skills and subagents do only the LLM work: reviewing, aggregating and answering comments.
+
+```mermaid
+flowchart TD
+    start(["/code-check:review-pr or /code-check:review-local"]) --> skill["Skill: runs the steps in order"]
+    skill --> precheck["precheck (CLI, no LLM)<br/>anything new? not a draft, not your own PR"]
+    precheck -->|nothing to review| stop(["Stop"])
+    precheck -->|proceed| context["context (CLI)<br/>sync base, make a worktree,<br/>per-file patches, panel, chunks,<br/>CODE_CHECK.md"]
+    context --> panel
+
+    subgraph panel["Reviewer subagents, in parallel, per chunk (each writes findings/NAME.json)"]
+        direction LR
+        arch[architect]
+        prag[pragmatist]
+        skep[skeptic]
+        lang["lang-NAME<br/>one per language in the diff"]
+        opt["opt-in: security,<br/>performance, deep"]
+    end
+
+    panel --> ingest["ingest (CLI)<br/>validate, anchor to diff lines,<br/>dedupe, scrub secrets"]
+    ingest --> agg["aggregator subagent<br/>merge duplicates, verify every Critical<br/>and Warning against the code, drop noise"]
+    agg --> post["post (CLI)<br/>policy decides approval"]
+    post -->|PR mode| gh["one inline review on the PR<br/>Critical, Warning, Suggestion"]
+    post -->|local mode| out["findings printed to you"]
+    gh --> cleanup["cleanup (CLI)<br/>remove worktree and run directory"]
+    out --> cleanup
+
+    classDef llm fill:#fff3d6,stroke:#b7791f,color:#000
+    classDef cli fill:#e3f2fd,stroke:#1565c0,color:#000
+    class arch,prag,skep,lang,opt,agg llm
+    class precheck,context,ingest,post,cleanup cli
+```
+
+Orange boxes are LLM work and blue boxes are the deterministic CLI. A reviewer that fails or writes unusable output does not stop the review: `ingest` reports it as incomplete and the rest goes on.
+
+`address-comments` and `babysit-pr` use the same CLI without the panel: `workspace` and `threads` collect the unresolved review threads, the skill checks each claim against the code and fixes what is valid, then `commit`, `push` (behind the test gate), `reply` and `resolve` finish the job. Unattended runs (`loop`, `run-pr`) start one headless `claude -p` process per PR and run these same skills.
+
 ## Configuration
 
 Settings are layered, highest precedence first: environment (`CODE_CHECK_<SECTION>__<KEY>`, for example `CODE_CHECK_REVIEW__AUTO_APPROVE=true`), your `~/.config/code-check/config.toml`, the repository's `.code-check.toml`, then the defaults below. Your own settings therefore win over a repository's. Unknown keys and wrong types in files are errors.
@@ -351,6 +390,47 @@ Like `--live` it is local only, costs real tokens and probes that a model is rea
 ## Hand-off rounds (maintainers)
 
 Hand-off folders pile up in `<shadow.store>`. The project skill `.claude/skills/handoff-round/` turns **one** pending hand-off into a pull request: it analyzes the hand-off, writes failing tests first, fixes the tooling (prompts only when a live snippet fails twice), promotes a golden case when every label is backed by human evidence, runs the tests, a review and the evals, opens the PR, waits for CI, merges it with `gh pr merge --squash --admin`, and marks the hand-off analyzed. With nothing pending it prints that and exits, so it is meant for `claude -p` in a loop you write yourself (`scripts/handoff-loop.example.sh` is a starting point; it sleeps and refreshes the plugin between rounds).
+
+Where hand-offs come from and how a round runs:
+
+```mermaid
+flowchart TD
+    review["A review runs (review-pr or review-local)<br/>with shadow.handoff = true"] --> record["The handoff step after post writes a<br/>hand-off folder: the run, findings,<br/>what the aggregator dropped, signals,<br/>transcripts"]
+    record --> queue[("Pending hand-offs<br/>public repositories only")]
+
+    script["scripts/handoff-loop.sh<br/>starts one round, sleeps, refreshes the plugin"] --> round["claude -p runs the handoff-round skill"]
+    round --> pre{"0. Preflight<br/>checkout clean and on main?"}
+    pre -->|no| exit1(["Exit, nothing claimed"])
+    pre -->|yes| claim{"1. Claim<br/>handoff-queue next"}
+    queue -.-> claim
+    claim -->|nothing pending| exit2(["Exit"])
+    claim -->|a hand-off| analyze["2. Analyze (untrusted data)<br/>tooling gaps, noise, misses,<br/>prompt candidates: act or note"]
+    analyze -->|no act items| release["release the claim<br/>retried until 3 attempts, then left alone"]
+    release --> exit3(["Exit"])
+    analyze -->|act items| tests["3. Failing tests first"]
+    tests --> fix["4. Fix with the smallest change<br/>prompts only if a live snippet fails twice"]
+    fix --> golden["5. Golden case, only if every label<br/>is backed by human evidence"]
+    golden --> verify["6. Verify<br/>ruff, pytest, eval --replay"]
+    verify --> review2["7. review-local on the branch<br/>then eval --live"]
+    review2 --> bump["8. Patch version bump if the plugin payload changed"]
+    bump --> pr["9. Open the PR"]
+    pr --> ci{"10. CI green?"}
+    ci -->|"no, after 2 fixes"| release
+    ci -->|yes| guard{"11. Merge guard<br/>handoff-queue check"}
+    guard -->|violations| comment["PR comment, release the claim"]
+    guard -->|ok| merge["gh pr merge --squash --admin<br/>--match-head-commit"]
+    merge --> done["12. handoff-queue done<br/>hand-off marked analyzed"]
+    done --> script
+    exit3 --> script
+    comment --> script
+
+    classDef llm fill:#fff3d6,stroke:#b7791f,color:#000
+    classDef cli fill:#e3f2fd,stroke:#1565c0,color:#000
+    class analyze,tests,fix,golden,review2 llm
+    class claim,guard,release,done cli
+```
+
+The queue and guard run from the **installed plugin**, not from the branch under test, so a round cannot change the code that judges it. Orange steps are LLM work and blue ones are deterministic CLI commands.
 
 Two hidden commands do the exact parts (`code-check handoff-queue`, not listed in `--help`):
 
