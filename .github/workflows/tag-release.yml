@@ -8,7 +8,7 @@ jobs:
   tag:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 # zizmor: ignore[artipacked] the job pushes the tag with the persisted token
       - name: Tag the commit with the plugin version
         run: |
           version="$(tr -d '[:space:]' < VERSION)"

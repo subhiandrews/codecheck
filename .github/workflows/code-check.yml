@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: subhiandrews/code-check-action@v1
+      - uses: subhiandrews/code-check-action@21dc99b31f9e4ec57ca71aae4e03ebf3acc341be # main, includes bot identity (#1)
         with:
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           # PAT of the account that posts the review. code-check skips PRs authored by that same account.
