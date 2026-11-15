@@ -218,7 +218,8 @@ def _calibrate_case(ctx, case: dict) -> dict:
         if not isinstance(miss, dict) or not isinstance(miss.get("body"), str):
             continue
         concept = {"description": miss["body"], "file": miss.get("path")}
-        same_file = [f for f in case["labels"] if isinstance(f, dict) and f.get("file") == miss.get("path")]
+        same_file = [f for f in case["labels"] if isinstance(f, dict) and f.get("file") == miss.get("path")
+                     and _has_message(f)]
         for f in same_file[:MAX_CANDIDATES]:
             v = judge_pair(ctx, concept, f)
             controls.append({"comment": miss["body"], "file": miss.get("path"), "line": miss.get("line"),
@@ -246,8 +247,7 @@ def run_calibration(ctx, cases_dir: Path, only: str | None = None) -> dict:
         for row in r["findings"]:
             cost += row.pop("cost")
             if row["judge"] is None:
-                errors += 1
-                pairs.append((row["human"], not row["human"]))  # an unusable answer is a disagreement
+                errors += 1  # reported in `errors` and fails the run, but kept out of agreement and kappa
             else:
                 pairs.append((row["human"], row["judge"]))
         for c in r["controls"]:
@@ -257,8 +257,8 @@ def run_calibration(ctx, cases_dir: Path, only: str | None = None) -> dict:
            "controls": {"n": len(ctl), "said_same": sum(1 for c in ctl if c["judge"] is True),
                         "errors": sum(1 for c in ctl if c["judge"] is None)},
            "skipped": sum(r["skipped"] for r in results), "cost_usd": round(cost, 4), "cases": results}
-    rate = out["agreement"]["rate"]
-    out["passed"] = rate is not None and rate >= AGREEMENT_BAR and errors == 0
-    if not pairs:
+    a = out["agreement"]
+    out["passed"] = a["n"] > 0 and a["agree"] / a["n"] >= AGREEMENT_BAR and errors == 0  # unrounded, as judge_case does
+    if not pairs and not errors:
         out["error"] = "no labelled findings to calibrate against"
     return out

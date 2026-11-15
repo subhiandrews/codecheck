@@ -327,11 +327,30 @@ def test_calibration_fails_below_the_bar(tmp_path):
     assert AGREEMENT_BAR == 0.8
 
 
-def test_an_errored_item_is_a_disagreement_and_fails_the_run(tmp_path):
+def test_an_errored_item_fails_the_run_but_stays_out_of_agreement(tmp_path):
     cases = _write_cases(tmp_path / "c", _case("c1", ["expected"] * 5))
     runner = ScriptedJudge(lambda p: _envelope("garbled") if "finding 0" in p else _envelope({"worth_raising": True, "reason": "x"}))
     out = run_calibration(_ctx(runner), cases)
-    assert out["agreement"]["errors"] == 1 and out["agreement"]["agree"] == 4 and out["passed"] is False
+    assert out["agreement"]["errors"] == 1 and out["agreement"]["n"] == 4 and out["agreement"]["agree"] == 4
+    assert out["passed"] is False
+
+
+def test_the_bar_is_checked_on_the_unrounded_rate(tmp_path):
+    n = 2500  # 1999 of 2500 agree is 0.7996, which rounds to 0.8 but is below the bar
+    labels = [{"id": f"id{i}", "file": "src/a.py", "line": 1, "severity": "warning", "category": "bug",
+               "message": f"finding {i}", "label": "expected"} for i in range(n)]
+    cases = _write_cases(tmp_path / "c", _case("c1", [], findings=labels))
+    out = run_calibration(_ctx(ScriptedJudge(_worth(lambda p: int(re.search(r"\nfinding (\d+)\n", p).group(1)) < 1999))), cases)
+    assert out["agreement"]["agree"] == 1999 and out["agreement"]["rate"] == 0.8 and out["passed"] is False
+
+
+def test_controls_skip_findings_without_a_message(tmp_path):
+    miss = {"path": "src/a.py", "line": 3, "author": "h", "body": "you forgot to close the file"}
+    labels = [{"id": "a", "file": "src/a.py", "line": 1, "severity": "warning", "category": "bug", "message": "", "label": "expected"},
+              {"id": "b", "file": "src/a.py", "line": 2, "severity": "warning", "category": "bug", "message": "real", "label": "expected"}]
+    cases = _write_cases(tmp_path / "c", _case("c1", [], findings=labels, misses=[miss]))
+    out = run_calibration(_ctx(ScriptedJudge(_worth(lambda p: True))), cases)
+    assert out["controls"]["n"] == 1
 
 
 def test_human_misses_are_asked_as_negative_controls_and_do_not_decide_passed(tmp_path):
