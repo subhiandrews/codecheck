@@ -730,3 +730,24 @@ def test_context_lists_run_files(tmp_path):
     out2 = run_pr_context(ctx2, pr2)
     assert out2["run_files"] == []
     assert json.loads((Path(out2["run_dir"]) / "context.json").read_text())["run_files"] == []
+
+
+def test_context_performance_flag_adds_member_and_model(tmp_path):
+    _, clone = make_origin_and_clone(tmp_path)
+    ctx = make_ctx(tmp_path, clone)
+    sh(clone, "checkout", "-b", "feat")
+    (clone / "app.py").write_text("x = 1\n")
+
+    def run(c, *extra):
+        _, out = call(c, "context", "--mode", "local", *extra)
+        meta = json.loads((Path(out["run_dir"]) / "context.json").read_text())
+        return out["panel"]["members"], meta["models"]
+
+    members, models = run(ctx)
+    assert "performance" not in members and "performance" not in models
+    members, models = run(ctx, "--performance")
+    assert members == ["architect", "pragmatist", "skeptic", "performance", "lang-python"]
+    assert models["performance"] == "sonnet"
+    cfg_ctx = make_ctx(tmp_path, clone, review=ReviewConfig(performance=True))
+    members, models = run(cfg_ctx)
+    assert "performance" in members and models["performance"] == "sonnet"

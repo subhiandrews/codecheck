@@ -47,6 +47,12 @@ def test_ignore_globs():
     assert filter_ignored(["a.py", "x.lock"], pats) == ["a.py"]
 
 
+def test_performance_member_is_opt_in_and_ordered():
+    assert select_panel(["a.py"], performance=True).members == ("architect", "pragmatist", "skeptic", "performance", "lang-python")
+    both = select_panel(["a.py"], security=True, performance=True).members
+    assert both == ("architect", "pragmatist", "skeptic", "security", "performance", "lang-python")
+
+
 def test_security_member_is_opt_in_and_ordered():
     assert select_panel(["a.py"]).members == ("architect", "pragmatist", "skeptic", "lang-python")
     assert select_panel(["a.py"], security=True).members == ("architect", "pragmatist", "skeptic", "security", "lang-python")

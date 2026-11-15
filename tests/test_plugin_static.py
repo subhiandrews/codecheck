@@ -447,7 +447,7 @@ def test_long_running_commands_carry_bash_timeout_guidance():
 
 
 def test_security_argument_is_documented_and_wired():
-    pinned = {"review-local": "independent keywords", "review-pr": "is a bare keyword, never a PR reference"}
+    pinned = {"review-local": "independent keywords", "review-pr": "are bare keywords, never PR references"}
     for name, mode in (("review-local", "local"), ("review-pr", "pr")):
         text = (REPO / f"skills/{name}/SKILL.md").read_text()
         lines = [ln for ln in text.splitlines() if f"`code-check context --mode {mode}" in ln]
@@ -455,6 +455,7 @@ def test_security_argument_is_documented_and_wired():
         assert all(invocation_errors(s) == [] for s in SPAN.findall(lines[0]))
         assert "security" in frontmatter(text)["argument-hint"]
         assert pinned[name] in text
+        assert "`--performance`" in lines[0] and "performance" in frontmatter(text)["argument-hint"]
     for name in ("address-comments", "babysit-pr"):
         assert "guidance" in (REPO / f"skills/{name}/SKILL.md").read_text()
 

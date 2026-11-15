@@ -211,8 +211,8 @@ def review_argv(ctx, workdir: Path) -> list[str]:
                "CODE_CHECK_SHADOW__HANDOFF=1",
                # The throwaway repository's base is origin/main, whatever the user configured.
                "CODE_CHECK_REMOTE=origin", "CODE_CHECK_BASE_BRANCH=main",
-               # A user's review.security would add an Opus security agent to every snippet.
-               "CODE_CHECK_REVIEW__SECURITY=0"]
+               # A user's review.security or review.performance would add an extra agent to every snippet.
+               "CODE_CHECK_REVIEW__SECURITY=0", "CODE_CHECK_REVIEW__PERFORMANCE=0"]
     # The prompt comes first: --allowedTools and --add-dir are variadic and would swallow a later positional.
     return ["env", *UNSET_GIT_REPO_VARS, *isolate, claude_bin(ctx), "-p", REVIEW_PROMPT, "--plugin-dir", str(root),
             "--output-format", "json", "--permission-mode", cfg.permission_mode, "--permission-prompts", "none",

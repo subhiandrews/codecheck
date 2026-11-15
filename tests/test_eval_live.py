@@ -210,8 +210,9 @@ def test_run_snippet_builds_isolated_argv(tmp_path):
     n = len(UNSET_GIT_REPO_VARS)
     assert argv[:n + 4] == ("env", *UNSET_GIT_REPO_VARS, f"CODE_CHECK_STATE_DIR={w}/state",
                             f"CODE_CHECK_SHADOW__STORE={w}/shadow", "CODE_CHECK_SHADOW__HANDOFF=1")
-    # A user's review.security must not add an Opus security agent to every snippet.
+    # A user's review.security or review.performance must not add an extra agent to every snippet.
     assert "CODE_CHECK_REVIEW__SECURITY=0" in argv[n + 1:argv.index("claude")]
+    assert "CODE_CHECK_REVIEW__PERFORMANCE=0" in argv[n + 1:argv.index("claude")]
     tools = ctx.config.run_pr.review_allowed_tools
     claude = argv[argv.index("claude"):]
     assert claude == ("claude", "-p", REVIEW_PROMPT, "--plugin-dir", str(REPO), "--output-format", "json",

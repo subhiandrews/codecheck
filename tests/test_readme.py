@@ -82,3 +82,11 @@ def test_repo_code_check_md_has_the_two_instructions():
     assert "duplication" in low
     assert "tests" in low
     assert "tautolog" in low
+
+
+def test_documents_performance_review():
+    assert "## Performance review" in README
+    assert 'performance = "sonnet"' in README and "models.performance" in README
+    assert "performance = false" in README and "review.performance" in README
+    section = README.split("## Performance review", 1)[1].split("## CODE_CHECK.md", 1)[0]
+    assert "--performance" in section and "complexity before and after" in section and "not a replacement" in section

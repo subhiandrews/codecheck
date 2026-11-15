@@ -17,6 +17,7 @@ from codecheck.errors import ConfigError
 class ReviewConfig:
     auto_approve: bool = False
     security: bool = False
+    performance: bool = False
     attribution: bool = True  # one credit line in the review summary; user-only
     label: str = "code-check"  # label added to reviewed PRs, "" disables; user-only
     login: str = ""  # act as this login instead of asking `gh api user` (CI tokens cannot); user-only
@@ -40,6 +41,7 @@ class ModelsConfig:
     reviewers: str = "sonnet"
     deep: str = "sonnet"
     security: str = "opus"
+    performance: str = "sonnet"
     judge: str = "opus"
     per_language: dict = field(default_factory=dict)
 
@@ -126,7 +128,7 @@ def model_for(models: ModelsConfig, role: str, language: str | None = None) -> s
         if language and language in models.per_language:
             return models.per_language[language]
         return models.language_experts
-    if role in ("aggregator", "reviewers", "deep", "security"):
+    if role in ("aggregator", "reviewers", "deep", "security", "performance"):
         return getattr(models, role)
     raise ConfigError(f"unknown model role {role!r}")
 
@@ -236,6 +238,7 @@ def validate(cfg: Config) -> Config:
     m = cfg.models
     named = {"models.aggregator": m.aggregator, "models.language_experts": m.language_experts,
              "models.reviewers": m.reviewers, "models.deep": m.deep, "models.security": m.security,
+             "models.performance": m.performance,
              "models.judge": m.judge}
     named |= {f"models.per_language.{k}": v for k, v in m.per_language.items()}
     for key, value in named.items():
