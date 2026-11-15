@@ -40,6 +40,7 @@ class ModelsConfig:
     reviewers: str = "sonnet"
     deep: str = "sonnet"
     security: str = "opus"
+    judge: str = "opus"
     per_language: dict = field(default_factory=dict)
 
 
@@ -234,7 +235,8 @@ def _reject_repo_keys(repo: Mapping) -> None:
 def validate(cfg: Config) -> Config:
     m = cfg.models
     named = {"models.aggregator": m.aggregator, "models.language_experts": m.language_experts,
-             "models.reviewers": m.reviewers, "models.deep": m.deep, "models.security": m.security}
+             "models.reviewers": m.reviewers, "models.deep": m.deep, "models.security": m.security,
+             "models.judge": m.judge}
     named |= {f"models.per_language.{k}": v for k, v in m.per_language.items()}
     for key, value in named.items():
         if not isinstance(value, str) or not MODEL_NAME.fullmatch(value):

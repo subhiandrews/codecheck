@@ -1,11 +1,13 @@
 """Evaluate the review pipeline. `--replay` replays the golden cases offline; `--live` reviews the snippets with the
-real model (local only, costs tokens). The result's `passed` is the verdict."""
+real model (local only, costs tokens); `--calibrate` measures the LLM judge against the golden set's human labels
+(local only, costs tokens). The result's `passed` is the verdict."""
 
 import tempfile
 from pathlib import Path
 
 from codecheck.errors import CodeCheckError
 from codecheck.evals.golden import DEFAULT_CASES, run_replay
+from codecheck.evals.judge import run_calibration
 from codecheck.evals.live import (
     DEFAULT_SNIPPETS,
     load_snippets,
@@ -23,11 +25,15 @@ def add_arguments(p) -> None:
                       help="replay stored reviewer outputs through the deterministic pipeline (no network, no model)")
     mode.add_argument("--live", action="store_true",
                       help="review each snippet with the real panel through `claude -p` (local only; costs tokens)")
+    mode.add_argument("--calibrate", action="store_true",
+                      help="ask the judge model about every human-labelled golden finding and report its agreement "
+                           "with the humans (local only; costs tokens)")
     p.add_argument("--cases", type=Path, default=None,
-                   help="--replay: directory of golden case files (default: the plugin repository's tests/golden)")
+                   help="--replay, --calibrate: directory of golden case files (default: the plugin repository's tests/golden)")
     p.add_argument("--snippets", type=Path, default=None,
                    help="--live: directory of snippet folders (default: the plugin repository's tests/snippets)")
-    p.add_argument("--only", default=None, metavar="NAME", help="--live: run just this snippet")
+    p.add_argument("--only", default=None, metavar="NAME",
+                   help="--live: run just this snippet; --calibrate: just this golden case id")
     p.add_argument("--if-reachable", action="store_true",
                    help="--live: when no model is reachable, report a skip instead of failing")
 
@@ -44,11 +50,20 @@ def _dir(ctx, given: Path | None, default: Path, what: str) -> Path:
 def run(args, ctx) -> dict:
     if args.replay:
         if args.snippets is not None or args.only is not None or args.if_reachable:
-            raise CodeCheckError("--snippets, --only and --if-reachable apply to --live only")
+            raise CodeCheckError("--snippets and --if-reachable apply to --live only; --only applies to --live and --calibrate")
         # Exit status stays 0 when a case fails: callers (CI, the commit gate) read `passed`.
         return run_replay(_dir(ctx, args.cases, DEFAULT_CASES, "cases"))
+    if args.calibrate:
+        if args.snippets is not None or args.if_reachable:
+            raise CodeCheckError("--snippets and --if-reachable apply to --live only")
+        directory = _dir(ctx, args.cases, DEFAULT_CASES, "cases")
+        reason = unreachable_reason(ctx)
+        if reason is not None:
+            raise CodeCheckError(f"model not reachable: {reason}")
+        # Exit status stays 0 when the bar is missed: read `passed`.
+        return run_calibration(ctx, directory, args.only)
     if args.cases is not None:
-        raise CodeCheckError("--cases applies to --replay only")
+        raise CodeCheckError("--cases applies to --replay and --calibrate only")
     return run_live(ctx, _dir(ctx, args.snippets, DEFAULT_SNIPPETS, "snippets"), args.only, args.if_reachable)
 
 

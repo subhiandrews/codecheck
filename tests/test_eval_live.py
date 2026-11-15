@@ -314,7 +314,7 @@ def test_live_cli_runs_each_snippet_once(tmp_path):
 def test_mode_specific_flags_are_refused_in_the_other_mode(tmp_path):
     ctx = _ctx(tmp_path, FakeRunner())
     code, out = call(ctx, "eval", "--live", "--cases", str(tmp_path))
-    assert code == 1 and "--replay only" in out["error"]
+    assert code == 1 and "--replay and --calibrate only" in out["error"]
     code, out = call(ctx, "eval", "--replay", "--only", "x")
     assert code == 1 and "--live only" in out["error"]
 

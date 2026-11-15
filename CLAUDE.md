@@ -18,6 +18,7 @@ node --test tests-node/*.test.js                 # installer tests (Node >= 20)
 .venv/bin/python -m codecheck gen-agents --out agents   # regenerate agents/*.md
 .venv/bin/python -m codecheck eval --replay      # deterministic golden-set replay (prints JSON with `passed`)
 .venv/bin/python -m codecheck eval --live [--if-reachable]   # live snippet eval (needs a reachable model)
+.venv/bin/python -m codecheck eval --calibrate [--only CASE_ID]   # LLM judge vs the golden labels (local, costs tokens; advisory, never a gate)
 scripts/install-git-hooks.sh                     # opt in: git config core.hooksPath .githooks
 ```
 
