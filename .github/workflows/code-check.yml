@@ -10,14 +10,14 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   review:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: subhiandrews/code-check-action@21dc99b31f9e4ec57ca71aae4e03ebf3acc341be # main, includes bot identity (#1)
+      - uses: subhiandrews/code-check-action@21dc99b31f9e4ec57ca71aae4e03ebf3acc341be # v1 (v0.1.2)
         with:
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-          # PAT of the account that posts the review. code-check skips PRs authored by that same account.
-          github-token: ${{ secrets.CODE_CHECK_GH_TOKEN }}
+          # No github-token: the default GITHUB_TOKEN posts as github-actions[bot]
