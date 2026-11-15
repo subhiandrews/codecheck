@@ -218,8 +218,11 @@ def _calibrate_case(ctx, case: dict) -> dict:
     for miss in case["misses"]:
         if not isinstance(miss, dict) or not isinstance(miss.get("body"), str):
             continue
-        concept = {"description": miss["body"], "file": miss.get("path")}
-        same_file = [f for f in case["labels"] if isinstance(f, dict) and f.get("file") == miss.get("path")
+        path = miss.get("path")
+        if not isinstance(path, str) or not path:  # a general remark has no file to compare findings in
+            continue
+        concept = {"description": miss["body"], "file": path}
+        same_file = [f for f in case["labels"] if isinstance(f, dict) and f.get("file") == path
                      and _has_message(f)]
         for f in same_file[:MAX_CANDIDATES]:
             v = judge_pair(ctx, concept, f)

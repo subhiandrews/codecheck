@@ -387,6 +387,29 @@ def test_findings_without_a_message_are_skipped_not_counted(tmp_path):
     assert len(runner.judge_calls()) == 1  # nothing was spent on a finding with nothing to judge
 
 
+def test_a_missed_comment_without_a_path_gets_no_control(tmp_path):
+    findings = [{"id": "a", "file": None, "line": 1, "severity": "warning", "category": "bug", "message": "no file", "label": "expected"},
+                {"id": "b", "file": "src/a.py", "line": 2, "severity": "warning", "category": "bug", "message": "real", "label": "expected"}]
+    misses = [{"path": None, "line": None, "author": "h", "body": "general remark"},
+              {"path": "", "line": None, "author": "h", "body": "empty path"}]
+    cases = _write_cases(tmp_path / "c", _case("c1", [], findings=findings, misses=misses))
+    runner = ScriptedJudge(_worth(lambda p: True))
+    out = run_calibration(_ctx(runner), cases)
+    assert out["controls"]["n"] == 0 and out["cases"][0]["controls"] == []
+    assert len(runner.judge_calls()) == 2  # only the two finding questions
+
+
+def test_the_bar_is_checked_on_the_unrounded_ratio(tmp_path):
+    # 1999 of 2500 agree is 0.7996: it rounds to 0.8 for display but must not pass the 0.8 bar.
+    labels = ["expected"] * 2500
+    cases = _write_cases(tmp_path / "c", _case("c1", labels))
+    wrong = {f"finding {i}" for i in range(501)}  # the judge says no to these 501, so 1999 agree
+    runner = ScriptedJudge(_worth(lambda p: not any(re.search(rf"\b{re.escape(w)}\b", p) for w in wrong)))
+    out = run_calibration(_ctx(runner), cases)
+    assert out["agreement"]["agree"] == 1999 and out["agreement"]["rate"] == 0.8
+    assert out["passed"] is False
+
+
 def test_calibration_with_nothing_to_calibrate_does_not_pass(tmp_path):
     out = run_calibration(_ctx(ScriptedJudge(_worth(lambda p: True))), tmp_path / "missing")
     assert out["passed"] is False and out["agreement"]["n"] == 0 and "no labelled findings" in out["error"]
