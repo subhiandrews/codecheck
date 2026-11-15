@@ -43,6 +43,14 @@ main() {
 
   log() { printf '%s handoff-loop: %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2; }
 
+  # These are used in arithmetic (nap, the failure count), so a value like 60s would abort the script mid-round.
+  local setting
+  for setting in HANDOFF_LOOP_SLEEP HANDOFF_LOOP_IDLE_SLEEP HANDOFF_LOOP_NOACTION_SLEEP HANDOFF_LOOP_MAX_FAILURES; do
+    case "${!setting:-0}" in
+      *[!0-9]*) log "$setting must be a whole number, got '${!setting}'"; exit 1 ;;
+    esac
+  done
+
   # The ECC GateGuard hook asks for facts before the first Bash or Write call, which no unattended round can answer, so it
   # denies tool calls (including the scratch analysis Write). Rounds run with it off.
   export ECC_GATEGUARD=off
