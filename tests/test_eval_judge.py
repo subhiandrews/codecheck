@@ -41,11 +41,13 @@ class ScriptedJudge:
         self.decide = decide
         self.calls: list[tuple[tuple[str, ...], str | None]] = []
         self.cwds: list[Path | None] = []
+        self.cwd_listings: list[list[Path] | None] = []
 
     def run(self, args, *, input=None, cwd=None, timeout=None) -> CommandResult:
         argv = tuple(args)
         self.calls.append((argv, input))
         self.cwds.append(cwd)
+        self.cwd_listings.append(list(cwd.iterdir()) if cwd is not None and cwd.is_dir() else None)
         if argv == PROBE:
             return CommandResult(0, OK, "")
         return CommandResult(0, self.decide(input or ""), "")
@@ -185,6 +187,7 @@ def test_the_judge_runs_in_an_empty_directory_so_no_project_files_are_loaded():
     judge_pair(_ctx(runner), CONCEPT, FINDING)
     cwd = runner.cwds[-1]
     assert cwd is not None and cwd != Path(".") and not cwd.exists()  # a throwaway directory, gone afterwards
+    assert runner.cwd_listings[-1] == []  # and it held nothing while the model ran
 
 
 def test_a_model_name_that_looks_like_an_option_is_refused():
