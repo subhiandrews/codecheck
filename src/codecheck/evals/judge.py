@@ -89,6 +89,7 @@ def parse_verdict(stdout: str, returncode: int, stderr: str, *, key: str) -> dic
         why = "not json" if (stdout or "").strip() else f"exit {returncode}"
         return _failure(f"claude run failed: {why}: {(stderr or stdout or '').strip()[-200:]}", None)
     cost = data.get("total_cost_usd")
+    cost = float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool) else None
     result = data.get("result")
     if returncode != 0 or data.get("is_error") or not isinstance(result, str):
         return _failure(f"claude run failed: {str(result or stderr)[-200:]}", cost)

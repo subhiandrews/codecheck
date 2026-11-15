@@ -94,6 +94,13 @@ def test_parse_tolerates_one_code_fence_around_the_object():
     assert parse_verdict(*_out(fenced), key="worth_raising")["value"] is True
 
 
+@pytest.mark.parametrize("cost", ["0.5", True, [1], {"a": 1}, None])
+def test_parse_treats_a_non_numeric_cost_as_unknown(cost):
+    out = json.dumps({"is_error": False, "result": '{"same_issue": true, "reason": "x"}', "total_cost_usd": cost})
+    v = parse_verdict(out, 0, "", key="same_issue")
+    assert v["ok"] is True and v["cost"] is None
+
+
 @pytest.mark.parametrize("result", [
     'Sure! {"same_issue": true, "reason": "x"}',          # prose around the object
     '{"same_issue": "true", "reason": "x"}',              # a string is not a boolean
