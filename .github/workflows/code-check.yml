@@ -17,7 +17,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: subhiandrews/code-check-action@21dc99b31f9e4ec57ca71aae4e03ebf3acc341be # v1 (v0.1.2)
+      - uses: subhiandrews/code-check-action@c7ea220d8033092d50d1ff10306d84dd24d64aac # v1 (v0.1.3)
         with:
-          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Max subscription token from `claude setup-token`; no API credits needed
+          claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          fail-on-error: true # a failed review shows as a red check, not a silent green one
           # No github-token: the default GITHUB_TOKEN posts as github-actions[bot]
