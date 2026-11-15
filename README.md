@@ -406,7 +406,7 @@ flowchart TD
     claim -->|nothing pending| exit2(["Exit"])
     claim -->|a hand-off| analyze["2. Analyze (untrusted data)<br/>tooling gaps, noise, misses,<br/>prompt candidates: act or note"]
     analyze -->|no act items| release["release the claim<br/>retried until 3 attempts, then left alone"]
-    release --> exit3(["Exit, no PR"])
+    release --> exit3(["Exit"])
     analyze -->|act items| tests["3. Failing tests first"]
     tests --> fix["4. Fix with the smallest change<br/>prompts only if a live snippet fails twice"]
     fix --> golden["5. Golden case, only if every label<br/>is backed by human evidence"]
