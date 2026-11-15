@@ -67,7 +67,13 @@ class Panel:
 
     @property
     def members(self) -> tuple[str, ...]:
-        return (*self.core, *(("security",) if self.security else ()), *(("performance",) if self.performance else ()), *(f"lang-{lang}" for lang in self.languages), *(("deep-reviewer",) if self.deep else ()))
+        return (
+            *self.core,
+            *(("security",) if self.security else ()),
+            *(("performance",) if self.performance else ()),
+            *(f"lang-{lang}" for lang in self.languages),
+            *(("deep-reviewer",) if self.deep else ()),
+        )
 
 
 def select_panel(
