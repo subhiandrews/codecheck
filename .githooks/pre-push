@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Run the live eval gate (scripts/gates.sh --pr) when a push creates a new branch
+# on the remote: that is the push right before a pull request is opened, and
+# `gh pr create` makes it too. Pushes to an existing branch, tag pushes and
+# deletions skip it. Install with scripts/install-git-hooks.sh.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+new_branch=0
+while read -r _local_ref local_sha remote_ref remote_sha; do
+  [[ "$remote_ref" == refs/heads/* ]] || continue
+  [[ "$local_sha" =~ ^0+$ ]] && continue
+  [[ "$remote_sha" =~ ^0+$ ]] && new_branch=1
+done
+[ "$new_branch" = 1 ] || exit 0
+
+exec "$ROOT/scripts/gates.sh" --pr

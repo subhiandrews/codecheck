@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Commit gates: deterministic golden replay always, live snippet eval only when
-# the staged files touch review behaviour (scripts/gate-paths.txt).
-#   scripts/gates.sh [--if-no-git-hook]
-# --if-no-git-hook: do nothing when the git pre-commit hook is installed
-# (core.hooksPath = .githooks), because that hook runs these gates itself.
+# Eval gates. Without --pr (the commit gate): the deterministic golden replay only.
+# With --pr (the new-branch gate): the replay, then the live snippet eval when the
+# branch differs from its base in a path of scripts/gate-paths.txt.
+#   scripts/gates.sh [--pr] [--if-no-git-hook]
+# --pr: the base is $CODE_CHECK_BASE (default origin/main); when it cannot be found
+# the live eval runs, never skips.
+# --if-no-git-hook: do nothing when the git hooks are installed (core.hooksPath =
+# .githooks), because pre-commit and pre-push run these gates themselves.
 # CODE_CHECK_BIN overrides the CLI command (default: .venv/bin/python -m codecheck).
 # It is a command line, word-split on whitespace, not a path: a path containing
 # spaces cannot be used there.
@@ -15,12 +18,17 @@ set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT" || exit 1
 
-CLAUDE_HOOK=0
-if [ "${1:-}" = "--if-no-git-hook" ]; then
-  if [ "$(git config core.hooksPath 2>/dev/null)" = ".githooks" ]; then
-    exit 0
-  fi
-  CLAUDE_HOOK=1
+PR=0
+SKIP_WITH_HOOK=0
+for arg in "$@"; do
+  case "$arg" in
+    --pr) PR=1 ;;
+    --if-no-git-hook) SKIP_WITH_HOOK=1 ;;
+    *) echo "gates.sh: unknown argument: $arg" >&2; exit 2 ;;
+  esac
+done
+if [ "$SKIP_WITH_HOOK" = 1 ] && [ "$(git config core.hooksPath 2>/dev/null)" = ".githooks" ]; then
+  exit 0
 fi
 
 # BIN is an array so a repository path containing spaces survives; only the
@@ -90,26 +98,27 @@ run_gate() {
 
 run_gate "eval --replay" eval --replay || exit 1
 
-# Changed paths, listed once. The git hook runs after staging, so the index is
-# authoritative. The Claude hook runs before the commit command (which may still
-# `git add` or use -a), so it also counts unstaged and untracked changes; that is
-# deliberately conservative: it can run the live gate extra, never skip it.
-changed="$(git diff --cached --name-only --no-renames 2>/dev/null)"
-if [ "$CLAUDE_HOOK" = 1 ]; then
-  changed="$changed
-$(git diff --name-only --no-renames HEAD 2>/dev/null || true)
-$(git ls-files --others --exclude-standard 2>/dev/null || true)"
+if [ "$PR" = 0 ]; then
+  echo "gates: replay passed; live eval runs when a new branch is pushed" >&2
+  exit 0
 fi
 
-gated=0
-if [ -f "$ROOT/scripts/gate-paths.txt" ]; then
-  while IFS= read -r pattern; do
-    [ -n "$pattern" ] || continue
-    if grep -Eq -- "$pattern" <<< "$changed"; then
-      gated=1
-      break
-    fi
-  done < "$ROOT/scripts/gate-paths.txt"
+# What the branch changes against its base. Without a base to compare with, the
+# branch counts as gated: the live eval runs extra, never skipped.
+gated=1
+base="${CODE_CHECK_BASE:-origin/main}"
+if mb="$(git merge-base "$base" HEAD 2>/dev/null)"; then
+  changed="$(git diff --name-only --no-renames "$mb" HEAD 2>/dev/null)"
+  gated=0
+  if [ -f "$ROOT/scripts/gate-paths.txt" ]; then
+    while IFS= read -r pattern; do
+      [ -n "$pattern" ] || continue
+      if grep -Eq -- "$pattern" <<< "$changed"; then
+        gated=1
+        break
+      fi
+    done < "$ROOT/scripts/gate-paths.txt"
+  fi
 fi
 
 live="skipped (no gated path)"
