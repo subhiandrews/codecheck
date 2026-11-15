@@ -1,0 +1,17 @@
+# Code owners are asked to review pull requests that touch their paths.
+# It only blocks a merge if branch protection enables "Require review from Code Owners".
+
+*                                       @subhiandrews
+
+# Unattended hand-off rounds: the queue and merge guard are protected paths that the guard
+# refuses to let a round change (see CLAUDE.md).
+/src/codecheck/shadow/queue.py          @subhiandrews
+/src/codecheck/commands/handoff_queue.py @subhiandrews
+/tests/test_handoff_queue.py            @subhiandrews
+/.claude/skills/handoff-round/          @subhiandrews
+/.claude/settings.json                  @subhiandrews
+
+# Commit and PR gates, and the CI and release workflows.
+/scripts/                               @subhiandrews
+/.githooks/                             @subhiandrews
+/.github/                               @subhiandrews

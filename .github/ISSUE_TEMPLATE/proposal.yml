@@ -1,0 +1,25 @@
+name: Propose a change or offer to help
+description: Suggest a feature, or tell us what you would like to work on before you start.
+labels: [proposal]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What do you propose?
+      description: A rough outline is enough. Say which parts of the code it would touch.
+  - type: dropdown
+    id: help
+    attributes:
+      label: Do you want to implement it?
+      options:
+        - "Yes, I would open the pull request"
+        - "Maybe, with some guidance"
+        - "No, I am only suggesting it"
+    validations:
+      required: true
