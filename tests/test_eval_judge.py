@@ -94,7 +94,7 @@ def test_parse_tolerates_one_code_fence_around_the_object():
     assert parse_verdict(*_out(fenced), key="worth_raising")["value"] is True
 
 
-@pytest.mark.parametrize("cost", ["0.5", True, [1], {"a": 1}, None])
+@pytest.mark.parametrize("cost", ["0.5", True, [1], {"a": 1}, None, float("nan"), float("inf")])
 def test_parse_treats_a_non_numeric_cost_as_unknown(cost):
     out = json.dumps({"is_error": False, "result": '{"same_issue": true, "reason": "x"}', "total_cost_usd": cost})
     v = parse_verdict(out, 0, "", key="same_issue")
@@ -120,6 +120,11 @@ def test_parse_rejects_anything_else_and_never_reads_it_as_yes(result):
 def test_a_long_reason_is_kept_but_cut_to_the_limit():
     v = parse_verdict(*_out('{"same_issue": true, "reason": "' + "x" * 900 + '"}'), key="same_issue")
     assert v["ok"] is True and v["value"] is True and v["reason"] == "x" * MAX_REASON
+
+
+def test_parse_reports_deeply_nested_output_as_a_failed_run():
+    v = parse_verdict("[" * 100_000, 0, "", key="same_issue")
+    assert v["ok"] is False and v["error"].startswith("claude run failed")
 
 
 def test_parse_reports_a_failed_or_garbled_claude_run():

@@ -8,6 +8,7 @@ yes.
 """
 
 import json
+import math
 import re
 import secrets
 import tempfile
@@ -83,13 +84,14 @@ def parse_verdict(stdout: str, returncode: int, stderr: str, *, key: str) -> dic
     """The model's answer as {ok, value, reason, cost, error}. Only a well-formed reply is ok; value is a bool then."""
     try:
         data = json.loads(stdout)
-    except (json.JSONDecodeError, TypeError, ValueError):
+    except (json.JSONDecodeError, RecursionError, TypeError, ValueError):
         data = None
     if not isinstance(data, dict):
         why = "not json" if (stdout or "").strip() else f"exit {returncode}"
         return _failure(f"claude run failed: {why}: {(stderr or stdout or '').strip()[-200:]}", None)
     cost = data.get("total_cost_usd")
-    cost = float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool) else None
+    is_number = isinstance(cost, (int, float)) and not isinstance(cost, bool)
+    cost = float(cost) if is_number and math.isfinite(cost) else None
     result = data.get("result")
     if returncode != 0 or data.get("is_error") or not isinstance(result, str):
         return _failure(f"claude run failed: {str(result or stderr)[-200:]}", cost)
