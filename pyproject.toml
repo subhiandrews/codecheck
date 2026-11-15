@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools>=84.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -12,7 +12,7 @@ requires-python = ">=3.14"
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "hypothesis>=6.100", "ruff>=0.17"]
+dev = ["pytest>=9.2.0", "hypothesis>=6.170.15", "ruff>=0.17.4"]
 
 [project.scripts]
 code-check = "codecheck.cli:main_entry"
