@@ -28,7 +28,7 @@ MARKETPLACE="code-check"
 
 TOOLS=(
   Read Write Edit Grep Glob Skill Agent
-  "Bash(git fetch:*)" "Bash(git switch:*)" "Bash(git pull --ff-only)" "Bash(git status:*)" "Bash(git add:*)"
+  "Bash(git fetch:*)" "Bash(git switch:*)" "Bash(git branch -d handoff-round/*)" "Bash(git pull --ff-only)" "Bash(git status:*)" "Bash(git add:*)"
   "Bash(git commit:*)" "Bash(git diff:*)" "Bash(git log:*)" "Bash(git push -u origin handoff-round/*)"
   "Bash(gh pr create:*)" "Bash(gh pr checks:*)" "Bash(gh pr view:*)" "Bash(gh pr merge:*)" "Bash(gh pr comment:*)"
   "Bash(code-check:*)" "Bash(*/bin/code-check:*)" "Bash(command -v:*)"
