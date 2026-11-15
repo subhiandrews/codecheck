@@ -4,7 +4,8 @@
 # branch differs from its base in a path of scripts/gate-paths.txt.
 #   scripts/gates.sh [--pr] [--if-no-git-hook]
 # --pr: the base is $CODE_CHECK_BASE (default origin/main); when it cannot be found
-# the live eval runs, never skips.
+# the live eval runs, never skips. The branch tip is $CODE_CHECK_REF (default HEAD;
+# .githooks/pre-push sets it to the commit being pushed).
 # --if-no-git-hook: do nothing when the git hooks are installed (core.hooksPath =
 # .githooks), because pre-commit and pre-push run these gates themselves.
 # CODE_CHECK_BIN overrides the CLI command (default: .venv/bin/python -m codecheck).
@@ -107,8 +108,12 @@ fi
 # branch counts as gated: the live eval runs extra, never skipped.
 gated=1
 base="${CODE_CHECK_BASE:-origin/main}"
-if mb="$(git merge-base "$base" HEAD 2>/dev/null)"; then
-  changed="$(git diff --name-only --no-renames "$mb" HEAD 2>/dev/null)"
+ref="${CODE_CHECK_REF:-HEAD}"
+case "$ref" in
+  -*) echo "gates.sh: CODE_CHECK_REF must not start with '-': $ref" >&2; exit 2 ;;
+esac
+if mb="$(git merge-base "$base" "$ref" 2>/dev/null)"; then
+  changed="$(git diff --name-only --no-renames "$mb" "$ref" 2>/dev/null)"
   gated=0
   if [ -f "$ROOT/scripts/gate-paths.txt" ]; then
     while IFS= read -r pattern; do

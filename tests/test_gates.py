@@ -171,6 +171,43 @@ def test_pre_push_runs_the_live_gate_only_for_a_new_branch(sandbox, tmp_path):
     assert sandbox.calls() == []
 
 
+def test_pre_push_gates_the_pushed_commit_not_the_checked_out_one(sandbox, tmp_path):
+    remote = tmp_path / "remote.git"
+    git(tmp_path, "init", "-q", "--bare", str(remote))
+    git(sandbox.repo, "config", "core.hooksPath", ".githooks")
+    git(sandbox.repo, "remote", "add", "origin", str(remote))
+    sandbox.stage("base.txt")
+    git(sandbox.repo, "commit", "-qm", "base", "--no-verify")
+    git(sandbox.repo, "branch", "-M", "main")
+    git(sandbox.repo, "push", "-q", "origin", "main")
+    git(sandbox.repo, "fetch", "-q", "origin")
+    git(sandbox.repo, "switch", "-qc", "gated")
+    sandbox.stage("agents/x.md")
+    git(sandbox.repo, "commit", "-qm", "gated change", "--no-verify")
+    git(sandbox.repo, "switch", "-qc", "plain", "main")
+    sandbox.stage("README.md")
+    git(sandbox.repo, "commit", "-qm", "plain change", "--no-verify")
+
+    # HEAD is the ungated branch; the commit pushed touches a gated path.
+    sandbox.log.unlink(missing_ok=True)
+    git(sandbox.repo, "push", "-q", "origin", "gated")
+    assert sandbox.calls() == LIVE
+
+    # And the reverse: HEAD is gated, the pushed commit is not.
+    git(sandbox.repo, "switch", "-q", "gated")
+    sandbox.log.unlink()
+    git(sandbox.repo, "push", "-q", "origin", "plain")
+    assert sandbox.calls() == ["eval --replay"]
+
+
+def test_pr_gate_rejects_a_ref_that_looks_like_an_option(sandbox, monkeypatch):
+    on_branch(sandbox, "agents/x.md")
+    monkeypatch.setenv("CODE_CHECK_REF", "--output=evil")
+    res = run_gates(sandbox, "--pr")
+    assert res.returncode == 2 and "CODE_CHECK_REF" in res.stderr
+    assert not (sandbox.repo / "evil").exists()
+
+
 def test_pre_push_blocks_a_new_branch_when_the_live_gate_fails(sandbox, tmp_path):
     remote = tmp_path / "remote.git"
     git(tmp_path, "init", "-q", "--bare", str(remote))
