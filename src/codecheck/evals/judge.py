@@ -45,7 +45,7 @@ def _data(fence: str, label: str, text: str) -> str:
 
 def _finding_text(f: dict) -> str:
     where = f"{f.get('file')}:{f.get('line')}"
-    return f"{where} [{f.get('severity')}, {f.get('category')}]\n{f.get('message', '')}"
+    return f"{where} [{f.get('severity')}, {f.get('category')}]\n{f.get('message') or ''}"
 
 
 def build_pair_prompt(concept: dict, finding: dict) -> str:

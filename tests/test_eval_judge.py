@@ -147,6 +147,10 @@ def test_prompts_fence_untrusted_text_after_the_instructions():
     assert '"same_issue"' in head
 
 
+def test_a_null_message_is_not_shown_to_the_judge_as_none():
+    assert "None" not in build_pair_prompt(CONCEPT, {**FINDING, "message": None}).partition("Finding:")[2]
+
+
 def test_each_prompt_gets_its_own_fence_token():
     a, b = build_pair_prompt(CONCEPT, FINDING), build_pair_prompt(CONCEPT, FINDING)
     assert re.search(r"fence token: (\w+)", a).group(1) != re.search(r"fence token: (\w+)", b).group(1)
