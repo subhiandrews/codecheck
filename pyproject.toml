@@ -23,3 +23,10 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "tests"]
+
+[tool.ruff.lint]
+extend-select = ["S"]  # bandit rules; src/ is the code that handles untrusted PR input
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S"]
+"src/codecheck/runner.py" = ["S603"]  # the one subprocess wrapper; callers pass argv lists, never a shell
