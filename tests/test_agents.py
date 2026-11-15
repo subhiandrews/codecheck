@@ -15,9 +15,9 @@ def frontmatter(text: str) -> dict:
 def test_one_expert_per_language_and_all_files_present():
     assert set(LANGUAGE_FOCUS) == set(LANGUAGES)
     files = render_all(ModelsConfig())
-    assert len(files) == 21
+    assert len(files) == 22
     assert {f"lang-{lang}.md" for lang in LANGUAGES} <= set(files)
-    assert {"architect.md", "pragmatist.md", "skeptic.md", "aggregator.md", "deep-reviewer.md"} <= set(files)
+    assert {"architect.md", "pragmatist.md", "skeptic.md", "aggregator.md", "deep-reviewer.md", "security.md", "performance.md"} <= set(files)
 
 
 def test_default_models_and_tools():
@@ -170,3 +170,14 @@ def test_rust_owning_reviewers_get_the_lifecycle_checklist_once():
     for name, body in files.items():
         if name not in ("lang-rust.md", "skeptic.md", "architect.md"):
             assert LIFECYCLE_PHRASE not in body, name
+
+
+def test_performance_agent_uses_its_model_and_calibrated_severities():
+    files = render_all(ModelsConfig())
+    assert frontmatter(files["performance.md"])["model"] == "sonnet"
+    assert frontmatter(render_all(ModelsConfig(performance="opus"))["performance.md"])["model"] == "opus"
+    body = files["performance.md"]
+    assert "senior performance reviewer" in body and "category `performance`" in body
+    assert "what grows or blocks" in body and "cap the finding at `suggestion`" in body
+    assert "complexity before and after" in body
+    assert "RUN_DIR/existing-comments.md" in body

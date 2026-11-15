@@ -209,3 +209,24 @@ def test_login_accepts_users_and_bots(tmp_path, login):
 def test_login_is_validated(tmp_path, login):
     with pytest.raises(ConfigError, match="review.login"):
         load_config(tmp_path / "repo", tmp_path / "home", {"CODE_CHECK_REVIEW__LOGIN": login})
+
+
+def test_performance_defaults_and_repo_file(tmp_path):
+    cfg = load_config(tmp_path / "repo", tmp_path / "home", {})
+    assert cfg.models.performance == "sonnet" and cfg.review.performance is False
+    repo = tmp_path / "repo2"
+    write(repo / ".code-check.toml", '[models]\nperformance = "haiku"\n[review]\nperformance = true\n')
+    cfg = load_config(repo, tmp_path / "home", {})
+    assert cfg.models.performance == "haiku" and cfg.review.performance is True
+
+
+def test_performance_model_name_is_validated(tmp_path):
+    home = tmp_path / "home"
+    write(home / ".config/code-check/config.toml", '[models]\nperformance = "bad name!"\n')
+    with pytest.raises(ConfigError, match="models.performance"):
+        load_config(tmp_path / "repo", home, {})
+
+
+def test_model_for_performance():
+    from codecheck.config import ModelsConfig
+    assert model_for(ModelsConfig(performance="opus"), "performance") == "opus"

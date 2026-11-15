@@ -11,7 +11,7 @@ Review code and deal with review comments on pull requests, from inside Claude C
 | `address-comments` | On your own PR: checks each unresolved thread critically, fixes what is valid, pushes back with evidence on what is not, pushes behind a test gate, replies, resolves fixed threads, re-requests review. |
 | `babysit-pr` | `address-comments` plus failing CI checks, across your PRs, designed to run under `/loop`. |
 
-Findings are **Critical**, **Warning** or **Suggestion** and are posted inline on the changed lines. A panel of reviewers works on each change: up to 15 language experts (only for languages present in the diff), an architecture reviewer, a pragmatic reviewer and a skeptic, with an optional slot for a "deep" reviewer backed by your own knowledge sources and an opt-in security reviewer (see [Security review](#security-review)). An Opus aggregator verifies every Critical and Warning against the code before anything is posted.
+Findings are **Critical**, **Warning** or **Suggestion** and are posted inline on the changed lines. A panel of reviewers works on each change: up to 15 language experts (only for languages present in the diff), an architecture reviewer, a pragmatic reviewer and a skeptic, with an optional slot for a "deep" reviewer backed by your own knowledge sources, an opt-in security reviewer (see [Security review](#security-review)) and an opt-in performance reviewer (see [Performance review](#performance-review)). An Opus aggregator verifies every Critical and Warning against the code before anything is posted.
 
 ```
 precheck (no LLM) → fetch latest base → context → reviewer panel (parallel) → ingest → aggregator → post (inline) → shadow record
@@ -110,6 +110,7 @@ max_files = 80                 # larger changes are split into chunks, never ski
 max_chunk_chars = 120000
 max_inline_comments = 25       # the rest goes into the review summary
 security = false               # true: always include the security reviewer (see "Security review")
+performance = false            # true: always include the performance reviewer (see "Performance review")
 attribution = true             # one credit line (tool, licence, repo link) in the review summary, never in inline comments
 label = "code-check"           # label added to reviewed PRs; "" disables it
 login = ""                     # act as this login instead of `gh api user`; set it in CI, where the token cannot call /user (e.g. "github-actions[bot]")
@@ -126,6 +127,7 @@ language_experts = "haiku"
 reviewers = "sonnet"           # architect, pragmatist, skeptic
 deep = "sonnet"
 security = "opus"             # the opt-in security reviewer
+performance = "sonnet"         # the opt-in performance reviewer
 judge = "opus"                # `eval --calibrate` only: the model that judges findings (developer tooling)
 [models.per_language]          # for example: rust = "sonnet"
 
@@ -163,6 +165,7 @@ After changing `[models]`, re-run the installer (`node installer/cli.js install`
 | Aggregator | Opus |
 | Architect, pragmatist, skeptic | Sonnet |
 | Security reviewer (opt-in) | Opus |
+| Performance reviewer (opt-in) | Sonnet |
 | 15 language experts | Haiku 4.5 |
 
 Haiku keeps the language-expert fan-out cheap, and the Opus aggregator verifies Critical and Warning findings before they are posted. The risk is recall: the aggregator cannot recover a bug that nobody reported. Use `models.per_language` to move a language up a tier, and use shadow data to see which ones need it. Opus is used for the aggregator and, only when you turn it on, the security reviewer.
@@ -186,6 +189,20 @@ It runs only when asked:
 It uses `models.security`, default `"opus"`, because security recall matters more than token cost. Set `models.security = "sonnet"` to trade some recall for a lower cost. A repository's `.code-check.toml` may set `models.security` and `review.security`. Dispatch uses the model written into the generated agent files, so `models.security` only takes effect when `gen-agents` or the installer runs with that configuration (for a repository's file, run it inside that repository); re-run it after changing the model. Setting `review.security = true` in a repository makes every unattended review of that repository run one Opus agent per chunk.
 
 It is guidance on top of your scanners, not a replacement for them. Warnings about vulnerable dependencies come from the model's own knowledge, with no network lookups, and are worded as something to verify. Review comments are public, so the agents are told never to print a secret or PII value; they name the file, line and kind of value only. As a backstop, the `message` of every finding, whatever its category, is scrubbed of secret-looking values when findings are ingested. A `suggestion` that the scrub would change is withheld entirely (and the message says so) rather than posted with its code rewritten.
+
+## Performance review
+
+The performance reviewer is an optional panel member. It is one agent per chunk and owns every changed file. It looks for code that is correct but wasteful, and for code that can exhaust memory or hang: membership tests and nested loops over the same collection, work that could be hoisted out of a loop, queries or calls made once per item (N+1) and joins done in application code, expensive conditions checked before cheap ones, the wrong data structure (a list where a set or dict fits), unbounded loads, collections and caches that only grow, handles opened in a loop and never closed, and blocking calls in async code. Findings use the category `performance`.
+
+Severity follows the failure, not the pattern. Critical means the code can crash, exhaust memory or hang on realistic input, and the finding must say what grows or blocks and what input triggers it. Warning means correct but wasteful in a way that will matter as data grows. Suggestion means a small gain or one off any hot path. The same quadratic loop is a suggestion over a fixed handful of items and can be Critical over request-supplied data; when the reviewer cannot tell how large the input is it caps the finding at Suggestion. Each finding states the complexity before and after.
+
+It runs only when asked:
+
+- `/code-check:review-local performance` and `/code-check:review-pr 123 performance` (the `performance` argument; with no PR, `review-pr` works the queue and configuration decides),
+- `code-check context --performance`, and `code-check run-pr --performance` (review mode only),
+- `review.performance = true` in configuration, which also turns it on for `code-check loop --mode review`.
+
+`address-comments` and `babysit-pr` never run it. It uses `models.performance`, default `"sonnet"`; a repository's `.code-check.toml` may set `models.performance` and `review.performance`, and `models.performance` only takes effect after `gen-agents` or the installer re-runs. Setting `review.performance = true` in a repository adds one agent per chunk to every unattended review of it. It is guidance on top of profilers and benchmarks, not a replacement: it reads code and does not measure it.
 
 ## CODE_CHECK.md
 

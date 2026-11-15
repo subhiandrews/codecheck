@@ -63,10 +63,17 @@ class Panel:
     deep: bool
     notes: tuple[str, ...] = ()
     security: bool = False
+    performance: bool = False
 
     @property
     def members(self) -> tuple[str, ...]:
-        return (*self.core, *(("security",) if self.security else ()), *(f"lang-{lang}" for lang in self.languages), *(("deep-reviewer",) if self.deep else ()))
+        return (
+            *self.core,
+            *(("security",) if self.security else ()),
+            *(("performance",) if self.performance else ()),
+            *(f"lang-{lang}" for lang in self.languages),
+            *(("deep-reviewer",) if self.deep else ()),
+        )
 
 
 def select_panel(
@@ -76,9 +83,10 @@ def select_panel(
     deep_enabled: bool = False,
     deep_available: bool = False,
     security: bool = False,
+    performance: bool = False,
 ) -> Panel:
     languages = tuple(sorted(group_by_language(paths, first_lines)))
     notes: tuple[str, ...] = ()
     if deep_enabled and not deep_available:
         notes = ("deep-reviewer: enabled but unavailable, skipped",)
-    return Panel(CORE_REVIEWERS, languages, deep_enabled and deep_available, notes, security)
+    return Panel(CORE_REVIEWERS, languages, deep_enabled and deep_available, notes, security, performance)

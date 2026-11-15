@@ -365,3 +365,19 @@ def test_replies_only_pr_runs_again_after_a_new_push(tmp_path):
     provider.prs[refs[0]] = replace(provider.prs[refs[0]], head_sha="sha1b")
     out = call(ctx, "loop", "--mode", "review")[1]
     assert str(refs[0]) in [r["pr"] for r in out["results"]]
+
+
+def test_run_pr_performance_flag_extends_the_review_prompt(tmp_path):
+    ctx, _provider, _fake, refs, _ = setup(tmp_path)
+    plain = call(ctx, "run-pr", "--mode", "review", "--pr", str(refs[0]), "--dry-run")[1]["argv"]
+    perf = call(ctx, "run-pr", "--mode", "review", "--pr", str(refs[0]), "--performance", "--dry-run")[1]["argv"]
+    both = call(ctx, "run-pr", "--mode", "review", "--pr", str(refs[0]), "--security", "--performance", "--dry-run")[1]["argv"]
+    assert perf[2] == plain[2] + " Pass the performance argument."
+    assert both[2] == plain[2] + " Pass the security argument. Pass the performance argument."
+
+
+def test_run_pr_performance_flag_is_review_only(tmp_path):
+    ctx, _provider, fake, refs, _ = setup(tmp_path)
+    code, out = call(ctx, "run-pr", "--mode", "babysit", "--pr", str(refs[0]), "--performance", "--dry-run")
+    assert code != 0 and "review mode only" in json.dumps(out)
+    assert claude_calls(fake) == []

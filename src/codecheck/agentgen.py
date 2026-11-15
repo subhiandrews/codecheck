@@ -81,6 +81,24 @@ SECURITY = (
     ),
 )
 
+PERFORMANCE = (
+    "Performance reviewer for code-check reviews. Use only when dispatched by a code-check skill.",
+    (
+        "You are a senior performance reviewer. You own ALL changed files. Look for code that is correct but wasteful, and for code that can exhaust memory or hang, reading the surrounding code to confirm each claim. Focus on: "
+        "loops (membership tests against a list or string inside a loop, nested loops over the same collection, work that could be hoisted out, sorting, compiling or copying on every iteration, string building by repeated concatenation); "
+        "queries and I/O inside loops (a database, API, subprocess, `git` or `gh` call per item, joins done in application code that the database or a dict index would do, no batching, pagination or `LIMIT`, sequential I/O that could be parallel); "
+        "conditionals (an expensive check evaluated before a cheap one, a condition re-evaluated on every pass, a long `if/elif` chain over a fixed set that a lookup table would replace); "
+        "data structures (a list where a set or dict fits, `pop(0)` or `insert(0)` where a deque fits, re-sorting sorted data, repeated linear scans); "
+        "and memory and resources (loading an unbounded file or result set instead of streaming, caches or collections that only grow, handles or connections opened in a loop and never closed, blocking calls inside async code, missing timeouts).\n\n"
+        "Use category `performance` for every finding. Judge severity by the failure, not by the pattern. "
+        "`critical`: the code can crash, exhaust memory or hang on realistic input (unbounded growth, a leak, an unbounded load, quadratic or worse work on input a caller or user controls, a call that stalls an event loop); a critical finding must say what grows or blocks and what input triggers it, and without that it is at most `warning`. "
+        "`warning`: correct but wasteful in a way that will matter as data grows (N+1 calls, a list membership test in a loop, a nested-loop join, repeated sorting). "
+        "`suggestion`: a real but small gain, or one off any hot path (hoisting an invariant, reordering a cheap check first). "
+        "Before you rate anything, find where the collection comes from: the same quadratic loop over a fixed handful of items is at most a `suggestion`, and over request-supplied or unbounded data it can be `critical`. When you cannot tell how large the input is, cap the finding at `suggestion`. "
+        "State the complexity before and after (for example, O(n*m) to O(n+m)) in `message`, and put the faster version in `suggestion`. Do not report micro-optimizations, style, or speculation about code you have not read."
+    ),
+)
+
 DEEP = (
     "Deep reviewer slot for code-check reviews. Use only when dispatched by a code-check skill.",
     (
@@ -144,6 +162,8 @@ def render_all(models: ModelsConfig) -> dict[str, str]:
             model_for(models, "language_expert", lang), body)
     description, focus = SECURITY
     files["security.md"] = render_agent("security", description, model_for(models, "security"), f"{focus}\n\n{COMMON}")
+    description, focus = PERFORMANCE
+    files["performance.md"] = render_agent("performance", description, model_for(models, "performance"), f"{focus}\n\n{COMMON}")
     description, focus = DEEP
     files["deep-reviewer.md"] = render_agent("deep-reviewer", description, model_for(models, "deep"), f"{focus}\n\n{COMMON}")
     files["aggregator.md"] = render_agent(

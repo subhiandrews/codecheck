@@ -23,6 +23,7 @@ def add_arguments(p) -> None:
     p.add_argument("--mode", choices=("local", "pr"), required=True)
     p.add_argument("--pr")
     p.add_argument("--security", action="store_true", help="include the security reviewer")
+    p.add_argument("--performance", action="store_true", help="include the performance reviewer")
     p.add_argument("--with-replies", action="store_true", help="accepted for compatibility; PR mode always writes existing-comments.md")
     p.add_argument("--skill", default=None, help="recorded in shadow data")
 
@@ -123,7 +124,8 @@ def _build(args, ctx, run_id, run_dir) -> dict:
     deep_cmd = cfg.deep_reviewer.command.split()
     deep_available = bool(cfg.deep_reviewer.enabled and deep_cmd and shutil.which(deep_cmd[0]))
     panel = select_panel(reviewable, first_lines, deep_enabled=cfg.deep_reviewer.enabled, deep_available=deep_available,
-                         security=args.security or cfg.review.security)
+                         security=args.security or cfg.review.security,
+                         performance=args.performance or cfg.review.performance)
     languages: dict[str, list[str]] = {}
     for f in files:
         if f["language"]:
@@ -132,6 +134,8 @@ def _build(args, ctx, run_id, run_dir) -> dict:
     models |= {f"lang-{lang}": model_for(cfg.models, "language_expert", lang) for lang in panel.languages}
     if panel.security:
         models["security"] = model_for(cfg.models, "security")
+    if panel.performance:
+        models["performance"] = model_for(cfg.models, "performance")
     if panel.deep:
         models["deep-reviewer"] = model_for(cfg.models, "deep")
     chunks = chunk_files({f["path"]: f["chars"] for f in files}, max_files=cfg.review.max_files,
