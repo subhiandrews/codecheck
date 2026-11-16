@@ -1,11 +1,14 @@
 """Evaluate the review pipeline. `--replay` replays the golden cases offline; `--live` reviews the snippets with the
 real model (local only, costs tokens); `--calibrate` measures the LLM judge against the golden set's human labels
-(local only, costs tokens). The result's `passed` is the verdict."""
+(local only, costs tokens). The result's `passed` is the verdict. Full `--live` and `--calibrate` runs are also
+appended to `docs/eval-history.jsonl` and `--history` rebuilds the report from it (see `evals/history.py`)."""
 
+import sys
 import tempfile
 from pathlib import Path
 
 from codecheck.errors import CodeCheckError
+from codecheck.evals import history
 from codecheck.evals.golden import DEFAULT_CASES, run_replay
 from codecheck.evals.judge import run_calibration
 from codecheck.evals.live import (
@@ -28,6 +31,10 @@ def add_arguments(p) -> None:
     mode.add_argument("--calibrate", action="store_true",
                       help="ask the judge model about every human-labelled golden finding and report its agreement "
                            "with the humans (local only; costs tokens)")
+    mode.add_argument("--history", action="store_true",
+                      help="rebuild docs/eval-history.md (the score trend) from docs/eval-history.jsonl; no model, no network")
+    p.add_argument("--no-record", action="store_true",
+                   help="--live, --calibrate: do not append this run to docs/eval-history.jsonl")
     p.add_argument("--cases", type=Path, default=None,
                    help="--replay, --calibrate: directory of golden case files (default: the plugin repository's tests/golden)")
     p.add_argument("--snippets", type=Path, default=None,
@@ -47,7 +54,24 @@ def _dir(ctx, given: Path | None, default: Path, what: str) -> Path:
     return path
 
 
+def _record(ctx, mode: str, result: dict, only: str | None) -> None:
+    """Recording the score must never fail or alter the eval: swallow and warn."""
+    try:
+        path = history.record(ctx, mode, result, only)
+    except Exception as e:  # noqa: BLE001 - recording is best effort by design
+        print(f"warning: eval history not recorded: {type(e).__name__}: {e}", file=sys.stderr)
+        return
+    if path is not None:
+        print(f"eval history: appended to {path} and rebuilt {path.with_name(history.REPORT)}; commit both", file=sys.stderr)
+
+
 def run(args, ctx) -> dict:
+    if args.history:
+        if (args.cases, args.snippets, args.only) != (None, None, None) or args.if_reachable or args.no_record:
+            raise CodeCheckError("--history takes no other options")
+        return history.regenerate()
+    if args.no_record and args.replay:
+        raise CodeCheckError("--no-record applies to --live and --calibrate only")
     if args.replay:
         if args.snippets is not None or args.only is not None or args.if_reachable:
             raise CodeCheckError("--snippets and --if-reachable apply to --live only; --only applies to --live and --calibrate")
@@ -61,10 +85,16 @@ def run(args, ctx) -> dict:
         if reason is not None:
             raise CodeCheckError(f"model not reachable: {reason}")
         # Exit status stays 0 when the bar is missed: read `passed`.
-        return run_calibration(ctx, directory, args.only)
+        result = run_calibration(ctx, directory, args.only)
+        if not args.no_record and args.cases is None:  # a custom case set is not comparable with the history
+            _record(ctx, "calibrate", result, args.only)
+        return result
     if args.cases is not None:
         raise CodeCheckError("--cases applies to --replay and --calibrate only")
-    return run_live(ctx, _dir(ctx, args.snippets, DEFAULT_SNIPPETS, "snippets"), args.only, args.if_reachable)
+    result = run_live(ctx, _dir(ctx, args.snippets, DEFAULT_SNIPPETS, "snippets"), args.only, args.if_reachable)
+    if not args.no_record and args.snippets is None:
+        _record(ctx, "live", result, args.only)
+    return result
 
 
 def run_live(ctx, directory: Path, only: str | None, if_reachable: bool) -> dict:

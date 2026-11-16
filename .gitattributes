@@ -1,0 +1,4 @@
+# Append-only record of eval scores: two branches that each add a line merge by keeping both.
+docs/eval-history.jsonl merge=union
+# Generated from the record by `code-check eval --history`.
+docs/eval-history.md linguist-generated=true

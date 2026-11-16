@@ -1,5 +1,13 @@
 import pytest
 
+from codecheck.evals import history
+
+
+@pytest.fixture(autouse=True)
+def eval_history_dir(tmp_path_factory, monkeypatch):
+    """Evals record into the repository's docs/ by default; tests must never touch the real history."""
+    monkeypatch.setattr(history, "DEFAULT_DIR", tmp_path_factory.mktemp("eval-history-docs"))
+
 
 @pytest.fixture
 def git_env(monkeypatch):

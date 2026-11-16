@@ -1,0 +1,1 @@
+{"ts": "2026-11-16T22:09:27+00:00", "sha": "f30f0fc3158e9b8ec8ede765170284dab393fb1f", "branch": "main", "dirty": true, "mode": "live", "partial": null, "models": {"aggregator": "opus", "language_experts": "haiku", "reviewers": "sonnet", "deep": "sonnet", "security": "opus", "performance": "sonnet"}, "passed": true, "cases": {"n": 5, "passed": 5, "failed": []}, "cost_usd": 1.947}
