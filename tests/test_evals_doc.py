@@ -20,6 +20,12 @@ DOC = (REPO / "docs" / "Evals.md").read_text()
 WORDS = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five", 6: "Six", 7: "Seven", 8: "Eight", 9: "Nine"}
 
 
+def _word(n: int) -> str:
+    """The count as the page writes it at the start of a sentence; a count past nine is a digit and fails the
+    assertion with a message that names it, not a KeyError."""
+    return WORDS.get(n, str(n))
+
+
 def _flags(command: str | None = None) -> set[str]:
     """The option strings of one subcommand, or of every subcommand (and its nested ones) when none is given."""
     sub = next(a for a in build_parser()._actions if getattr(a, "choices", None) and "eval" in a.choices)
@@ -62,15 +68,13 @@ def test_the_counts_of_golden_cases_and_snippets_match_the_repository():
     assert len(hand_built) == 1  # the page says exactly one case is hand-built
     assert f"**{len(cases)} golden cases**" in DOC and f"**{len(snippets)} snippets**" in DOC
     assert f"{len(cases)} golden cases and {len(snippets)} snippets" in DOC
-    assert f"{WORDS[len(cases) - len(hand_built)]} come from real pull requests" in DOC
-    assert f"{WORDS[len(calibrated)]} are marked `\"calibrated\": true`" in DOC
+    assert f"{_word(len(cases) - len(hand_built))} come from real pull requests" in DOC
+    assert f"{_word(len(calibrated))} are marked `\"calibrated\": true`" in DOC
 
 
-def test_the_snippets_the_page_lists_are_the_ones_that_ship():
+def test_the_page_names_every_snippet_that_ships():
     shipped = {p.parent.name for p in (REPO / "tests/snippets").glob("*/case.json")}
-    assert shipped == {"clean-code", "docs-only-api", "off-by-one", "rust-shutdown-race", "weaker-access-override"}
-    for topic in ("clean change", "docs-only change", "off-by-one", "weaker-access override", "Rust shutdown race"):
-        assert topic in DOC
+    assert shipped and [f"`{name}`" for name in sorted(shipped) if f"`{name}`" not in DOC] == []
 
 
 def test_the_config_keys_the_page_names_exist():

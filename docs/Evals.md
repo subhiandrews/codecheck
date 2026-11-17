@@ -61,7 +61,7 @@ Reviews vary from run to run, so the matching is tolerant on purpose. A reported
 
 Each run is isolated. State, the shadow store and review bookkeeping point into a temporary directory through `CODE_CHECK_` variables, and git's repository-selecting variables are unset, so an eval started from a git hook cannot touch your own repository.
 
-The repository ships **5 snippets**: a clean change that should produce nothing, a docs-only change, an off-by-one, a weaker-access override and a Rust shutdown race. Four are marked `"calibrated": true`, meaning they were run by hand against a real model and passed every time. The race snippet is not calibrated yet. Each snippet is worth a fifth of the score, so one flaky run moves the headline by 20 points.
+The repository ships **5 snippets**: `clean-code` (which should produce nothing), `docs-only-api`, `off-by-one`, `weaker-access-override` and `rust-shutdown-race`. Four are marked `"calibrated": true`, meaning they were run by hand against a real model and passed every time. The race snippet is not calibrated yet. Each snippet is worth a fifth of the score, so one flaky run moves the headline by 20 points.
 
 ### Calibrate: measuring the measuring stick
 
