@@ -128,7 +128,8 @@ fi
 
 live="skipped (no gated path)"
 if [ "$gated" = 1 ]; then
-  run_gate "eval --live" eval --live --if-reachable || exit 1
+  # --no-record: a gate run happens after the commit, so recording it would only dirty the tree.
+  run_gate "eval --live" eval --live --if-reachable --no-record || exit 1
   if grep -Eq '"skipped"[[:space:]]*:[[:space:]]*"' <<< "$LAST_OUT"; then
     live="skipped (no model reachable)"
   else

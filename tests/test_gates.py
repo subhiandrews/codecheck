@@ -76,7 +76,7 @@ def test_gates_runs_replay_always(sandbox):
     assert sandbox.calls() == ["eval --replay"]
 
 
-LIVE = ["eval --replay", "eval --live --if-reachable"]
+LIVE = ["eval --replay", "eval --live --if-reachable --no-record"]  # a gate run must not write the score history
 
 
 def on_branch(box, *paths):
