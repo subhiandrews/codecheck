@@ -356,6 +356,8 @@ The draft (written 0600, since it holds the PR's code) labels each posted findin
 
 ### Live snippet eval
 
+For how the evals fit together (replay, live, calibrate and the score history), see [docs/Evals.md](docs/Evals.md).
+
 Replay checks the deterministic part. `eval --live` checks the model part: it runs the real reviewer panel and aggregator on small code snippets in `tests/snippets/` and compares what they report with what each snippet expects.
 
 ```bash
