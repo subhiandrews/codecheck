@@ -112,6 +112,24 @@ def test_load_sorts_by_time_and_counts_unusable_lines(tmp_path):
     assert load(tmp_path / "missing.jsonl") == ([], 0)
 
 
+@pytest.mark.parametrize("bad_line", [
+    {"mode": "live", "ts": "2026-11-01T00:00:00+00:00"},                                         # no cases
+    {"mode": "live", "ts": "2026-11-01T00:00:00+00:00", "cases": []},                            # cases is a list
+    {"mode": "live", "ts": "2026-11-01T00:00:00+00:00", "cases": {"n": 4}},                      # no passed
+    {"mode": "live", "ts": "2026-11-01T00:00:00+00:00", "cases": {"n": "4", "passed": 3}},       # not numbers
+    {"mode": "live", "ts": "2026-11-01T00:00:00+00:00", "cases": {"n": 4, "passed": 3, "failed": [1]}},
+    {"mode": "calibrate", "ts": "2026-11-01T00:00:00+00:00", "agreement": {"n": 4}},             # no agree
+    {"mode": "calibrate", "ts": "2026-11-01T00:00:00+00:00", "agreement": {"n": 4, "agree": 2, "kappa": "x"}},
+    {"mode": "calibrate", "ts": "2026-11-01T00:00:00+00:00", "agreement": {"n": 4, "agree": 2}, "cost_usd": "1"},
+])
+def test_a_line_missing_a_field_the_report_reads_is_unusable_and_cannot_break_it(tmp_path, bad_line):
+    f = tmp_path / RECORD
+    f.write_text(json.dumps(_entry("live", "2026-11-02T00:00:00+00:00")) + "\n" + json.dumps(bad_line) + "\n")
+    entries, bad = load(f)
+    assert bad == 1 and len(entries) == 1
+    assert "1 unusable line(s)" in render(entries, bad) and regenerate(tmp_path)["unusable_lines"] == 1
+
+
 # --- the report --------------------------------------------------------------------------------------------------
 
 

@@ -70,6 +70,28 @@ def record(ctx, mode: str, result: dict, only: str | None, directory: Path | Non
     return path
 
 
+def _num(value: object) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def _usable(entry: object) -> bool:
+    """Whether a line has every field the report reads, so one hand-edited or foreign-schema line cannot break it."""
+    if not (isinstance(entry, dict) and entry.get("mode") in MODES and isinstance(entry.get("ts"), str)):
+        return False
+    if entry.get("cost_usd") is not None and not _num(entry["cost_usd"]):
+        return False
+    if entry.get("models") is not None and not isinstance(entry["models"], dict):
+        return False
+    if entry["mode"] == "live":
+        cases = entry.get("cases")
+        failed = cases.get("failed", []) if isinstance(cases, dict) else None
+        return (isinstance(cases, dict) and _num(cases.get("n")) and _num(cases.get("passed"))
+                and isinstance(failed, list) and all(isinstance(n, str) for n in failed))
+    a = entry.get("agreement")
+    return (isinstance(a, dict) and _num(a.get("n")) and _num(a.get("agree"))
+            and all(a.get(k) is None or _num(a[k]) for k in ("rate", "kappa", "errors")))
+
+
 def load(path: Path) -> tuple[list[dict], int]:
     """The recorded runs oldest first, and how many lines were unusable. Two branches that each appended a line merge
     in either order (`merge=union`), so the order is restored from the timestamps."""
@@ -81,10 +103,9 @@ def load(path: Path) -> tuple[list[dict], int]:
     for line in filter(None, (ln.strip() for ln in lines)):
         try:
             entry = json.loads(line)
-            ok = isinstance(entry, dict) and entry.get("mode") in MODES and isinstance(entry.get("ts"), str)
         except json.JSONDecodeError:
-            ok = False
-        if ok:
+            entry = None
+        if _usable(entry):
             entries.append(entry)
         else:
             bad += 1
