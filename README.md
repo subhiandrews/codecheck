@@ -21,7 +21,13 @@ If there is nothing to review, the run stops after `precheck` and spends zero to
 
 ## Install
 
-Prerequisites: Python **3.14.10 or later** (`doctor` warns below this, and the installer refuses to run on anything older than 3.14), `git`, the GitHub CLI `gh` (logged in with `gh auth login`) or, for GitLab, the GitLab CLI `glab` (logged in with `glab auth login`), and Claude Code. `uv` is used if present.
+Prerequisites:
+
+- Python **3.14.10 or later** (`doctor` warns below this, and the installer refuses to run on anything older than 3.14). `uv` is used if present.
+- `git` and Claude Code.
+- The CLI for your code host: the GitHub CLI `gh` (logged in with `gh auth login`) for GitHub, or the GitLab CLI `glab` (logged in with `glab auth login`) for GitLab. One is enough; install both if you work with both.
+
+**Choosing a host.** By default (`provider = "auto"`) a repository whose `remote` points at `gitlab.com` uses GitLab and any other remote uses GitHub. Set `provider = "github"` or `"gitlab"` in the config to choose explicitly; self-hosted GitLab needs `provider = "gitlab"`. See [GitLab](#gitlab) for how GitLab merge requests differ. The Node installer takes `--provider github|gitlab|both` to choose which host CLI it requires (see below).
 
 ### 1. From the plugin marketplace (recommended)
 
@@ -66,11 +72,13 @@ Overrides: `CODE_CHECK_HOME` (data directory, default `~/.local/share/code-check
 
 ```bash
 pip install git+https://github.com/subhiandrews/codecheck.git     # or a container image built from this repo
-export GH_TOKEN=...            # gh authentication, no interactive login
+export GH_TOKEN=...            # GitHub: gh authentication, no interactive login
+export GITLAB_TOKEN=...        # GitLab instead: glab authentication, no interactive login
 export ANTHROPIC_API_KEY=...   # for the headless `claude -p` processes
 code-check loop --mode review      # one iteration of the review loop
 code-check loop --mode babysit     # one iteration of the babysit loop
-code-check run-pr --mode review --pr OWNER/REPO#123
+code-check run-pr --mode review --pr OWNER/REPO#123            # GitHub
+code-check run-pr --mode review --pr group/subgroup/project#7   # GitLab merge request
 ```
 
 The `claude` binary must be installed and on the PATH (`run_pr.claude_bin`), and **the code-check plugin must be installed for that `claude`**: each headless process is only told to use the `code-check:review-pr` (or `code-check:babysit-pr`) skill, so without the plugin it has no skill, agents or `bin/code-check` to run. In the remote environment install it with `claude plugin marketplace add subhiandrews/codecheck` and `claude plugin install code-check@code-check`, or with `node installer/cli.js install` from a clone. `pip install` alone gives you the CLI, not the plugin.
@@ -89,7 +97,7 @@ Mount a volume at the data directory (`state_dir` and `shadow.store` in the conf
 /code-check:babysit-pr                        # comments and CI for all your PRs with something new
 ```
 
-A PR can be given as `123` (current repository), `OWNER/REPO#123` or a PR URL.
+A PR can be given as `123` (current repository), `OWNER/REPO#123` or a PR URL. On GitLab a merge request is `7`, `group/subgroup/project#7` or its URL.
 
 The CLI can also be used directly; every subcommand prints one JSON document:
 
