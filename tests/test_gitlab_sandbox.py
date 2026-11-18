@@ -33,6 +33,8 @@ FAKE_GLAB = textwrap.dedent('''\
     out = {}
     if method == "GET":
         if endpoint == "user":
+            if os.environ.get("FAKE_GLAB_USER_FAILS"):
+                sys.exit(1)
             out = {"username": os.environ.get("FAKE_GLAB_USER", "alice"), "email": "private@example.com",
                    "commit_email": "commit@example.com", "public_email": "", "private_commit_email": "1-alice@users.noreply.example.com"}
         elif endpoint.startswith("namespaces/"):
@@ -220,13 +222,25 @@ def test_comment_as_reviewer_refuses_to_run_as_the_owner(tmp_path):
     assert not [c for c in calls(env) if c["endpoint"].endswith("/discussions")]
 
 
+def test_comment_as_reviewer_refuses_when_the_current_user_cannot_be_read(tmp_path):
+    env = _env(tmp_path, SANDBOX_PROJECT=PROJECT, FAKE_GLAB_USER_FAILS="1")
+    res = run(env, "comment-as-reviewer", check=False)
+    assert res.returncode != 0 and "could not read the current GitLab user" in res.stderr
+    assert not [c for c in calls(env) if c["endpoint"].endswith("/discussions")]
+
+
+def test_the_owner_check_ignores_case(tmp_path):
+    env = _env(tmp_path, SANDBOX_PROJECT=PROJECT, FAKE_GLAB_USER="Alice")  # GitLab paths are case-insensitive
+    res = run(env, "comment-as-reviewer", check=False)
+    assert res.returncode != 0 and "second account" in res.stderr
+
+
 def test_create_commits_without_a_git_identity(tmp_path):
     bare = tmp_path / "origin.git"
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)], check=True)
     env = _env(tmp_path, bare)
     for k in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"):
         del env[k]
-    env["HOME"] = str(tmp_path)  # no ~/.gitconfig either
     run(env, "create")
     assert git(bare, "log", "-1", "--format=%an", "main").strip() == "code-check sandbox"
 
