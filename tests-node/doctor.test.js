@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatDoctor, parsePython, runDoctor } from '../installer/lib/doctor.js';
+import { formatDoctor, parsePython, parseProvider, runDoctor } from '../installer/lib/doctor.js';
 import { fakeExec } from './helpers.js';
 
 test('parsePython reads version triples', () => {
@@ -29,6 +29,40 @@ test('python older than 3.14 fails', () => {
 test('missing gh fails; missing claude does not', () => {
   assert.equal(runDoctor({ exec: fakeExec({ gh: false }) }).ok, false);
   assert.equal(runDoctor({ exec: fakeExec({ claude: false }) }).ok, true);
+});
+
+const names = (provider, opts) => runDoctor({ exec: fakeExec(opts), provider }).checks.map((c) => c.name);
+
+test('the default checks are exactly the GitHub ones and never touch glab', () => {
+  const exec = fakeExec();
+  const result = runDoctor({ exec });
+  assert.deepEqual(result.checks.map((c) => c.name), ['python', 'git', 'gh', 'gh auth', 'claude']);
+  assert.deepEqual(names('github'), ['python', 'git', 'gh', 'gh auth', 'claude']);
+  assert.ok(!exec.lines().some((l) => l.startsWith('glab')));
+});
+
+test('gitlab needs glab, not gh', () => {
+  assert.deepEqual(names('gitlab'), ['python', 'git', 'glab', 'glab auth', 'claude']);
+  assert.equal(runDoctor({ exec: fakeExec({ gh: false }), provider: 'gitlab' }).ok, true);
+  assert.equal(runDoctor({ exec: fakeExec({ glab: false }), provider: 'gitlab' }).ok, false);
+});
+
+test('both needs gh and glab', () => {
+  assert.deepEqual(names('both'), ['python', 'git', 'gh', 'gh auth', 'glab', 'glab auth', 'claude']);
+  assert.equal(runDoctor({ exec: fakeExec(), provider: 'both' }).ok, true);
+  assert.equal(runDoctor({ exec: fakeExec({ gh: false }), provider: 'both' }).ok, false);
+  assert.equal(runDoctor({ exec: fakeExec({ glab: false }), provider: 'both' }).ok, false);
+});
+
+test('github still ignores a missing glab', () => {
+  assert.equal(runDoctor({ exec: fakeExec({ glab: false }) }).ok, true);
+});
+
+test('an unknown provider is rejected before anything runs', () => {
+  const exec = fakeExec();
+  assert.throws(() => runDoctor({ exec, provider: 'bitbucket' }), /--provider must be one of github, gitlab, both/);
+  assert.throws(() => parseProvider(undefined), /got nothing/);
+  assert.equal(exec.calls.length, 0);
 });
 
 test('formatDoctor marks warnings and failures', () => {

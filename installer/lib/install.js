@@ -72,9 +72,9 @@ function copyMode(paths, stage, log) {
   return { files, skipped };
 }
 
-export function install({ exec = realExec, env = process.env, log = () => {} } = {}) {
+export function install({ exec = realExec, env = process.env, log = () => {}, provider = 'github' } = {}) {
   const paths = resolvePaths(env);
-  const doctor = runDoctor({ exec });
+  const doctor = runDoctor({ exec, provider }); // validates `provider` and requires the matching host CLI(s)
   const failed = doctor.checks.filter((c) => c.required && !c.ok);
   if (failed.length) throw new Error(`prerequisites missing: ${failed.map((c) => `${c.name} (${c.detail})`).join('; ')}`);
   for (const c of doctor.checks.filter((x) => x.warn)) log(`warning: ${c.name}: ${c.detail}`);
@@ -120,6 +120,6 @@ export function install({ exec = realExec, env = process.env, log = () => {} } =
   if (mode === 'copy') ({ files, skipped } = copyMode(paths, stage, log));
 
   const version = fs.readFileSync(path.join(stage, 'VERSION'), 'utf8').trim();
-  fs.writeFileSync(path.join(paths.dataDir, 'receipt.json'), JSON.stringify({ version, mode, stage, files, skipped, marketplaceAdded }, null, 2));
-  return { mode, stage, files, skipped, version };
+  fs.writeFileSync(path.join(paths.dataDir, 'receipt.json'), JSON.stringify({ version, mode, provider, stage, files, skipped, marketplaceAdded }, null, 2));
+  return { mode, provider, stage, files, skipped, version };
 }

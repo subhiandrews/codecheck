@@ -171,6 +171,59 @@ test('refuses to replace an unowned <data>/plugin directory', () => {
   assert.ok(fs.existsSync(path.join(root, 'data', 'plugin', 'precious')));
 });
 
+const receiptOf = (root) => JSON.parse(fs.readFileSync(path.join(root, 'data', 'receipt.json'), 'utf8'));
+
+test('a plain install is the GitHub install: it never looks for glab and records the provider', () => {
+  const { env, root } = makeEnv();
+  const exec = fakeExec({ glab: false });
+  const r = install({ exec, env });
+  assert.equal(r.provider, 'github');
+  assert.equal(receiptOf(root).provider, 'github');
+  assert.ok(!exec.lines().some((l) => l.startsWith('glab')));
+});
+
+test('--provider gitlab installs without gh and requires glab', () => {
+  const { env, root } = makeEnv();
+  const r = install({ exec: fakeExec({ gh: false }), env, provider: 'gitlab' });
+  assert.equal(r.mode, 'plugin');
+  assert.equal(receiptOf(root).provider, 'gitlab');
+  const other = makeEnv();
+  assert.throws(() => install({ exec: fakeExec({ glab: false }), env: other.env, provider: 'gitlab' }), /prerequisites missing.*glab/);
+  assert.equal(fs.existsSync(path.join(other.root, 'data')), false);
+});
+
+test('--provider both requires both CLIs', () => {
+  const { env, root } = makeEnv();
+  assert.throws(() => install({ exec: fakeExec({ gh: false }), env, provider: 'both' }), /prerequisites missing.*gh/);
+  assert.throws(() => install({ exec: fakeExec({ glab: false }), env, provider: 'both' }), /prerequisites missing.*glab/);
+  assert.equal(install({ exec: fakeExec(), env, provider: 'both' }).provider, 'both');
+  assert.equal(receiptOf(root).provider, 'both');
+});
+
+test('an unknown provider aborts before touching anything', () => {
+  const { env, root } = makeEnv();
+  assert.throws(() => install({ exec: fakeExec(), env, provider: 'bitbucket' }), /--provider must be one of/);
+  assert.equal(fs.existsSync(path.join(root, 'data')), false);
+});
+
+test('switching provider on re-install keeps one clean install, and uninstall still works', () => {
+  const { env, root } = makeEnv();
+  install({ exec: fakeExec(), env });
+  install({ exec: fakeExec({ gh: false }), env, provider: 'gitlab' });
+  assert.equal(receiptOf(root).provider, 'gitlab');
+  assert.equal(uninstall({ exec: fakeExec(), env }).mode, 'plugin');
+  assert.equal(fs.existsSync(path.join(root, 'data', 'receipt.json')), false);
+});
+
+test('a receipt written before providers existed still uninstalls', () => {
+  const { env, root } = makeEnv();
+  install({ exec: fakeExec({ claude: false }), env });
+  const receipt = receiptOf(root);
+  delete receipt.provider;
+  fs.writeFileSync(path.join(root, 'data', 'receipt.json'), JSON.stringify(receipt));
+  assert.equal(uninstall({ exec: fakeExec({ claude: false }), env }).mode, 'copy');
+});
+
 test('every installer payload entry is shipped in the npm package', () => {
   const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   const missing = PAYLOAD.filter((item) => !pkg.files.includes(item));

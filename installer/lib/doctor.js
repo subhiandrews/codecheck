@@ -19,8 +19,23 @@ export function findPython(exec) {
   return null;
 }
 
-export function runDoctor({ exec }) {
+export const PROVIDERS = ['github', 'gitlab', 'both'];
+
+export function parseProvider(value) {
+  if (!PROVIDERS.includes(value)) throw new Error(`--provider must be one of ${PROVIDERS.join(', ')} (got ${value === undefined ? 'nothing' : JSON.stringify(value)})`);
+  return value;
+}
+
+// The code host CLIs a provider choice needs: [check name, command, args, required].
+const HOST_CHECKS = {
+  github: [['gh', 'gh', ['--version'], true], ['gh auth', 'gh', ['auth', 'status'], false]],
+  gitlab: [['glab', 'glab', ['--version'], true], ['glab auth', 'glab', ['auth', 'status'], false]],
+};
+const hostChecks = (provider) => (provider === 'both' ? [...HOST_CHECKS.github, ...HOST_CHECKS.gitlab] : HOST_CHECKS[provider]);
+
+export function runDoctor({ exec, provider = 'github' }) {
   const checks = [];
+  const hosts = hostChecks(parseProvider(provider));
   const py = findPython(exec);
   if (py) {
     const warn = cmp(py.version, RECOMMENDED) < 0;
@@ -33,8 +48,7 @@ export function runDoctor({ exec }) {
   }
   for (const [name, cmd, args, required] of [
     ['git', 'git', ['--version'], true],
-    ['gh', 'gh', ['--version'], true],
-    ['gh auth', 'gh', ['auth', 'status'], false],
+    ...hosts,
     ['claude', 'claude', ['--version'], false],
   ]) {
     const r = exec(cmd, args);
