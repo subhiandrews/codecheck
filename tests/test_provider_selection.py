@@ -55,13 +55,13 @@ def _clone_with_remote(tmp_path, url):
     ("git@github.com:o/r.git", GitHubProvider),
     ("https://gitlab.com/g/s/p.git", GitLabProvider),
 ])
-def test_build_context_picks_the_provider_from_the_remote(tmp_path, url, expected):
+def test_build_context_picks_the_provider_from_the_remote(tmp_path, git_env, url, expected):
     clone = _clone_with_remote(tmp_path, url)
     ctx = build_context(clone, {}, tmp_path / "home")
     assert type(ctx.provider) is expected
 
 
-def test_an_explicit_provider_in_config_beats_the_remote(tmp_path):
+def test_an_explicit_provider_in_config_beats_the_remote(tmp_path, git_env):
     clone = _clone_with_remote(tmp_path, "https://gitlab.com/g/p.git")
     home = tmp_path / "home"
     (home / ".config" / "code-check").mkdir(parents=True)
@@ -91,7 +91,7 @@ def test_prref_parse_is_strict_by_default_and_nested_only_on_request():
             PRRef.parse(bad, nested=True)
 
 
-def test_github_references_resolve_exactly_as_before(tmp_path):
+def test_github_references_resolve_exactly_as_before(tmp_path, git_env):
     _, clone = make_origin_and_clone(tmp_path)
     ctx = make_ctx(tmp_path, clone, provider=FakeProvider())
     assert ctx.resolve_ref("o/r#7") == PRRef("o/r", 7)
