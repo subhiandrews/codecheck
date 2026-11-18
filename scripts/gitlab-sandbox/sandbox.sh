@@ -21,7 +21,15 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SEED="$HERE/seed"
 BRANCH_DIRS="feature__discount feature__clean-docs feature__report-export fix__failing-ci"
 TMP=""
-trap '[ -z "$TMP" ] || rm -rf "$TMP"' EXIT
+PROJECT_MADE=""
+cleanup() {
+  local rc=$?
+  [ -z "$TMP" ] || rm -rf "$TMP"
+  if [ "$rc" -ne 0 ] && [ -n "$PROJECT_MADE" ]; then
+    echo "sandbox: create failed after the project was made; run 'teardown', then 'create' again" >&2
+  fi
+}
+trap cleanup EXIT
 
 die() { echo "sandbox: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required but was not found on PATH"; }
@@ -92,6 +100,7 @@ cmd_create() {
   echo "creating public project $PROJECT"
   api_send POST projects "$(jb name="$NAME" path="$NAME" namespace_id="$nsid" visibility=public default_branch=main \
     initialize_with_readme=false description='Public sandbox for testing the code-check plugin on GitLab merge requests')" >/dev/null
+  PROJECT_MADE=1
 
   local remote
   if [ -n "${SANDBOX_REMOTE_URL:-}" ]; then remote="$SANDBOX_REMOTE_URL"

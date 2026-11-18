@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -243,7 +244,21 @@ def test_capture_fixtures_saves_every_response_the_provider_reads(tmp_path):
     assert {p.name for p in out.iterdir()} == {"user.json", "project.json", "mr.json", "diffs.json", "discussions.json",
                                                 "notes.json", "versions.json", "pipelines.json", "jobs.json"}
     assert json.loads((out / "user.json").read_text()) == {"username": "alice"}  # every email field is gone
-    assert not [p.name for p in out.iterdir() if "example.com" in p.read_text()]
+    assert not [p.name for p in out.iterdir() if re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", p.read_text())]
+
+
+def test_a_failed_create_after_the_project_exists_says_how_to_recover(tmp_path):
+    env = _env(tmp_path, tmp_path / "missing.git")  # the push has nowhere to go
+    res = run(env, "create", check=False)
+    assert res.returncode != 0
+    assert "teardown" in res.stderr and "create" in res.stderr
+
+
+def test_a_create_refused_before_the_project_is_made_gives_no_recovery_hint(tmp_path):
+    env = _env(tmp_path)
+    (Path(env["FAKE_GLAB_STATE"]) / "created").touch()  # refused at the "already exists" check
+    res = run(env, "create", check=False)
+    assert res.returncode != 0 and "create failed after" not in res.stderr
 
 
 def test_help_and_unknown_commands():

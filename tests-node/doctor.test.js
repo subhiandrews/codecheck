@@ -70,3 +70,10 @@ test('formatDoctor marks warnings and failures', () => {
   assert.match(text, /\[warn\] python/);
   assert.match(text, /\[FAIL\] gh/);
 });
+
+test('a missing host CLI says what to install and which --provider to pass', () => {
+  const gh = runDoctor({ exec: fakeExec({ gh: false }) }).checks.find((c) => c.name === 'gh');
+  assert.match(gh.detail, /install gh.*--provider gitlab/);
+  const glab = runDoctor({ exec: fakeExec({ glab: false }), provider: 'gitlab' }).checks.find((c) => c.name === 'glab');
+  assert.match(glab.detail, /install glab.*--provider github/);
+});
