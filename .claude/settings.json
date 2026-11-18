@@ -24,13 +24,6 @@
             "command": "D=\"${CLAUDE_PROJECT_DIR:-.}\"; G=\"$D/scripts/gates.sh\"; if [ ! -x \"$G\" ]; then echo \"$G not found; skipping eval gates\" >&2; exit 0; fi; \"$G\" --if-no-git-hook >&2 || { echo 'eval gates failed: fix the findings above before committing' >&2; exit 2; }",
             "timeout": 900,
             "statusMessage": "Running eval gates..."
-          },
-          {
-            "type": "command",
-            "if": "Bash(gh pr create*)",
-            "command": "D=\"${CLAUDE_PROJECT_DIR:-.}\"; G=\"$D/scripts/gates.sh\"; if [ ! -x \"$G\" ]; then echo \"$G not found; skipping eval gates\" >&2; exit 0; fi; \"$G\" --pr --if-no-git-hook >&2 || { echo 'eval gates failed: fix the findings above before opening the PR' >&2; exit 2; }",
-            "timeout": 900,
-            "statusMessage": "Running eval gates for the new PR..."
           }
         ]
       }

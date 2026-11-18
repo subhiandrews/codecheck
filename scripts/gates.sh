@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Eval gates. Without --pr (the commit gate): the deterministic golden replay only.
-# With --pr (the new-branch gate): the replay, then the live snippet eval when the
+# With --pr (the manual PR gate, run by hand; nothing triggers it automatically): the replay, then the live snippet eval when the
 # branch differs from its base in a path of scripts/gate-paths.txt.
 #   scripts/gates.sh [--pr] [--if-no-git-hook]
 # --pr: the base is $CODE_CHECK_BASE (default origin/main); when it cannot be found
 # the live eval runs, never skips. The branch tip is $CODE_CHECK_REF (default HEAD;
-# .githooks/pre-push sets it to the commit being pushed).
+# set it to gate a commit other than the checked-out one).
 # --if-no-git-hook: do nothing when the git hooks are installed (core.hooksPath =
-# .githooks), because pre-commit and pre-push run these gates themselves.
+# .githooks), because pre-commit runs these gates itself.
 # CODE_CHECK_BIN overrides the CLI command (default: .venv/bin/python -m codecheck).
 # It is a command line, word-split on whitespace, not a path: a path containing
 # spaces cannot be used there.
@@ -100,7 +100,7 @@ run_gate() {
 run_gate "eval --replay" eval --replay || exit 1
 
 if [ "$PR" = 0 ]; then
-  echo "gates: replay passed; live eval runs when a new branch is pushed" >&2
+  echo "gates: replay passed; live eval runs only with --pr" >&2
   exit 0
 fi
 

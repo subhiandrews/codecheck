@@ -18,7 +18,7 @@ flowchart TD
     golden --> calibrate["eval --calibrate<br/>LLM judge vs human labels"]
     snippets --> live["eval --live<br/>the real panel on small<br/>changes, through claude -p"]
 
-    replay --> gates["Gates<br/>pre-commit, pre-push, CI,<br/>the hand-off merge guard"]
+    replay --> gates["Gates<br/>pre-commit, CI,<br/>the hand-off merge guard"]
     live --> gates
     live --> history[("docs/eval-history.md<br/>the trend")]
     calibrate --> history
