@@ -24,4 +24,15 @@ xychart-beta
 
 ## Judge calibration: agreement with the human labels
 
-No runs recorded yet.
+```mermaid
+xychart-beta
+    title "Judge calibration: agreement with the human labels (%), rolling average of 3 runs"
+    x-axis [1]
+    y-axis "percent" 0 --> 100
+    line [50]
+    line [50]
+```
+
+| # | date | commit | branch | score | outcome | models | cost |
+|---|---|---|---|---|---|---|---|
+| 1 | 2026-11-18 | 9f0108f+dirty | feat/gitlab-provider | 50% | 7/14, kappa -0.32 | judge opus | $1.05 |

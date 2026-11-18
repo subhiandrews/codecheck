@@ -32,7 +32,7 @@ def sandbox(tmp_path, git_env, monkeypatch):
     for name in ("gates.sh", "gate-paths.txt", "install-git-hooks.sh"):
         shutil.copy2(REPO / "scripts" / name, repo / "scripts" / name)
     (repo / ".githooks").mkdir()
-    for hook in ("pre-commit", "pre-push"):
+    for hook in ("pre-commit",):
         shutil.copy2(REPO / ".githooks" / hook, repo / ".githooks" / hook)
     fake_dir = tmp_path / "fake"
     fake_dir.mkdir()
@@ -142,84 +142,12 @@ def test_gates_reject_an_unknown_argument(sandbox):
     assert res.returncode == 2 and "unknown argument" in res.stderr and sandbox.calls() == []
 
 
-def test_pre_push_runs_the_live_gate_only_for_a_new_branch(sandbox, tmp_path):
-    remote = tmp_path / "remote.git"
-    git(tmp_path, "init", "-q", "--bare", str(remote))
-    git(sandbox.repo, "config", "core.hooksPath", ".githooks")
-    git(sandbox.repo, "remote", "add", "origin", str(remote))
-    sandbox.stage("base.txt")
-    git(sandbox.repo, "commit", "-qm", "base", "--no-verify")
-    git(sandbox.repo, "branch", "-M", "main")
-    git(sandbox.repo, "push", "-q", "origin", "main")
-    git(sandbox.repo, "switch", "-qc", "feature")
-    sandbox.stage("agents/x.md")
-    git(sandbox.repo, "commit", "-qm", "change", "--no-verify")
-    sandbox.log.unlink(missing_ok=True)
-
-    git(sandbox.repo, "push", "-q", "origin", "feature")
-    assert sandbox.calls() == LIVE
-
-    sandbox.log.unlink()
-    sandbox.stage("agents/y.md")
-    git(sandbox.repo, "commit", "-qm", "more", "--no-verify")
-    git(sandbox.repo, "push", "-q", "origin", "feature")
-    assert sandbox.calls() == []
-
-    git(sandbox.repo, "tag", "v1")
-    git(sandbox.repo, "push", "-q", "origin", "v1")
-    git(sandbox.repo, "push", "-q", "origin", ":feature")
-    assert sandbox.calls() == []
-
-
-def test_pre_push_gates_the_pushed_commit_not_the_checked_out_one(sandbox, tmp_path):
-    remote = tmp_path / "remote.git"
-    git(tmp_path, "init", "-q", "--bare", str(remote))
-    git(sandbox.repo, "config", "core.hooksPath", ".githooks")
-    git(sandbox.repo, "remote", "add", "origin", str(remote))
-    sandbox.stage("base.txt")
-    git(sandbox.repo, "commit", "-qm", "base", "--no-verify")
-    git(sandbox.repo, "branch", "-M", "main")
-    git(sandbox.repo, "push", "-q", "origin", "main")
-    git(sandbox.repo, "fetch", "-q", "origin")
-    git(sandbox.repo, "switch", "-qc", "gated")
-    sandbox.stage("agents/x.md")
-    git(sandbox.repo, "commit", "-qm", "gated change", "--no-verify")
-    git(sandbox.repo, "switch", "-qc", "plain", "main")
-    sandbox.stage("README.md")
-    git(sandbox.repo, "commit", "-qm", "plain change", "--no-verify")
-
-    # HEAD is the ungated branch; the commit pushed touches a gated path.
-    sandbox.log.unlink(missing_ok=True)
-    git(sandbox.repo, "push", "-q", "origin", "gated")
-    assert sandbox.calls() == LIVE
-
-    # And the reverse: HEAD is gated, the pushed commit is not.
-    git(sandbox.repo, "switch", "-q", "gated")
-    sandbox.log.unlink()
-    git(sandbox.repo, "push", "-q", "origin", "plain")
-    assert sandbox.calls() == ["eval --replay"]
-
-
 def test_pr_gate_rejects_a_ref_that_looks_like_an_option(sandbox, monkeypatch):
     on_branch(sandbox, "agents/x.md")
     monkeypatch.setenv("CODE_CHECK_REF", "--output=evil")
     res = run_gates(sandbox, "--pr")
     assert res.returncode == 2 and "CODE_CHECK_REF" in res.stderr
     assert not (sandbox.repo / "evil").exists()
-
-
-def test_pre_push_blocks_a_new_branch_when_the_live_gate_fails(sandbox, tmp_path):
-    remote = tmp_path / "remote.git"
-    git(tmp_path, "init", "-q", "--bare", str(remote))
-    git(sandbox.repo, "config", "core.hooksPath", ".githooks")
-    git(sandbox.repo, "remote", "add", "origin", str(remote))
-    sandbox.stage("agents/x.md")
-    git(sandbox.repo, "commit", "-qm", "change", "--no-verify")
-    (sandbox.fake_dir / "fail-live").write_text("")
-    res = subprocess.run(["git", "push", "-q", "origin", "HEAD:refs/heads/feature"], cwd=sandbox.repo,
-                         capture_output=True, text=True, check=False)
-    assert res.returncode != 0 and "eval --live failed" in res.stderr
-    assert git(remote, "branch", "--list").stdout.strip() == ""
 
 
 def test_gates_fail_when_replay_fails(sandbox):
@@ -356,7 +284,7 @@ def test_precommit_hook_runs_gates(sandbox):
 
 
 @pytest.mark.parametrize(
-    "script", ["scripts/gates.sh", "scripts/install-git-hooks.sh", ".githooks/pre-commit", ".githooks/pre-push"],
+    "script", ["scripts/gates.sh", "scripts/install-git-hooks.sh", ".githooks/pre-commit"],
 )
 def test_scripts_parse_and_are_executable(script):
     assert subprocess.run(["bash", "-n", str(REPO / script)], check=False).returncode == 0
@@ -369,13 +297,12 @@ def test_claude_settings_has_gates_hook():
     import json
 
     hooks = json.loads((REPO / ".claude/settings.json").read_text())["hooks"]["PreToolUse"][0]["hooks"]
-    assert len(hooks) == 4
-    commit, pr = hooks[2], hooks[3]
+    assert len(hooks) == 3
+    commit = hooks[2]
     assert commit["if"] == "Bash(git commit*)" and commit["timeout"] == 900
     assert "scripts/gates.sh" in commit["command"] and '"$G" --if-no-git-hook' in commit["command"]
     assert "--pr" not in commit["command"]
-    assert pr["if"] == "Bash(gh pr create*)" and pr["timeout"] == 900
-    assert '"$G" --pr --if-no-git-hook' in pr["command"]
+    assert not any("gh pr create" in h.get("if", "") for h in hooks)
 
 
 def test_gates_work_when_repo_path_has_a_space(tmp_path, git_env, monkeypatch):
@@ -484,7 +411,7 @@ def test_gates_default_cli_parses_with_its_own_interpreter(tmp_path, git_env, mo
 def test_gates_print_one_summary_line_on_success(sandbox):
     res = run_gates(sandbox)
     assert res.returncode == 0 and res.stdout == ""
-    assert res.stderr.strip().splitlines()[-1] == "gates: replay passed; live eval runs when a new branch is pushed"
+    assert res.stderr.strip().splitlines()[-1] == "gates: replay passed; live eval runs only with --pr"
     on_branch(sandbox, "README.md")
     res = run_gates(sandbox, "--pr")
     assert res.stdout == "" and res.stderr.strip().splitlines()[-1] == "gates: replay passed; live skipped (no gated path)"
