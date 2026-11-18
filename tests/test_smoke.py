@@ -2,4 +2,4 @@ import codecheck
 
 
 def test_version_is_exposed():
-    assert codecheck.__version__ == "0.1.6"
+    assert codecheck.__version__ == "0.2.0"
