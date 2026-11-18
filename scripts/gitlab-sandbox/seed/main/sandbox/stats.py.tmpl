@@ -1,0 +1,13 @@
+"""Two small helpers used to exercise code-check on GitLab merge requests."""
+
+
+def total_between(values, start, end):
+    """Sum values[start..end], both ends included."""
+    return sum(values[start:end])
+
+
+def average(values):
+    """Arithmetic mean as a float; 0.0 for an empty list."""
+    if not values:
+        return 0.0
+    return sum(values) / len(values)

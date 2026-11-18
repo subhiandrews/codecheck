@@ -1,0 +1,10 @@
+"""Write per-name totals to a CSV file."""
+import csv
+
+
+def export_totals(rows, path):
+    """rows maps a name to a list of numbers."""
+    with open(path, "w") as fh:
+        writer = csv.writer(fh)
+        for name, values in rows.items():
+            writer.writerow([name, sum(values)])

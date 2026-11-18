@@ -1,0 +1,4 @@
+[
+  {"path": "sandbox/stats.py", "line": 13,
+   "body": "The docstring promises a float mean, and `//` truncates it: `average([1, 2])` is now 1 instead of 1.5. Please keep true division."}
+]

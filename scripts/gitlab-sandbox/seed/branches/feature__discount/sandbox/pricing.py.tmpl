@@ -1,0 +1,11 @@
+"""Price helpers."""
+
+
+def apply_discount(price, percent, history=[]):
+    """Return the price after a percentage discount."""
+    try:
+        result = price - price * percent / 100
+    except:
+        return 0
+    history.append(result)
+    return result

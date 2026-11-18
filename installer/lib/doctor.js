@@ -19,8 +19,28 @@ export function findPython(exec) {
   return null;
 }
 
-export function runDoctor({ exec }) {
+export const PROVIDERS = ['github', 'gitlab', 'both'];
+
+export function parseProvider(value) {
+  if (!PROVIDERS.includes(value)) throw new Error(`--provider must be one of ${PROVIDERS.join(', ')} (got ${value === undefined ? 'nothing' : JSON.stringify(value)})`);
+  return value;
+}
+
+// The code host CLIs a provider choice needs: [check name, command, args, required].
+const HOST_CHECKS = {
+  github: [['gh', 'gh', ['--version'], true], ['gh auth', 'gh', ['auth', 'status'], false]],
+  gitlab: [['glab', 'glab', ['--version'], true], ['glab auth', 'glab', ['auth', 'status'], false]],
+};
+// Shown instead of the raw "spawnSync ... ENOENT" when a host CLI is not installed.
+const NOT_FOUND_HINT = {
+  gh: 'not found (install gh, or pass --provider gitlab if you only use GitLab)',
+  glab: 'not found (install glab, or pass --provider github if you only use GitHub)',
+};
+const hostChecks = (provider) => (provider === 'both' ? [...HOST_CHECKS.github, ...HOST_CHECKS.gitlab] : HOST_CHECKS[provider]);
+
+export function runDoctor({ exec, provider = 'github' }) {
   const checks = [];
+  const hosts = hostChecks(parseProvider(provider));
   const py = findPython(exec);
   if (py) {
     const warn = cmp(py.version, RECOMMENDED) < 0;
@@ -31,19 +51,15 @@ export function runDoctor({ exec }) {
   } else {
     checks.push({ name: 'python', ok: false, required: true, warn: false, detail: 'Python >= 3.14 not found (3.14.10 or later recommended)' });
   }
-  const probe = (name, cmd, args, required) => {
+  for (const [name, cmd, args, required] of [
+    ['git', 'git', ['--version'], true],
+    ...hosts,
+    ['claude', 'claude', ['--version'], false],
+  ]) {
     const r = exec(cmd, args);
-    return { name, ok: r.status === 0, required, warn: false, detail: ((r.stdout || r.stderr).trim().split('\n')[0]) || '' };
-  };
-  checks.push(probe('git', 'git', ['--version'], true));
-  // One code-host CLI is enough: gh for GitHub, glab for GitLab. Each is optional while the other is present.
-  const hosts = ['gh', 'glab'].map((cmd) => probe(cmd, cmd, ['--version'], false));
-  const noHost = hosts.every((h) => !h.ok);
-  for (const h of hosts) {
-    checks.push({ ...h, required: noHost, detail: noHost ? 'not found (install gh for GitHub or glab for GitLab)' : h.detail });
-    if (h.ok) checks.push(probe(`${h.name} auth`, h.name, ['auth', 'status'], false));
+    const detail = r.status === 127 && NOT_FOUND_HINT[cmd] ? NOT_FOUND_HINT[cmd] : ((r.stdout || r.stderr).trim().split('\n')[0]) || '';
+    checks.push({ name, ok: r.status === 0, required, warn: false, detail });
   }
-  checks.push(probe('claude', 'claude', ['--version'], false));
   return { ok: checks.every((c) => c.ok || !c.required), checks };
 }
 

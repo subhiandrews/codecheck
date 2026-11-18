@@ -27,7 +27,7 @@ Prerequisites:
 - `git` and Claude Code.
 - The CLI for your code host: the GitHub CLI `gh` (logged in with `gh auth login`) for GitHub, or the GitLab CLI `glab` (logged in with `glab auth login`) for GitLab. One is enough; install both if you work with both.
 
-**Choosing a host.** By default (`provider = "auto"`) a repository whose `remote` points at `gitlab.com` uses GitLab and any other remote uses GitHub. Set `provider = "github"` or `"gitlab"` in the config to choose explicitly; self-hosted GitLab needs `provider = "gitlab"`. See [GitLab](#gitlab) for how GitLab merge requests differ. The install steps below are the same for both hosts.
+**Choosing a host.** By default (`provider = "auto"`) a repository whose `remote` points at `gitlab.com` uses GitLab and any other remote uses GitHub. Set `provider = "github"` or `"gitlab"` in the config to choose explicitly; self-hosted GitLab needs `provider = "gitlab"`. See [GitLab](#gitlab) for how GitLab merge requests differ. The Node installer takes `--provider github|gitlab|both` to choose which host CLI it requires (see below).
 
 ### 1. From the plugin marketplace (recommended)
 
@@ -51,8 +51,15 @@ Each takes the same subcommands:
 
 ```bash
 node installer/cli.js install     # stage files, create the runtime, register the plugin with `claude plugin ...`
-node installer/cli.js doctor      # check prerequisites (git, python, gh or glab, claude) at any time
+node installer/cli.js doctor      # check prerequisites at any time
 node installer/cli.js uninstall   # add --purge-data to also delete shadow data and state
+```
+
+**GitHub, GitLab or both.** `install` and `doctor` take `--provider github|gitlab|both` (default `github`, so a plain `install` is unchanged). It only chooses which host CLI is a required prerequisite: `gh` for `github`, `glab` for `gitlab`, both for `both`. Which host a repository uses is decided per repository when you review it (see [GitLab](#gitlab)), so one install serves GitHub and GitLab repositories alike; the installer receipt records the choice. The marketplace install above has no such step and needs only the CLI of the host you review on.
+
+```bash
+node installer/cli.js install --provider gitlab    # needs glab (glab auth login), not gh
+node installer/cli.js doctor --provider both       # checks gh and glab
 ```
 
 Once the package is published under a confirmed name, `npx code-check install` (and `doctor`, `uninstall`) will be the short form of the same commands.
@@ -226,6 +233,8 @@ The same four skills work on GitLab.com merge requests through the `glab` CLI. W
 - **Reactions** on review comments are not read, so shadow-mode outcome counts leave them out.
 - **Checks** are the jobs of the merge request's latest pipeline; a failed job that is allowed to fail is reported as skipped.
 - **Thread ids** look like `group/project:7:<discussion>`, because resolving a thread needs the project and merge request.
+
+To test this on a real GitLab project, [docs/gitlab-testing.md](docs/gitlab-testing.md) has the test plan (three install cases, five scenarios and a list of what is still unverified), and `scripts/gitlab-sandbox/sandbox.sh` creates the public sandbox project it uses.
 
 ### Attribution and label
 
@@ -476,9 +485,9 @@ State lives next to the data: `<run_id>.handoff/analysis.json` (0600). Private r
 
 ## Development
 
-Run `scripts/install-git-hooks.sh` once to enable the checked-in git hooks (pre-commit and pre-push; `git config core.hooksPath .githooks`; this is repository-level config, so it applies to all worktrees). The pre-commit hook runs ruff and eslint, then `scripts/gates.sh`, which runs `code-check eval --replay` (fast and deterministic). The slow live eval does not run on commit. The pre-push hook runs `scripts/gates.sh --pr` when a push creates a new branch on the remote (the push right before a pull request, which `gh pr create` makes too): the replay again, then `code-check eval --live --if-reachable --no-record` (a gate run never writes the score history) only when the branch differs from `origin/main` (override with `CODE_CHECK_BASE`) in a path of `scripts/gate-paths.txt`; without a base to compare with it runs. The live gate skips, and does not block the push, when no model is reachable. Pushes to an existing branch, tag pushes and deletions skip it. Claude Code runs the same gates through `.claude/settings.json` (replay on `git commit`, `--pr` on `gh pr create`), unless the git hooks are installed (then they run once); `git -C <other worktree> commit` is not covered by it. On success the gates print one summary line to stderr (for example `gates: replay passed; live skipped (no gated path)`), so a pass can be told apart from a hook that did not run. `CODE_CHECK_BIN` overrides the CLI the gates call; it is a command line that is split on whitespace (so it may carry arguments), not a path, which means a path containing spaces cannot be used there. The gates read the `passed` verdict with the CLI's own interpreter, or `python3` when `CODE_CHECK_BIN` is set, and fall back to a plain text match when no Python runs, so a missing parser never blocks a commit or a push.
+Run `scripts/install-git-hooks.sh` once to enable the checked-in git hooks (pre-commit; `git config core.hooksPath .githooks`; this is repository-level config, so it applies to all worktrees). The pre-commit hook runs ruff and eslint, then `scripts/gates.sh`, which runs `code-check eval --replay` (fast and deterministic). The slow live eval does not run on commit. Nothing runs the live eval automatically when a pull request is opened. To run it by hand, call `scripts/gates.sh --pr`: the replay again, then `code-check eval --live --if-reachable --no-record` (a gate run never writes the score history) only when the branch differs from `origin/main` (override with `CODE_CHECK_BASE`) in a path of `scripts/gate-paths.txt`; without a base to compare with it runs. The live gate skips, and does not block, when no model is reachable. Claude Code runs the replay through `.claude/settings.json` on `git commit`, unless the git hooks are installed (then they run once); `git -C <other worktree> commit` is not covered by it. On success the gates print one summary line to stderr (for example `gates: replay passed; live skipped (no gated path)`), so a pass can be told apart from a hook that did not run. `CODE_CHECK_BIN` overrides the CLI the gates call; it is a command line that is split on whitespace (so it may carry arguments), not a path, which means a path containing spaces cannot be used there. The gates read the `passed` verdict with the CLI's own interpreter, or `python3` when `CODE_CHECK_BIN` is set, and fall back to a plain text match when no Python runs, so a missing parser never blocks a commit.
 
-The live gate (on a new branch) can take up to about twice `run_pr.timeout_seconds` (one bounded run per snippet, and two snippets ship) plus the reachability probe. The Claude hook has a 900 second timeout, and if a hook times out Claude Code may let the command through, so the git hooks are the authoritative gates; the Claude hook is a convenience for people who have not installed it.
+The manual live gate (`--pr`) can take up to about twice `run_pr.timeout_seconds` (one bounded run per snippet, and two snippets ship) plus the reachability probe. The Claude commit hook has a 900 second timeout, and if a hook times out Claude Code may let the command through, so the git hook is the authoritative gate; the Claude hook is a convenience for people who have not installed it.
 
 ## Extending
 

@@ -1,0 +1,7 @@
+from sandbox.report import export_totals
+
+
+def test_export_totals_writes_one_row_per_name(tmp_path):
+    out = tmp_path / "totals.csv"
+    export_totals({"a": [1, 2], "b": [3]}, out)
+    assert out.read_text().splitlines() == ["a,3", "b,3"]
