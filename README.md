@@ -226,7 +226,7 @@ The same four skills work on GitLab.com merge requests through the `glab` CLI. W
 - **Checks** are the jobs of the merge request's latest pipeline; a failed job that is allowed to fail is reported as skipped.
 - **Thread ids** look like `group/project:7:<discussion>`, because resolving a thread needs the project and merge request.
 
-To test this on a real GitLab project, [docs/gitlab-testing.md](docs/gitlab-testing.md) has the test plan (three install cases, five scenarios and a list of what is still unverified), and `scripts/gitlab-sandbox/sandbox.sh` creates the public sandbox project it uses.
+To test this on a real GitLab project, [docs/gitlab-testing.md](docs/gitlab-testing.md) has the test plan (three install cases, scenarios S1 to S6 and a list of what is still unverified), and `scripts/gitlab-sandbox/sandbox.sh` creates the public sandbox project it uses.
 
 ### Attribution and label
 

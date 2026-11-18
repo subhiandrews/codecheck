@@ -188,7 +188,7 @@ def test_comment_line_numbers_point_at_the_lines_they_describe():
         assert text in report[line - 1]
     stats = (SANDBOX / "seed/branches/fix__failing-ci/sandbox/stats.py.tmpl").read_text().splitlines()
     [comment] = json.loads((SANDBOX / "seed/branches/fix__failing-ci/comments.json").read_text())
-    assert "//" in stats[comment["line"] - 1]
+    assert "sum(values) // len(values)" in stats[comment["line"] - 1]
 
 
 def test_open_mrs_uses_the_titles_and_branches(tmp_path):
@@ -203,7 +203,7 @@ def test_open_mrs_uses_the_titles_and_branches(tmp_path):
 
 
 def test_comment_as_reviewer_posts_positioned_discussions_on_the_owners_merge_requests(tmp_path):
-    env = _env(tmp_path)
+    env = _env(tmp_path, SANDBOX_PROJECT=PROJECT, FAKE_GLAB_USER="bob")
     res = run(env, "comment-as-reviewer")
     posted = [c for c in calls(env) if c["method"] == "POST" and c["endpoint"].endswith("/discussions")]
     assert len(posted) == 4 and "!5" in res.stdout
@@ -211,6 +211,24 @@ def test_comment_as_reviewer_posts_positioned_discussions_on_the_owners_merge_re
     assert first["position"] == {"position_type": "text", "base_sha": "base1", "start_sha": "start1", "head_sha": "head1",
                                  "new_path": "sandbox/report.py", "old_path": "sandbox/report.py", "new_line": 7}
     assert [json.loads(c["body"])["position"]["new_line"] for c in posted] == [7, 8, 10, 13]
+
+
+def test_comment_as_reviewer_refuses_to_run_as_the_owner(tmp_path):
+    env = _env(tmp_path)  # the fake account is alice, who owns the project
+    res = run(env, "comment-as-reviewer", check=False)
+    assert res.returncode != 0 and "second account" in res.stderr
+    assert not [c for c in calls(env) if c["endpoint"].endswith("/discussions")]
+
+
+def test_create_commits_without_a_git_identity(tmp_path):
+    bare = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)], check=True)
+    env = _env(tmp_path, bare)
+    for k in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"):
+        del env[k]
+    env["HOME"] = str(tmp_path)  # no ~/.gitconfig either
+    run(env, "create")
+    assert git(bare, "log", "-1", "--format=%an", "main").strip() == "code-check sandbox"
 
 
 def test_add_member_resolves_the_user_first(tmp_path):
@@ -243,7 +261,7 @@ def test_capture_fixtures_saves_every_response_the_provider_reads(tmp_path):
     assert {p.name for p in out.iterdir()} == {"user.json", "project.json", "mr.json", "diffs.json", "discussions.json",
                                                 "notes.json", "versions.json", "pipelines.json", "jobs.json"}
     assert json.loads((out / "user.json").read_text()) == {"username": "alice"}  # every email field is gone
-    assert not [p.name for p in out.iterdir() if "example.com" in p.read_text()]
+    assert not [p.name for p in out.iterdir() if "@" in p.read_text()]  # no email address anywhere
 
 
 def test_help_and_unknown_commands():
