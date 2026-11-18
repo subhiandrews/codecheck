@@ -11,7 +11,7 @@ def write(path, text):
 
 def test_defaults(tmp_path):
     cfg = load_config(tmp_path / "repo", tmp_path / "home", {})
-    assert cfg.provider == "github"
+    assert cfg.provider == "auto"
     assert cfg.review.auto_approve is False
     assert cfg.loop.max_prs_per_iteration == 5
     assert cfg.models.language_experts == "haiku"

@@ -73,7 +73,7 @@ def build_handoff(ctx, run_id: str) -> dict:
     if meta.get("mode") != "pr" or not meta.get("pr"):
         comparison_reason = "local review: there is no pull request to compare with"
     else:
-        ref = PRRef.parse(meta["pr"])
+        ref = ctx.parse_ref(meta["pr"])
         try:
             pr = ctx.provider.get_pr(ref)
         except Exception as e:  # noqa: BLE001 - the link and the unposted fields are conveniences

@@ -8,3 +8,4 @@ dist/
 build/
 .superpowers/
 .worktrees/
+.idea/

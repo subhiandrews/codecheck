@@ -110,6 +110,7 @@ def _anchor_rejected(stderr: str) -> bool:
 
 class GitHubProvider:
     name = "github"
+    nested_repos = False
 
     def __init__(self, runner: CommandRunner, cwd: Path | None = None, login: str = "") -> None:
         self.runner = runner

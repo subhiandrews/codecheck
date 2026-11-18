@@ -21,7 +21,7 @@ If there is nothing to review, the run stops after `precheck` and spends zero to
 
 ## Install
 
-Prerequisites: Python **3.14.10 or later** (`doctor` warns below this, and the installer refuses to run on anything older than 3.14), `git`, the GitHub CLI `gh` (logged in with `gh auth login`), and Claude Code. `uv` is used if present.
+Prerequisites: Python **3.14.10 or later** (`doctor` warns below this, and the installer refuses to run on anything older than 3.14), `git`, the GitHub CLI `gh` (logged in with `gh auth login`) or, for GitLab, the GitLab CLI `glab` (logged in with `glab auth login`), and Claude Code. `uv` is used if present.
 
 ### 1. From the plugin marketplace (recommended)
 
@@ -138,7 +138,7 @@ Settings are layered, highest precedence first: environment (`CODE_CHECK_<SECTIO
 A repository's `.code-check.toml` may **not** set the security-sensitive keys `state_dir`, anything under `[run_pr]` or `[shadow]`, `review.auto_approve`, `review.attribution`, `review.label`, `review.login`, `loop.review_forks`, `address.test_command` or `deep_reviewer.command`: a repository you review is not trusted to choose what an unattended run may do or execute, where state is written, or whether reviews approve. Such a key in the repository file is an error that names the key; set it in your user file or the environment instead. Model names must match `[A-Za-z0-9._:[\]-]+`, `run_pr.permission_mode` must be one of `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`, and allowed-tool entries and prompts must not start with `-`.
 
 ```toml
-provider = "github"            # only GitHub in Phase 1
+provider = "auto"              # auto (a gitlab.com remote means gitlab, anything else github), "github" or "gitlab"
 base_branch = "auto"           # auto = the repository's default branch
 remote = "origin"
 state_dir = "~/.local/share/code-check/state"
@@ -208,6 +208,16 @@ After changing `[models]`, re-run the installer (`node installer/cli.js install`
 | 15 language experts | Haiku 4.5 |
 
 Haiku keeps the language-expert fan-out cheap, and the Opus aggregator verifies Critical and Warning findings before they are posted. The risk is recall: the aggregator cannot recover a bug that nobody reported. Use `models.per_language` to move a language up a tier, and use shadow data to see which ones need it. Opus is used for the aggregator and, only when you turn it on, the security reviewer.
+
+### GitLab
+
+The same four skills work on GitLab.com merge requests through the `glab` CLI. With the default `provider = "auto"`, a repository whose `remote` points at `gitlab.com` uses GitLab and any other remote uses GitHub. Set `provider = "github"` or `"gitlab"` to choose explicitly; an explicit choice is never overridden. Self-hosted GitLab is not detected and not tested: it would need `provider = "gitlab"` and `glab` pointed at that host. Pass a merge request as `group/subgroup/project#7` or its URL. Where GitLab differs from GitHub:
+
+- **A review is a set of discussions plus one summary note.** There is no review object, so the summary note ends with a hidden marker holding the reviewed head SHA, which is how a later run knows that head was already reviewed. It is posted last, so a run that dies half-way is retried. When the host rejects an inline position, that finding is folded into the summary instead.
+- **Approval** (`review.auto_approve`) approves the reviewed head only. If the host refuses it, the summary says so and the review is still recorded. GitLab does not say which commit an approval was for, so each approval is pinned to the head of the newest diff version that existed when it was given; an approval older than the latest push does not count for the new head.
+- **Reactions** on review comments are not read, so shadow-mode outcome counts leave them out.
+- **Checks** are the jobs of the merge request's latest pipeline; a failed job that is allowed to fail is reported as skipped.
+- **Thread ids** look like `group/project:7:<discussion>`, because resolving a thread needs the project and merge request.
 
 ### Attribution and label
 
@@ -464,7 +474,7 @@ The live gate (on a new branch) can take up to about twice `run_pr.timeout_secon
 
 ## Extending
 
-**A new code host.** Implement the `Provider` protocol in `src/codecheck/providers/base.py` (about a dozen methods that return the dataclasses in `models.py`), register it in `providers/__init__.py`, and run the shared contract suite against it by subclassing `ProviderContract` in `tests/providers/contract.py`. Nothing outside `providers/` needs to change. GitHub uses the `gh` CLI; GitLab (`glab`) and Bitbucket are planned for Phase 2.
+**A new code host.** Implement the `Provider` protocol in `src/codecheck/providers/base.py` (about a dozen methods that return the dataclasses in `models.py`), register it in `providers/__init__.py`, and run the shared contract suite against it by subclassing `ProviderContract` in `tests/providers/contract.py`. Nothing outside `providers/` needs to change. GitHub uses the `gh` CLI and GitLab the `glab` CLI (`providers/gitlab.py`); Bitbucket is not planned yet. A host whose repository paths can be nested sets `nested_repos = True`.
 
 **The deep reviewer.** Enable `[deep_reviewer]` and give the `deep-reviewer` agent access to your MCP tools, memory or retrieval system. If it is disabled, missing or fails, the panel runs without it.
 
@@ -477,6 +487,7 @@ Start with `code-check doctor` (or `node installer/cli.js doctor`).
 | Symptom | Fix |
 |---|---|
 | `gh auth` fails | `gh auth login`, or set `GH_TOKEN` for unattended runs |
+| `glab auth` fails | `glab auth login`, or set `GITLAB_TOKEN` for unattended runs |
 | "no changes against base" | Nothing differs from `<remote>/<base>`; commit or edit something, or check `base_branch` |
 | "already reviewed" / "unchanged since last review" | Nothing changed since the last run; pass `--force` to `precheck` to review anyway |
 | "N replies on T of your threads, no new commits since your review" | Only replies landed; the loop never re-reviews on a reply. Run `review-pr <PR>` interactively to see them and choose a reply-aware re-review, or `precheck --force`. Answering no runs `precheck --dismiss-replies`, which hides those replies until newer ones arrive |

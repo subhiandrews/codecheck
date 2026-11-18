@@ -4,7 +4,6 @@ from pathlib import Path
 
 from codecheck.errors import CodeCheckError
 from codecheck.evals.golden import DEFAULT_CASES
-from codecheck.models import PRRef
 from codecheck.runids import check_run_id
 from codecheck.shadow.collect import collect_outcomes
 from codecheck.shadow.export import export_golden
@@ -112,7 +111,7 @@ def run(args, ctx) -> dict:
     results = []
     for pr in _prs_in_store(ctx.shadow):
         try:
-            results.append({"pr": pr, **collect_outcomes(ctx.provider, ctx.shadow, PRRef.parse(pr), me)})
+            results.append({"pr": pr, **collect_outcomes(ctx.provider, ctx.shadow, ctx.parse_ref(pr), me)})
         except (CodeCheckError, ValueError) as e:
             results.append({"pr": pr, "error": str(e)})
     return {"results": results}
