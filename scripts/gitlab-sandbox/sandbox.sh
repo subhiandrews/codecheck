@@ -168,7 +168,13 @@ cmd_open_mrs() {
 
 cmd_comment_as_reviewer() {
   setup_project
-  [ "$(api_get user | jget username)" != "$NS" ] || die "comment-as-reviewer must run as the second account, not the project owner ($NS)"
+  # Refuse to comment as the owner. The owner is the namespace of a personal project (alice/name); for a group
+  # project the namespace is the group, so this cannot tell and does not check. GitLab paths ignore case.
+  local me
+  me="$(api_get user | jget username)" || die "could not read the current GitLab user (is glab logged in?)"
+  [ -n "$me" ] || die "could not read the current GitLab user (is glab logged in?)"
+  [ "$(printf '%s' "$me" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$NS" | tr '[:upper:]' '[:lower:]')" ] \
+    || die "comment-as-reviewer must run as the second account, not the project owner ($NS)"
   local d b iid versions base start head lines line
   for d in feature__report-export fix__failing-ci; do
     b="$(branch_name "$d")"
