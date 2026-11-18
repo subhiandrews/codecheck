@@ -185,7 +185,10 @@ cmd_capture_fixtures() {
   mkdir -p "$out"
   [ -n "$iid" ] || iid="$(api_get "projects/$PID/merge_requests?state=opened" | jget 0.iid)"
   mr="projects/$PID/merge_requests/$iid"
-  api_get user > "$out/user.json"
+  # /user is the one response that carries the account's private email addresses, so drop every email field.
+  api_get user | python3 -c 'import json, sys
+d = json.load(sys.stdin)
+print(json.dumps({k: v for k, v in d.items() if "email" not in k.lower()}, indent=2))' > "$out/user.json"
   api_get "projects/$PID" > "$out/project.json"
   api_get "$mr" > "$out/mr.json"
   api_get "$mr/diffs?per_page=100" --paginate > "$out/diffs.json"
@@ -195,7 +198,7 @@ cmd_capture_fixtures() {
   api_get "$mr/pipelines" > "$out/pipelines.json"
   pipeline="$(jget 0.id < "$out/pipelines.json" 2>/dev/null || true)"
   if [ -n "$pipeline" ]; then api_get "projects/$PID/pipelines/$pipeline/jobs?per_page=100" --paginate > "$out/jobs.json"; fi
-  echo "saved the responses for !$iid in $out (real usernames and ids: fine for a public sandbox, scrub before sharing anything else)"
+  echo "saved the responses for !$iid in $out (email fields are removed from user.json; look through the rest before you commit them)"
 }
 
 cmd_status() {
@@ -226,6 +229,6 @@ case "${1:-help}" in
   capture-fixtures) shift; cmd_capture_fixtures "$@" ;;
   status) shift; cmd_status "$@" ;;
   teardown) shift; cmd_teardown "$@" ;;
-  help | -h | --help) sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+  help | -h | --help) sed -n '2,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command '$1' (try: help)" ;;
 esac

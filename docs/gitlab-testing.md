@@ -174,7 +174,7 @@ In a clone of a GitHub repository (this one):
 
 ## 4. Assumptions to confirm against real `glab` and GitLab
 
-The provider was written without being able to run `glab`. Each row says what to check and where it lives; anything that differs gets a failing test first (use `bash $S capture-fixtures tests/fixtures/gitlab <iid>` to save the real responses), then a fix in `src/codecheck/providers/gitlab.py`.
+The provider was written without being able to run `glab`. Each row says what to check and where it lives; anything that differs gets a failing test first (use `bash $S capture-fixtures tests/fixtures/gitlab <iid>` to save the real responses; it removes the email fields from `user.json`, but read the other files before you commit them), then a fix in `src/codecheck/providers/gitlab.py`.
 
 | # | Assumption | How to confirm | If it is wrong |
 |---|---|---|---|

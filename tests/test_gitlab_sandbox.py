@@ -33,7 +33,8 @@ FAKE_GLAB = textwrap.dedent('''\
     out = {}
     if method == "GET":
         if endpoint == "user":
-            out = {"username": os.environ.get("FAKE_GLAB_USER", "alice")}
+            out = {"username": os.environ.get("FAKE_GLAB_USER", "alice"), "email": "private@example.com",
+                   "commit_email": "commit@example.com", "public_email": "", "private_commit_email": "1-alice@users.noreply.example.com"}
         elif endpoint.startswith("namespaces/"):
             out = {"id": 11}
         elif endpoint == "projects/" + pid:
@@ -73,7 +74,8 @@ def _env(tmp_path: Path, bare: Path | None = None, **extra) -> dict:
     glab.write_text(FAKE_GLAB)
     glab.chmod(0o755)
     env = {
-        **os.environ,
+        # A developer's own SANDBOX_PROJECT (the second account sets it) or SANDBOX_USE_SSH must not leak into the tests.
+        **{k: v for k, v in os.environ.items() if not k.startswith("SANDBOX_")},
         "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
         "FAKE_GLAB_STATE": str(state),
         "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@example.com",
@@ -221,7 +223,8 @@ def test_add_member_resolves_the_user_first(tmp_path):
 def test_a_second_account_targets_the_owners_project(tmp_path):
     env = _env(tmp_path, SANDBOX_PROJECT=PROJECT, FAKE_GLAB_USER="bob")
     run(env, "open-mrs", "reviewer")
-    assert all("alice%2Fcode-check-sandbox" in c["endpoint"] for c in calls(env))
+    made = calls(env)
+    assert made and all("alice%2Fcode-check-sandbox" in c["endpoint"] for c in made)
 
 
 def test_teardown_needs_the_exact_project_path(tmp_path):
@@ -239,8 +242,13 @@ def test_capture_fixtures_saves_every_response_the_provider_reads(tmp_path):
     run(env, "capture-fixtures", str(out), "5")
     assert {p.name for p in out.iterdir()} == {"user.json", "project.json", "mr.json", "diffs.json", "discussions.json",
                                                 "notes.json", "versions.json", "pipelines.json", "jobs.json"}
+    assert json.loads((out / "user.json").read_text()) == {"username": "alice"}  # every email field is gone
+    assert not [p.name for p in out.iterdir() if "example.com" in p.read_text()]
 
 
 def test_help_and_unknown_commands():
-    assert "create" in run({**os.environ}, "help").stdout
+    usage = run({**os.environ}, "help").stdout
+    assert "create" in usage and "teardown" in usage
+    assert "set -euo pipefail" not in usage  # the usage block ends before the first line of code
+    assert usage.rstrip().endswith("(used by the tests).")
     assert run({**os.environ}, "nonsense", check=False).returncode != 0
