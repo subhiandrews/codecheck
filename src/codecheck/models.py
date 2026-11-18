@@ -27,9 +27,10 @@ class PRRef:
         return f"{self.repo}#{self.number}"
 
     @classmethod
-    def parse(cls, text: str) -> PRRef:
+    def parse(cls, text: str, nested: bool = False) -> PRRef:
+        """`nested` allows a namespace of any depth (GitLab subgroups); the default is exactly OWNER/REPO."""
         repo, sep, num = text.strip().rpartition("#")
-        if not sep or repo.count("/") != 1 or not num.isdigit():
+        if not sep or not num.isdigit() or (repo.count("/") < 1 if nested else repo.count("/") != 1):
             raise ValueError(f"expected OWNER/REPO#NUMBER, got {text!r}")
         return cls(repo, int(num))
 

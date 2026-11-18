@@ -61,6 +61,7 @@ class FakeProvider:
     """In-memory Provider for CLI tests and the contract suite."""
 
     name = "fake"
+    nested_repos = False
 
     def __init__(self, repo: str = "o/r") -> None:
         self.repo = repo

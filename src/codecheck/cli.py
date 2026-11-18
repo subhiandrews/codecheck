@@ -14,7 +14,7 @@ from codecheck.config import Config, expand_path, load_config
 from codecheck.core.state import StateStore
 from codecheck.errors import CodeCheckError
 from codecheck.models import PRRef
-from codecheck.providers import get_provider
+from codecheck.providers import detect_provider, get_provider
 from codecheck.providers.base import Provider
 from codecheck.runids import check_run_id
 from codecheck.runner import CommandRunner, SubprocessRunner
@@ -22,6 +22,7 @@ from codecheck.shadow.store import ShadowStore
 from codecheck.vcs.git import Git
 
 _PR_URL = re.compile(r"([^/\s]+/[^/\s]+)/pull/(\d+)")
+_MR_URL = re.compile(r"https?://[^/\s]+/(\S+?)/-/merge_requests/(\d+)")
 
 
 @dataclass
@@ -61,8 +62,13 @@ class AppContext:
             return PRRef(self.current_repo(), int(text))
         if m := _PR_URL.search(text):
             return PRRef(m.group(1), int(m.group(2)))
+        if self.provider.nested_repos and (m := _MR_URL.search(text)):
+            return PRRef(m.group(1), int(m.group(2)))
+        return self.parse_ref(text)
+
+    def parse_ref(self, text: str) -> PRRef:
         try:
-            return PRRef.parse(text)
+            return PRRef.parse(text, nested=self.provider.nested_repos)
         except ValueError as e:
             raise CodeCheckError(str(e)) from None
 
@@ -78,7 +84,12 @@ def build_context(
     except CodeCheckError:
         pass  # not inside a repository; commands that need one will say so
     config = load_config(cwd, home, env)
-    provider = provider or get_provider(config.provider, runner, cwd, config.review.login)
+    if provider is None:
+        try:
+            remote_url = git.remote_url(config.remote)
+        except CodeCheckError:
+            remote_url = ""  # no remote to look at: keep the configured provider
+        provider = get_provider(detect_provider(config.provider, remote_url), runner, cwd, config.review.login)
     shadow = ShadowStore(expand_path(config.shadow.store)) if config.shadow.enabled or config.shadow.handoff else None
     state = StateStore(expand_path(config.state_dir) / "state.json")
     return AppContext(config, runner, provider, git, state, shadow, cwd, env)

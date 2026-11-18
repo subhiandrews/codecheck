@@ -18,6 +18,7 @@ from codecheck.models import (
 
 class Provider(Protocol):
     name: str
+    nested_repos: bool  # True when a repository path may have more than one namespace level (GitLab subgroups)
 
     def whoami(self) -> str: ...
     def list_prs(self, scope: str, repos: Sequence[str]) -> list[PRRef]: ...

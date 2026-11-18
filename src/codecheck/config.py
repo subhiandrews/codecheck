@@ -90,7 +90,7 @@ class RunPrConfig:
 
 @dataclass(frozen=True, slots=True)
 class Config:
-    provider: str = "github"
+    provider: str = "auto"  # auto: GitLab for a gitlab.com remote, otherwise GitHub
     base_branch: str = "auto"
     remote: str = "origin"
     state_dir: str = "~/.local/share/code-check/state"

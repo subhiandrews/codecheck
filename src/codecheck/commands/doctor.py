@@ -1,7 +1,7 @@
 import sys
 
 NAME = "doctor"
-HELP = "Check prerequisites (python, git, gh, gh auth, claude)"
+HELP = "Check prerequisites (python, git, gh or glab, its auth, claude)"
 MIN_PY = (3, 14, 10)
 
 
@@ -18,10 +18,11 @@ def add_arguments(p) -> None:
 
 def run(args, ctx) -> dict:
     checks = [python_check()]
+    host = "glab" if ctx.provider.name == "gitlab" else "gh"  # an unknown provider keeps the GitHub checks
     for name, argv, required in (
         ("git", ["git", "--version"], True),
-        ("gh", ["gh", "--version"], True),
-        ("gh auth", ["gh", "auth", "status"], True),
+        (host, [host, "--version"], True),
+        (f"{host} auth", [host, "auth", "status"], True),
         ("claude", ["claude", "--version"], False),
     ):
         res = ctx.runner.run(argv, cwd=ctx.cwd)

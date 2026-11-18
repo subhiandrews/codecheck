@@ -7,7 +7,6 @@ from codecheck.commands.run_pr import loop_bookkeeping, run_one
 from codecheck.commands.workspace import CLONE_TIMEOUT_SECONDS
 from codecheck.config import expand_path
 from codecheck.core.state import FileLock, ensure_private_dir
-from codecheck.models import PRRef
 
 NAME = "loop"
 HELP = "One loop iteration: find PRs with new work, run each in its own headless process, one at a time"
@@ -61,7 +60,7 @@ def _iterate(args, ctx, lock: FileLock) -> dict:
     results = []
     for item in work["items"]:
         lock.touch()
-        ref = PRRef.parse(item["pr"])
+        ref = ctx.parse_ref(item["pr"])
         try:
             results.append(run_one(ctx, args.mode, ref, item["fingerprint"], args.dry_run))
         except Exception as e:  # noqa: BLE001 - one broken PR must never stop the rest of the iteration

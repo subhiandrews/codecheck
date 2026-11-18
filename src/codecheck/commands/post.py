@@ -17,7 +17,7 @@ from codecheck.core.render import (
     summary_body,
 )
 from codecheck.errors import CodeCheckError, ProviderError
-from codecheck.models import PRRef, ReviewComment
+from codecheck.models import ReviewComment
 from codecheck.shadow.recorder import record_post
 
 NAME = "post"
@@ -76,7 +76,7 @@ def run(args, ctx) -> dict:
         return {"mode": "local", "new_count": len(new), "unchanged_count": unchanged, "incomplete": incomplete,
                 "failed_reviewers": failed, "text": render_local(new, unchanged, meta.get("base_warning"))}
 
-    ref = PRRef.parse(meta["pr"])
+    ref = ctx.parse_ref(meta["pr"])
     pr = ctx.provider.get_pr(ref)
     me = ctx.provider.whoami()
     if pr.author == me:
