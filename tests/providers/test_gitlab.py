@@ -88,10 +88,6 @@ class TestGitLabContract(ProviderContract):
         return GitLabProvider(runner()), REF
 
 
-def sent(r: FakeRunner, *needles: str):
-    return [c for c in r.calls if all(n in c.argv for n in needles)]
-
-
 def test_get_pr_maps_fields():
     pr = GitLabProvider(runner()).get_pr(REF)
     assert (pr.base_ref, pr.head_ref, pr.head_sha, pr.state, pr.is_draft, pr.is_cross_repo) == ("main", "feat", "abc123", "open", False, False)
@@ -215,7 +211,7 @@ def test_post_review_anchors_each_comment_to_the_matching_version_then_posts_the
                                  "new_path": "a.py", "old_path": "a.py", "new_line": 3}
     assert json.loads(posts[1].input)["position"]["old_line"] == 9
     assert json.loads(posts[2].input)["body"] == "summary\n\n<!-- code-check:review:abc123 -->"
-    assert not sent(r, "--method", "approve")
+    assert not [c for c in r.calls if c.argv[2].endswith("/approve")]  # a COMMENT decision never approves
 
 
 def test_approve_decision_approves_the_reviewed_head_only():
@@ -244,6 +240,7 @@ def test_a_rejected_anchor_is_folded_into_the_summary():
     assert (result.posted, result.degraded) == (0, True)
     note = json.loads(next(c for c in r.calls if c.argv[2].endswith("/notes")).input)["body"]
     assert "a.py:3" in note and "bug" in note and note.startswith("summary")
+    assert "The host rejected the inline anchors" in note
 
 
 def test_an_unknown_head_folds_everything_without_posting_discussions():
@@ -252,6 +249,9 @@ def test_an_unknown_head_folds_everything_without_posting_discussions():
     result = GitLabProvider(r).post_review(REF, "ffff", "summary", [ReviewComment("a.py", 3, "RIGHT", "bug")], Decision("COMMENT", "r"))
     assert (result.posted, result.degraded) == (0, True)
     assert not [c for c in r.calls if c.argv[2].endswith("/discussions")]
+    note = json.loads(next(c for c in r.calls if c.argv[2].endswith("/notes")).input)["body"]
+    assert "No diff version of this merge request matches the reviewed head" in note
+    assert "host rejected" not in note  # nothing was sent, so the host cannot be blamed
 
 
 def test_a_real_failure_is_not_swallowed():
