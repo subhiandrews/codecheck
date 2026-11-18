@@ -321,7 +321,8 @@ class GitLabProvider:
                 raise ProviderError(f"posting review failed ({res.returncode}): {(res.stderr or res.stdout).strip()[:500]}")
         text = body
         if rejected:
-            text += "\n\n---\n_The host rejected the inline anchors, so these findings are listed here instead._\n\n"
+            why = "The host rejected the inline anchors" if version is not None else "No diff version of this merge request matches the reviewed head"
+            text += f"\n\n---\n_{why}, so these findings are listed here instead._\n\n"
             text += "\n\n".join(f"**`{c.path}:{c.line}`**\n{c.body}" for c in rejected)
         if decision.event == "APPROVE":
             try:
