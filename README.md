@@ -226,6 +226,8 @@ The same four skills work on GitLab.com merge requests through the `glab` CLI. W
 - **Checks** are the jobs of the merge request's latest pipeline; a failed job that is allowed to fail is reported as skipped.
 - **Thread ids** look like `group/project:7:<discussion>`, because resolving a thread needs the project and merge request.
 
+To test this on a real GitLab project, [docs/gitlab-testing.md](docs/gitlab-testing.md) has the test plan (three install cases, five scenarios and a list of what is still unverified), and `scripts/gitlab-sandbox/sandbox.sh` creates the public sandbox project it uses.
+
 ### Attribution and label
 
 Each posted PR review ends its summary comment with one small line saying it was made with code-check (Apache-2.0) and linking this repository. Inline comments never carry it. After posting, the PR gets the `code-check` label (GitHub creates it if missing); labeling is best-effort, so a reviewer without triage rights still posts the review and `post` reports `labeled: false`. Set `review.attribution = false` or `review.label = ""` in your user config to turn either off; a repository cannot change them.

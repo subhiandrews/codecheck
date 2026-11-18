@@ -1,0 +1,8 @@
+[
+  {"path": "sandbox/report.py", "line": 7,
+   "body": "`open(path, \"w\")` without `newline=\"\"`: the csv module documents that it must be opened that way, otherwise rows get blank lines on Windows."},
+  {"path": "sandbox/report.py", "line": 8,
+   "body": "Nit: there is no header row, so a reader of the file cannot tell which column is the name and which is the total."},
+  {"path": "sandbox/report.py", "line": 10,
+   "body": "`sum(values)` will raise a TypeError for a list of ints, so this needs a conversion first."}
+]

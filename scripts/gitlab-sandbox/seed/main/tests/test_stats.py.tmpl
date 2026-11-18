@@ -1,0 +1,13 @@
+from sandbox.stats import average, total_between
+
+
+def test_average_of_two_values_is_a_float():
+    assert average([1, 2]) == 1.5
+
+
+def test_average_of_nothing_is_zero():
+    assert average([]) == 0.0
+
+
+def test_total_between_a_single_element_range():
+    assert total_between([5], 0, 1) == 5
