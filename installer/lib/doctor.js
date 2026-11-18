@@ -31,15 +31,19 @@ export function runDoctor({ exec }) {
   } else {
     checks.push({ name: 'python', ok: false, required: true, warn: false, detail: 'Python >= 3.14 not found (3.14.10 or later recommended)' });
   }
-  for (const [name, cmd, args, required] of [
-    ['git', 'git', ['--version'], true],
-    ['gh', 'gh', ['--version'], true],
-    ['gh auth', 'gh', ['auth', 'status'], false],
-    ['claude', 'claude', ['--version'], false],
-  ]) {
+  const probe = (name, cmd, args, required) => {
     const r = exec(cmd, args);
-    checks.push({ name, ok: r.status === 0, required, warn: false, detail: ((r.stdout || r.stderr).trim().split('\n')[0]) || '' });
+    return { name, ok: r.status === 0, required, warn: false, detail: ((r.stdout || r.stderr).trim().split('\n')[0]) || '' };
+  };
+  checks.push(probe('git', 'git', ['--version'], true));
+  // One code-host CLI is enough: gh for GitHub, glab for GitLab. Each is optional while the other is present.
+  const hosts = ['gh', 'glab'].map((cmd) => probe(cmd, cmd, ['--version'], false));
+  const noHost = hosts.every((h) => !h.ok);
+  for (const h of hosts) {
+    checks.push({ ...h, required: noHost, detail: noHost ? 'not found (install gh for GitHub or glab for GitLab)' : h.detail });
+    if (h.ok) checks.push(probe(`${h.name} auth`, h.name, ['auth', 'status'], false));
   }
+  checks.push(probe('claude', 'claude', ['--version'], false));
   return { ok: checks.every((c) => c.ok || !c.required), checks };
 }
 

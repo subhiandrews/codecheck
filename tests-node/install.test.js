@@ -62,7 +62,7 @@ test('re-install removes the previous registration first', () => {
 
 test('missing prerequisites abort before touching anything', () => {
   const { env, root } = makeEnv();
-  assert.throws(() => install({ exec: fakeExec({ gh: false }), env }), /prerequisites missing.*gh/);
+  assert.throws(() => install({ exec: fakeExec({ gh: false }), env }), /prerequisites missing.*gh.*glab/);
   assert.throws(() => install({ exec: fakeExec({ python: null }), env }), /python/);
   assert.equal(fs.existsSync(path.join(root, 'data')), false);
   assert.equal(fs.existsSync(env.CLAUDE_CONFIG_DIR), false);
