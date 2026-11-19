@@ -9,12 +9,19 @@ from codecheck.shadow.store import ShadowStore
 
 
 def _label(outcome: dict | None) -> str:
+    """A reply is a signal, not a verdict: `replied` stays neutral (a golden draft leaves it unlabelled) until a
+    resolved or outdated thread, or a recorded verdict, says which way it went."""
     if outcome is None:
         return "unreviewed"
     if outcome.get("resolved") or outcome.get("outdated"):
         return "confirmed"
-    if outcome.get("replies"):
+    verdict = outcome.get("verdict")
+    if verdict == "valid":
+        return "confirmed"
+    if verdict == "incorrect":
         return "disputed"
+    if outcome.get("replies"):
+        return "replied"
     return "no_signal"
 
 
@@ -42,8 +49,11 @@ def run_feedback(shadow: ShadowStore) -> dict[str, tuple[dict[str, dict], dict[s
         )
     out = {}
     for rid, recs in runs:
+        verdicts = {  # the run's newest verdict per thread (`shadow record-verdict`)
+            r["thread_id"]: r.get("verdict") for r in recs if r.get("type") == "verdict" and isinstance(r.get("thread_id"), str)
+        }
         outcomes = {
-            r["finding_id"]: r for r in recs
+            r["finding_id"]: {**r, "verdict": verdicts.get(r.get("thread_id"))} for r in recs
             if r.get("type") == "outcome" and isinstance(r.get("finding_id"), str)
             and winners["outcome"].get(r.get("thread_id"), (None, None))[1] is r
         }
@@ -56,7 +66,7 @@ def run_feedback(shadow: ShadowStore) -> dict[str, tuple[dict[str, dict], dict[s
 
 
 def finding_label(fid: str, outcomes: dict[str, dict], humans: dict[str, dict]) -> str:
-    """confirmed, disputed, no_signal or unreviewed; a human comment that matched the finding confirms it."""
+    """confirmed, disputed, replied, no_signal or unreviewed; a human comment that matched the finding confirms it."""
     label = _label(outcomes.get(fid))
     if label in ("unreviewed", "no_signal") and any(h.get("matches_finding") == fid for h in humans.values()):
         label = "confirmed"
