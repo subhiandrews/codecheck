@@ -11,6 +11,7 @@ export function resolvePaths(env = process.env) {
     home,
     claudeDir: path.resolve(env.CLAUDE_CONFIG_DIR || path.join(home, '.claude')),
     dataDir: path.resolve(env.CODE_CHECK_HOME || path.join(home, '.local', 'share', 'code-check')),
+    configFile: path.join(home, '.config', 'code-check', 'config.toml'),
     pluginSrc: path.resolve(HERE, '..', '..'),
   };
 }

@@ -4,6 +4,7 @@ import { runDoctor } from './doctor.js';
 import { realExec } from './exec.js';
 import { resolvePaths } from './paths.js';
 import { CLAUDE_CMDS } from './commands.js';
+import { planConfig, removeConfig, writeConfig } from './configure.js';
 import { OWNER_MARKER, isOwned, readReceipt, reverseReceipt } from './uninstall.js';
 
 export { CLAUDE_CMDS };
@@ -72,8 +73,9 @@ function copyMode(paths, stage, log) {
   return { files, skipped };
 }
 
-export function install({ exec = realExec, env = process.env, log = () => {}, provider = 'github' } = {}) {
+export function install({ exec = realExec, env = process.env, log = () => {}, provider = 'github', config = null } = {}) {
   const paths = resolvePaths(env);
+  const block = planConfig(config, paths, env); // refuses a bad endpoint, a missing token or a clashing table before anything changes
   const doctor = runDoctor({ exec, provider }); // validates `provider` and requires the matching host CLI(s)
   const failed = doctor.checks.filter((c) => c.required && !c.ok);
   if (failed.length) throw new Error(`prerequisites missing: ${failed.map((c) => `${c.name} (${c.detail})`).join('; ')}`);
@@ -84,6 +86,7 @@ export function install({ exec = realExec, env = process.env, log = () => {}, pr
   // idempotent and a mode switch leaves nothing behind. Tolerates a missing or corrupt receipt.
   const previous = readReceipt(paths);
   if (previous) reverseReceipt({ paths, exec, receipt: previous, log });
+  if (previous?.config) removeConfig(paths, previous.config.created);
   if (fs.existsSync(stage) && !isOwned(paths, previous)) {
     throw new Error(`refusing to replace ${stage}: not created by code-check (no ownership marker)`);
   }
@@ -91,11 +94,21 @@ export function install({ exec = realExec, env = process.env, log = () => {}, pr
   fs.writeFileSync(path.join(paths.dataDir, OWNER_MARKER), 'created by the code-check installer\n');
   copyPayload(paths.pluginSrc, stage);
   const childEnv = { ...env, CODE_CHECK_HOME: paths.dataDir };
+  // ensure-runtime.sh skips a venv whose marker equals VERSION, so a re-install of changed code under an unchanged
+  // VERSION (a branch, a dev build) would keep running the old package. An install always rebuilds.
+  fs.rmSync(path.join(paths.dataDir, 'installed-version'), { force: true });
   const runtime = exec('sh', [path.join(stage, 'hooks', 'ensure-runtime.sh')], { env: childEnv });
   if (runtime.status !== 0) throw new Error(`runtime setup failed: ${(runtime.stderr || '').trim()}`);
   const gen = exec(path.join(paths.dataDir, 'venv', 'bin', 'python'), ['-m', 'codecheck', 'gen-agents', '--out', path.join(stage, 'agents')], { env: childEnv });
   if (gen.status !== 0) log('warning: could not apply configured models to the agents; using defaults');
 
+  let configRecord = null;
+  if (config && !block) log(`${paths.configFile} already has the requested settings; leaving it untouched`);
+  if (block) {
+    const created = writeConfig(block, paths);
+    configRecord = { file: paths.configFile, created: created || previous?.config?.created === true };
+    log(`wrote shadow and telemetry settings to ${paths.configFile}`);
+  }
   let mode = 'copy';
   let files = [];
   let skipped = [];
@@ -120,6 +133,6 @@ export function install({ exec = realExec, env = process.env, log = () => {}, pr
   if (mode === 'copy') ({ files, skipped } = copyMode(paths, stage, log));
 
   const version = fs.readFileSync(path.join(stage, 'VERSION'), 'utf8').trim();
-  fs.writeFileSync(path.join(paths.dataDir, 'receipt.json'), JSON.stringify({ version, mode, provider, stage, files, skipped, marketplaceAdded }, null, 2));
+  fs.writeFileSync(path.join(paths.dataDir, 'receipt.json'), JSON.stringify({ version, mode, provider, stage, files, skipped, marketplaceAdded, config: configRecord }, null, 2));
   return { mode, provider, stage, files, skipped, version };
 }

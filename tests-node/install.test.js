@@ -229,3 +229,20 @@ test('every installer payload entry is shipped in the npm package', () => {
   const missing = PAYLOAD.filter((item) => !pkg.files.includes(item));
   assert.deepEqual(missing, []);
 });
+
+test('a re-install drops the runtime marker so ensure-runtime rebuilds the venv even when VERSION is unchanged', () => {
+  const { env, root } = makeEnv();
+  fs.mkdirSync(path.join(root, 'data'), { recursive: true });
+  const marker = path.join(root, 'data', 'installed-version');
+  fs.writeFileSync(marker, fs.readFileSync(new URL('../VERSION', import.meta.url), 'utf8').trim());
+  let seen = null;
+  const base = fakeExec();
+  const exec = (cmd, args = [], opts = {}) => {
+    if ((args[0] || '').endsWith('ensure-runtime.sh')) seen = fs.existsSync(marker);
+    return base(cmd, args, opts);
+  };
+  exec.calls = base.calls;
+  exec.lines = base.lines;
+  install({ exec, env });
+  assert.equal(seen, false);
+});
