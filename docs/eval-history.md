@@ -13,13 +13,14 @@ the judge against the human labels, not the reviewers: it moves when the judge o
 ```mermaid
 xychart-beta
     title "Live eval: snippets passed (%)"
-    x-axis [1, 2]
+    x-axis [1, 2, 3]
     y-axis "percent" 0 --> 110
-    line [100, 100]
+    line [100, 100, 100]
 ```
 
 | # | date | commit | branch | score | outcome | models | cost |
 |---|---|---|---|---|---|---|---|
+| 3 | 2026-11-19 | f5a7f68 | fix/security-reviewer-dataflow | 100% | 5/5 | reviewers sonnet, aggregator opus | $2.02 |
 | 2 | 2026-11-18 | 7bc9da7 | fix/gitlab-sandbox-review-comments | 100% | 5/5 | reviewers sonnet, aggregator opus | $1.93 |
 | 1 | 2026-11-16 | f30f0fc+dirty | main | 100% | 5/5 | reviewers sonnet, aggregator opus | $1.95 |
 
