@@ -221,12 +221,6 @@ babysit_allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit", "Agent", "Bash
 
 After changing `[models]`, re-run the installer (`node installer/cli.js install`) (or `code-check gen-agents --out agents` in a checkout) so the agent definitions pick up the new models.
 
-For a Codex review, run `code-check panel run --run <run_id>` after `context`. The CLI starts read-only reviewers and the aggregator, validates their JSON, and runs `ingest` before aggregation. Check `failed_members` in the result. If the aggregator failed, stop before `post` and clean up the run. Other failed members make the review incomplete.
-
-`[codex_models]` and `[codex_reasoning]` use the same keys as `[models]`, including `per_language`. The defaults are GPT-6.2 Astra at high effort for aggregation, security and judging, GPT-6.2 Sol at medium effort for general, deep and performance review, and GPT-6 Luna at high effort for the language experts. Codex model values cannot start with `-`. `codex.max_parallel` defaults to 4 concurrent reviewers and `codex.timeout_seconds` to 300 seconds per process. Codex picks up these settings at run time. `codex.allow_unmeasured_platform` defaults to false and lets users explicitly opt in outside macOS.
-
-Regenerate the Codex skill templates from a checkout with `code-check gen-skills --out codex/skills`. Automatic queues via `loop` and `run-pr` use Claude Code.
-
 | Role | Default model |
 |---|---|
 | Aggregator | Opus |
@@ -236,6 +230,12 @@ Regenerate the Codex skill templates from a checkout with `code-check gen-skills
 | 15 language experts | Haiku 4.5 |
 
 Haiku keeps the language-expert fan-out cheap, and the Opus aggregator verifies Critical and Warning findings before they are posted. The risk is recall: the aggregator cannot recover a bug that nobody reported. Use `models.per_language` to move a language up a tier, and use shadow data to see which ones need it. Opus is used for the aggregator and, only when you turn it on, the security reviewer.
+
+For a Codex review, run `code-check panel run --run <run_id>` after `context`. The CLI starts read-only reviewers and the aggregator, validates their JSON, and runs `ingest` before aggregation. Check `failed_members` in the result. If the aggregator failed, stop before `post` and clean up the run. Other failed members make the review incomplete.
+
+`[codex_models]` and `[codex_reasoning]` use the same keys as `[models]`, including `per_language`. The defaults are GPT-6.2 Astra at high effort for aggregation, security and judging, GPT-6.2 Sol at medium effort for general, deep and performance review, and GPT-6 Luna at high effort for the language experts. Codex model values cannot start with `-`. `codex.max_parallel` defaults to 4 concurrent reviewers and `codex.timeout_seconds` to 300 seconds per process. Codex picks up these settings at run time. `codex.allow_unmeasured_platform` defaults to false and lets users explicitly opt in outside macOS.
+
+Regenerate the Codex skill templates from a checkout with `code-check gen-skills --out codex/skills`. Automatic queues via `loop` and `run-pr` use Claude Code.
 
 ### GitLab
 

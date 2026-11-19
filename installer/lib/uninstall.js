@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { uninstallCodex } from './codex.js';
 import { CLAUDE_CMDS } from './commands.js';
+import { parseTarget } from './doctor.js';
 import { realExec } from './exec.js';
 import { resolvePaths } from './paths.js';
 
@@ -44,7 +45,7 @@ export function reverseReceipt({ paths, exec, receipt, log }) {
 }
 
 export function uninstall({ exec = realExec, env = process.env, log = () => {}, purgeData = false, target = 'claude' } = {}) {
-  if (target === 'codex') {
+  if (parseTarget(target) === 'codex') {
     if (purgeData) throw new Error('--purge-data is only supported for the Claude target');
     return uninstallCodex({ env, log });
   }

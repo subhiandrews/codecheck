@@ -130,3 +130,30 @@ test('a corrupt Codex receipt names the file and says how to recover', () => {
   assert.throws(() => install({ exec, env, target: 'codex' }), (error) => error.message.includes(receiptPath) && /reinstall/.test(error.message));
   assert.throws(() => uninstall({ exec, env, target: 'codex' }), (error) => error.message.includes(receiptPath));
 });
+
+test('uninstall rejects an unknown target instead of running the Claude uninstaller', () => {
+  const { exec, env, fallback } = fixture();
+  assert.throws(() => uninstall({ exec, env, target: 'Codex' }), /--target must be claude or codex/);
+  assert.ok(!fallback.calls.some(({ cmd }) => cmd === 'claude'));
+});
+
+test('Codex install refuses a runtime stage without the ownership marker', () => {
+  const { exec, env } = fixture();
+  fs.mkdirSync(path.join(env.CODE_CHECK_HOME, 'codex', 'runtime'), { recursive: true });
+  assert.throws(() => install({ exec, env, target: 'codex' }), /no Codex ownership marker/);
+});
+
+test('Codex install refuses a symlinked or non-directory skills root', () => {
+  const linked = fixture();
+  const elsewhere = path.join(linked.root, 'elsewhere');
+  fs.mkdirSync(elsewhere);
+  fs.mkdirSync(path.join(linked.env.HOME, '.agents'), { recursive: true });
+  fs.symlinkSync(elsewhere, linked.skills);
+  assert.throws(() => install({ exec: linked.exec, env: linked.env, target: 'codex' }), /expected a directory without symlinks/);
+  assert.deepEqual(fs.readdirSync(elsewhere), []);
+
+  const file = fixture();
+  fs.mkdirSync(path.join(file.env.HOME, '.agents'), { recursive: true });
+  fs.writeFileSync(file.skills, 'not a directory');
+  assert.throws(() => install({ exec: file.exec, env: file.env, target: 'codex' }), /expected a directory without symlinks/);
+});
