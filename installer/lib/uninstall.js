@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CLAUDE_CMDS } from './commands.js';
 import { realExec } from './exec.js';
+import { removeConfig } from './configure.js';
 import { resolvePaths } from './paths.js';
 
 export const OWNER_MARKER = '.code-check-owned';
@@ -51,6 +52,7 @@ export function uninstall({ exec = realExec, env = process.env, log = () => {}, 
     exec('claude', CLAUDE_CMDS.marketplaceRemove);
   } else {
     reverseReceipt({ paths, exec, receipt, log });
+    if (receipt.config) removeConfig(paths, receipt.config.created);
   }
   if (isOwned(paths, receipt)) {
     for (const d of ['plugin', 'venv']) fs.rmSync(path.join(paths.dataDir, d), { recursive: true, force: true });

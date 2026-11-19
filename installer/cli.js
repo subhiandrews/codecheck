@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { formatDoctor, parseProvider, runDoctor } from './lib/doctor.js';
 import { realExec } from './lib/exec.js';
+import { parseConfigOptions } from './lib/configure.js';
 import { install } from './lib/install.js';
 import { uninstall } from './lib/uninstall.js';
 
@@ -16,7 +17,7 @@ function providerFrom(args) {
 
 try {
   if (cmd === 'install') {
-    const r = install({ log, provider: providerFrom(rest) });
+    const r = install({ log, provider: providerFrom(rest), config: parseConfigOptions(rest) });
     log(`code-check ${r.version} installed (${r.mode} mode${r.provider === 'github' ? '' : `, ${r.provider}`}). Restart Claude Code to load it.`);
   } else if (cmd === 'uninstall') {
     const r = uninstall({ log, purgeData: rest.includes('--purge-data') });
@@ -26,7 +27,7 @@ try {
     log(formatDoctor(r));
     process.exit(r.ok ? 0 : 1);
   } else {
-    log('usage: npx code-check install [--provider github|gitlab|both] | uninstall [--purge-data] | doctor [--provider github|gitlab|both]');
+    log('usage: npx code-check install [--provider github|gitlab|both] [--shadow] [--telemetry-endpoint URL [--telemetry-token-file PATH] [--telemetry-content]] | uninstall [--purge-data] | doctor [--provider github|gitlab|both]');
     process.exit(cmd ? 2 : 0);
   }
 } catch (e) {

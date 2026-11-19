@@ -52,7 +52,7 @@ Each takes the same subcommands:
 ```bash
 node installer/cli.js install     # stage files, create the runtime, register the plugin with `claude plugin ...`
 node installer/cli.js doctor      # check prerequisites at any time
-node installer/cli.js uninstall   # add --purge-data to also delete shadow data and state
+node installer/cli.js uninstall   # add --purge-data to also delete shadow data and state; removes the config block the installer wrote
 ```
 
 **GitHub, GitLab or both.** `install` and `doctor` take `--provider github|gitlab|both` (default `github`, so a plain `install` is unchanged). It only chooses which host CLI is a required prerequisite: `gh` for `github`, `glab` for `gitlab`, both for `both`. Which host a repository uses is decided per repository when you review it (see [GitLab](#gitlab)), so one install serves GitHub and GitLab repositories alike; the installer receipt records the choice. The marketplace install above has no such step and needs only the CLI of the host you review on.
@@ -400,6 +400,17 @@ code-check telemetry push --all                      # send what changed, and re
 ```
 
 `handoff` and `shadow collect` push automatically when `telemetry.enabled` is true. A run's last successful send is recorded in `<run_id>.handoff/telemetry.json` (a digest, so an unchanged run is not resent, and the last error), which is also the retry queue: `--all` stops at the first failed send, so an unreachable collector costs one timeout. Any OTLP receiver works; for a quick local test, `docker run -p 3000:3000 -p 4318:4318 grafana/otel-lgtm` starts Grafana with Tempo and Loki, and `telemetry.endpoint = "http://localhost:4318"` points at it. For a team, run an OpenTelemetry Collector in front of the backend to handle authentication, retries and fan-out. The shared hand-off-round queue stays local: each maintainer analyzes the hand-offs on their own machine.
+
+**Set it up from the installer.** The installer can write the shadow and telemetry settings into your user config (`~/.config/code-check/config.toml`) instead of you editing it:
+
+```bash
+node installer/cli.js install --shadow                                    # shadow.handoff = true only
+node installer/cli.js install --telemetry-endpoint http://localhost:4318   # local test collector, no token needed
+node installer/cli.js install --telemetry-endpoint https://otel.example.com:4318 \
+    --telemetry-token-file ~/.config/code-check/otel-token [--telemetry-content]
+```
+
+`--telemetry-*` also turns on `shadow.handoff`, because the export reads hand-offs. The installer refuses, before it changes anything, an `http://` endpoint other than localhost, credentials in the URL, a remote endpoint with no token (no `--telemetry-token-file` and no `Authorization` in `OTEL_EXPORTER_OTLP_HEADERS`), and a token file that is missing, empty, multi-line or readable by others. It writes only the path of the token file, never the token. It owns one marked block (between two comment lines, `>>>` and `<<<`) in that file: a re-install replaces the block, `uninstall` removes it (and deletes the file if the installer created it and nothing else is in it), and an existing `[shadow]` or `[telemetry]` table makes it stop, because TOML cannot repeat a table. The file is written with mode 0600.
 
 ### Golden cases and replay
 
