@@ -1,0 +1,37 @@
+# Synthetic cases: learn from a private or non-permissive PR without copying it
+
+Status: brief and check built (this change); the authoring skill is not. Complements the license gate in #50 (`shadow promote --finalize` refuses a diff whose repository license is not allowed).
+
+## Intent
+
+A real PR from a company's private repository, or from a copyleft one, cannot go into the public golden set. But what the reviewer got wrong on it (a missed null check, a false alarm about a pattern) is a general lesson. A **synthetic case** keeps the lesson and drops the code: a new, small, invented snippet that has the same kind of defect.
+
+## Where it lives
+
+Not in `tests/golden` (replay cases hold recorded model output for a real diff). Synthetic cases are **live snippets** (`tests/snippets/<name>/case.json`, run by `eval --live`): a hand-made `base` and `change`, the findings expected, and what must not be reported. That format already exists, holds no recorded output, and is meant to be invented code. Replay stays for real, licensed diffs.
+
+## Flow
+
+1. **Brief** (`shadow promote --brief <case.json> --out brief.json`, deterministic). The input is a confirmed or draft case, which stays private. The brief holds only what is general: the language (from the labelled files' extensions), and for each labelled finding its label (`expected` or `not_expected`), category and severity, with an empty `pattern` for a person to fill with one sentence ("a lookup result is used without checking it exists"). It holds no file names, lines, messages, code, repository, PR or ids.
+2. **Author** (a model; a project skill that runs it is a follow-up, today a person does this step by hand). Given only the brief, a subagent writes `case.json` for an invented project. It never reads the source case or the shadow store, and its tools are limited to writing under a scratch directory. Expected findings become `expected`, false alarms become `must_not_report`.
+3. **Check** (`shadow promote --check-synthetic <dir> --source <case.json> [--brief brief.json]`, deterministic). Validates the snippet with the live-eval schema, then:
+   - **Leak check.** Collects what is distinctive in the source (identifiers that contain an underscore or a case change, or are 12+ characters; file paths; host names; any whole source line of 30+ characters after whitespace is collapsed) and refuses the snippet if any of it appears anywhere in the snippet, name included. It prints the offending terms, which is safe because the check runs where the source already is. `--allow <term>` accepts a term a person decided is generic.
+   - **Fidelity to the brief.** The snippet has as many `expected` entries, with the same severities, as the brief's `expected` findings, and at least as many `must_not_report` entries as its `not_expected` findings.
+   - **Uncalibrated.** `calibrated` must be absent or false. A person runs `eval --live --only <name>` twice, as the README already requires, and then sets it.
+4. A person reads the snippet, runs it live, and adds it to `tests/snippets` (public) or to a private snippets directory. Nothing is written to the public repo by any step above.
+
+## Why this is safe, and where it is not
+
+- The LLM never sees the source, so it cannot copy it. The leak check backs that up deterministically and does not depend on the model behaving.
+- The leak check finds shared names and copied lines. It cannot judge whether an invented snippet is a close paraphrase of the original's *structure*. That stays a human review, and the brief's one-sentence pattern is deliberately about the kind of mistake, not the code.
+- Whether pattern-level abstraction from a company's code is acceptable is the company's policy decision, and this is not legal advice.
+
+## Non-goals
+
+- Generating snippets unattended in `handoff-round`. The authoring skill is run by a person for now.
+- Changing the replay golden set, the license gate or `eval --live`.
+- Scoring how realistic a synthetic snippet is. It tests the reviewer on the defect, not on realism.
+
+## Testing
+
+Brief: holds no source file name, line, message, repository or id (asserted against a case full of them); skips unlabelled findings; picks the language. Check: accepts a clean snippet; refuses a shared distinctive identifier, a shared path or host, a copied long line, and a shared term in the snippet's name; `--allow` clears one term; refuses a count or severity mismatch with the brief; refuses `calibrated: true`; refuses an invalid snippet.
