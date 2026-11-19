@@ -94,6 +94,9 @@ export function install({ exec = realExec, env = process.env, log = () => {}, pr
   fs.writeFileSync(path.join(paths.dataDir, OWNER_MARKER), 'created by the code-check installer\n');
   copyPayload(paths.pluginSrc, stage);
   const childEnv = { ...env, CODE_CHECK_HOME: paths.dataDir };
+  // ensure-runtime.sh skips a venv whose marker equals VERSION, so a re-install of changed code under an unchanged
+  // VERSION (a branch, a dev build) would keep running the old package. An install always rebuilds.
+  fs.rmSync(path.join(paths.dataDir, 'installed-version'), { force: true });
   const runtime = exec('sh', [path.join(stage, 'hooks', 'ensure-runtime.sh')], { env: childEnv });
   if (runtime.status !== 0) throw new Error(`runtime setup failed: ${(runtime.stderr || '').trim()}`);
   const gen = exec(path.join(paths.dataDir, 'venv', 'bin', 'python'), ['-m', 'codecheck', 'gen-agents', '--out', path.join(stage, 'agents')], { env: childEnv });
