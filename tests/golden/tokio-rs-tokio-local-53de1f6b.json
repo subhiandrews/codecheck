@@ -359,5 +359,6 @@
     "unreadable_lines": 0
   },
   "label_status": "confirmed",
-  "repo_private": null
+  "repo_private": null,
+  "repo_license": "mit"
 }

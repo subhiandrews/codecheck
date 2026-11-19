@@ -212,6 +212,14 @@ class GitLabProvider:
             return None
         return None if visibility is None else visibility != "public"
 
+    def repo_license(self, repo: str) -> str | None:
+        try:
+            lic = self._get(f"projects/{_pid(repo)}?license=true").get("license")
+        except (ProviderError, ValueError, AttributeError):
+            return None
+        key = lic.get("key") if isinstance(lic, dict) else None
+        return key.lower() if isinstance(key, str) and re.fullmatch(r"[A-Za-z0-9.+-]{1,64}", key) else None
+
     def clone_argv(self, repo: str, dest: str) -> list[str]:
         if dest.startswith("-"):
             raise ProviderError(f"invalid clone destination {dest!r}")

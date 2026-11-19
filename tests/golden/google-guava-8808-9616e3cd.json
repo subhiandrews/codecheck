@@ -133,5 +133,6 @@
     "unreadable_lines": 0
   },
   "label_status": "confirmed",
-  "repo_private": false
+  "repo_private": false,
+  "repo_license": "apache-2.0"
 }

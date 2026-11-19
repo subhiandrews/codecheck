@@ -110,7 +110,8 @@ def _build(args, ctx, run_id, run_dir) -> dict:
     meta["existing_comments"] = existing_comments
     meta["existing_comments_error"] = existing_comments_error
     if handoff:
-        meta.update(handoff=True, blind=blind, repo_private=_repo_private(ctx, meta["repo"]) if blind else None)
+        meta.update(handoff=True, blind=blind, repo_private=_repo_private(ctx, meta["repo"]) if blind else None,
+                    repo_license=_repo_license(ctx, meta["repo"]) if blind else None)
     (run_dir / "diff.patch").write_text(diff, encoding="utf-8")
     files = []
     for idx, path in enumerate(reviewable):
@@ -156,6 +157,13 @@ def _build(args, ctx, run_id, run_dir) -> dict:
 
 class _Blind(Exception):
     pass
+
+
+def _repo_license(ctx, repo) -> str | None:
+    try:
+        return ctx.provider.repo_license(repo)
+    except Exception:  # noqa: BLE001 - a failed lookup is just unknown
+        return None
 
 
 def _repo_private(ctx, repo) -> bool | None:

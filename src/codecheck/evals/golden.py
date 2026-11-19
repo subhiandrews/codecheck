@@ -8,6 +8,7 @@ the pipeline posted for it as a human confirmed them. Replaying needs no network
 import json
 from pathlib import Path
 
+from codecheck.config import DEFAULT_LICENSES
 from codecheck.core.diffmap import parse_diff
 from codecheck.core.findings import finding_id, validate_findings
 from codecheck.core.paths import check_finding_paths, finding_items
@@ -17,6 +18,7 @@ from codecheck.core.render import comment_body, summary_body
 from codecheck.errors import CodeCheckError
 
 SCHEMA_VERSION = 1
+__all__ = ["DEFAULT_CASES", "DEFAULT_LICENSES", "SCHEMA_VERSION", "check_case", "load_case", "load_cases", "posted_view", "run_replay"]
 # The plugin repository's own cases; an installed package has no `tests/`, so there this directory is simply missing.
 DEFAULT_CASES = Path(__file__).resolve().parents[3] / "tests" / "golden"
 REQUIRED = ("version", "case_id", "repo", "pr", "head_sha", "diff", "reviewer_outputs", "aggregator",

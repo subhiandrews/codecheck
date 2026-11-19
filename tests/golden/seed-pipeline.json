@@ -146,5 +146,6 @@
   "misses": [],
   "signals": null,
   "label_status": "confirmed",
-  "repo_private": false
+  "repo_private": false,
+  "origin": "synthetic"
 }
