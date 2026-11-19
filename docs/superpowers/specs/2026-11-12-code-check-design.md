@@ -14,7 +14,7 @@ It deliberately does **not** use Claude's built-in code-review skill. It ships i
 ### Phases
 
 - **Phase 1:** Claude Code install; GitHub via the `gh` CLI.
-- **Phase 2:** Codex install; GitLab via `glab`; Bitbucket (adapter approach decided then, since there is no official CLI).
+- **Phase 2:** Codex install (designed in `2026-11-19-codex-support-design.md`); GitLab via `glab`; Bitbucket (adapter approach decided then, since there is no official CLI).
 
 ### Phase 1 deferrals (interfaces and schemas defined, nothing built behind them)
 
