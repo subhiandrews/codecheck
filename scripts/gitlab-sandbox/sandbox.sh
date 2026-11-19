@@ -10,6 +10,7 @@
 #   capture-fixtures DIR [IID]   save the raw API responses the GitLab provider reads, to turn into test fixtures
 #   status                       list the project's merge requests and their pipelines
 #   teardown                     delete the project (asks you to type its path)
+#                                SANDBOX_CONFIRM_DELETE=group/name skips the prompt; the value must still equal the path
 #
 # SANDBOX_PROJECT=group/name picks the project (default: <your username>/code-check-sandbox). The second account
 # must set it to the owner's project and run with its own GITLAB_TOKEN. GITLAB_TOKEN is also used, through
@@ -64,6 +65,11 @@ setup_project() {
   NAME="${PROJECT##*/}"
 }
 
+# gcommit MESSAGE: commit in the work tree with a fixed identity, so a machine without user.name and user.email still works.
+gcommit() {
+  git -C "$WORK" -c user.name="code-check sandbox" -c user.email="sandbox@example.invalid" commit -q -m "$1"
+}
+
 gpush() {
   if [ -n "${GITLAB_TOKEN:-}" ] && [ -z "${SANDBOX_REMOTE_URL:-}" ] && [ -z "${SANDBOX_USE_SSH:-}" ]; then
     local askpass="$TMP/askpass.sh"
@@ -114,7 +120,7 @@ cmd_create() {
   git -C "$WORK" remote add origin "$remote"
   copy_seed "$SEED/main" "$WORK"
   git -C "$WORK" add -A
-  git -C "$WORK" commit -q -m "Initial import"
+  gcommit "Initial import"
   gpush -q -u origin main
 
   # Issues first, so the numbers in the merge request descriptions ("Closes #2") are right.
@@ -127,7 +133,7 @@ cmd_create() {
     git -C "$WORK" checkout -q -b "$b" main
     copy_seed "$SEED/branches/$d" "$WORK"
     git -C "$WORK" add -A
-    git -C "$WORK" commit -q -m "$(mr_title "$d")"
+    gcommit "$(mr_title "$d")"
     gpush -q -u origin "$b"
     git -C "$WORK" checkout -q main
   done
@@ -162,6 +168,13 @@ cmd_open_mrs() {
 
 cmd_comment_as_reviewer() {
   setup_project
+  # Refuse to comment as the owner. The owner is the namespace of a personal project (alice/name); for a group
+  # project the namespace is the group, so this cannot tell and does not check. GitLab paths ignore case.
+  local me
+  me="$(api_get user | jget username)" || die "could not read the current GitLab user (is glab logged in?)"
+  [ -n "$me" ] || die "could not read the current GitLab user (is glab logged in?)"
+  [ "$(printf '%s' "$me" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$NS" | tr '[:upper:]' '[:lower:]')" ] \
+    || die "comment-as-reviewer must run as the second account, not the project owner ($NS)"
   local d b iid versions base start head lines line
   for d in feature__report-export fix__failing-ci; do
     b="$(branch_name "$d")"
@@ -238,6 +251,6 @@ case "${1:-help}" in
   capture-fixtures) shift; cmd_capture_fixtures "$@" ;;
   status) shift; cmd_status "$@" ;;
   teardown) shift; cmd_teardown "$@" ;;
-  help | -h | --help) sed -n '2,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+  help | -h | --help) sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command '$1' (try: help)" ;;
 esac

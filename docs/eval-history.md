@@ -10,10 +10,17 @@ the judge against the human labels, not the reviewers: it moves when the judge o
 
 ## Live eval: snippets passed
 
-The chart appears once there are two runs.
+```mermaid
+xychart-beta
+    title "Live eval: snippets passed (%)"
+    x-axis [1, 2]
+    y-axis "percent" 0 --> 110
+    line [100, 100]
+```
 
 | # | date | commit | branch | score | outcome | models | cost |
 |---|---|---|---|---|---|---|---|
+| 2 | 2026-11-18 | 7bc9da7 | fix/gitlab-sandbox-review-comments | 100% | 5/5 | reviewers sonnet, aggregator opus | $1.93 |
 | 1 | 2026-11-16 | f30f0fc+dirty | main | 100% | 5/5 | reviewers sonnet, aggregator opus | $1.95 |
 
 ## Judge calibration: agreement with the human labels
