@@ -3,14 +3,14 @@
 from collections import Counter
 
 from codecheck.core.render import FINDING_MARKER
-from codecheck.models import PRRef
+from codecheck.models import PRRef, is_bot_login
 from codecheck.shadow.store import ShadowStore
 
 REPLY_MARKER = "code-check:reply"
 
 
-def _is_bot(author: str) -> bool:
-    return author.endswith("[bot]")
+def _is_bot(comment) -> bool:
+    return comment.is_bot or is_bot_login(comment.author)
 
 
 def _own_marker(body: str) -> str | None:
@@ -44,7 +44,7 @@ def collect_outcomes(provider, shadow: ShadowStore, ref: PRRef, me: str) -> dict
             replies = [
                 {"author": c.author, "body": c.body}
                 for c in thread.comments[1:]
-                if c.author != me and not _is_bot(c.author) and REPLY_MARKER not in c.body
+                if c.author != me and not _is_bot(c) and REPLY_MARKER not in c.body
             ]
             shadow.append(rid, {
                 "type": "outcome", "finding_id": fid, "thread_id": thread.id,
@@ -52,7 +52,7 @@ def collect_outcomes(provider, shadow: ShadowStore, ref: PRRef, me: str) -> dict
                 "replies": replies, "reactions": dict(Counter(root.reactions)),
             })
             outcomes += 1
-        elif root.author != me and not _is_bot(root.author):
+        elif root.author != me and not _is_bot(root):
             near, home = None, latest_run
             for rid in reversed(run_ids):  # newest run whose own findings it matches
                 near = next(

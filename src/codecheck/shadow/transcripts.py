@@ -4,7 +4,7 @@ import json
 import os
 import time
 from collections.abc import Callable, Mapping, Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from codecheck.shadow.scrub import scrub_text
@@ -171,6 +171,23 @@ def extract_signals(paths: Sequence[Path], *, windows: Mapping[Path, tuple[float
     return out
 
 
+def _write_scrubbed(dest: Path, name: str, text: str) -> None:
+    dest.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(dest, 0o700)
+    target = dest / name
+    if target.is_symlink():
+        target.unlink()
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    try:
+        f = os.fdopen(fd, "wb")
+    except BaseException:
+        os.close(fd)
+        raise
+    with f:
+        os.fchmod(f.fileno(), 0o600)  # the descriptor, not the path: nothing can swap the file in between
+        f.write(scrub_text(text).encode("utf-8"))
+
+
 def copy_scrubbed(paths: Sequence[Path], dest: Path) -> list[str]:
     dest.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(dest, 0o700)
@@ -180,17 +197,84 @@ def copy_scrubbed(paths: Sequence[Path], dest: Path) -> list[str]:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        target = dest / path.name
-        if target.is_symlink():
-            target.unlink()
-        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-        try:
-            f = os.fdopen(fd, "wb")
-        except BaseException:
-            os.close(fd)
-            raise
-        with f:
-            os.fchmod(f.fileno(), 0o600)  # the descriptor, not the path: nothing can swap the file in between
-            f.write(scrub_text(text).encode("utf-8"))
+        _write_scrubbed(dest, path.name, text)
         written.append(path.name)
     return written
+
+
+_CODEX_EVENTS = frozenset({"task_started", "task_complete", "user_message", "agent_message"})
+_CODEX_IDENTITY = ("creator_user_id", "creator_account_id")
+
+
+def _first_mention(path: Path, needle: str) -> datetime | None:
+    """When the run id first appears in a Codex session, from the entry's own timestamp."""
+    try:
+        with path.open(encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if needle not in line:
+                    continue
+                try:
+                    return datetime.fromisoformat(str(json.loads(line).get("timestamp")))
+                except (ValueError, AttributeError, RecursionError):
+                    return datetime.min.replace(tzinfo=UTC)  # mentioned, but the time is unreadable: sorts first
+    except OSError:
+        return None
+    return None
+
+
+def find_codex_transcript(
+    sessions_dir: Path,
+    run_id: str,
+    *,
+    max_age_s: float = 86400,
+    now: Callable[[], float] = time.time,
+) -> Path | None:
+    """The Codex session where the run id first appeared, which is the session that ran `context`.
+
+    Later sessions may quote the id (a hand-off pasted into another session), so the newest match would be wrong."""
+    try:
+        cutoff = now() - max_age_s
+        found = []
+        for p in sessions_dir.glob("*/*/*/rollout-*.jsonl"):
+            try:
+                if not p.is_file() or p.is_symlink() or p.stat().st_mtime < cutoff:
+                    continue
+            except OSError:
+                continue
+            if (when := _first_mention(p, run_id)) is not None:
+                found.append((when, p))
+    except OSError:
+        return None
+    return min(found, key=lambda c: c[0])[1] if found else None
+
+
+def _codex_keep(entry: dict) -> bool:
+    payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else {}
+    kind = entry.get("type")
+    if kind == "session_meta":
+        return True
+    if kind == "response_item":
+        return payload.get("type") != "reasoning"  # the model's reasoning is encrypted noise here
+    return kind == "event_msg" and payload.get("type") in _CODEX_EVENTS
+
+
+def copy_codex_scrubbed(path: Path, dest: Path) -> list[str]:
+    """Copy the conversation of a Codex session (no token counts, reasoning or account ids), scrubbed."""
+    kept = []
+    try:
+        with path.open(encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                except (ValueError, RecursionError):
+                    continue
+                if not isinstance(entry, dict) or not _codex_keep(entry):
+                    continue
+                if entry.get("type") == "session_meta" and isinstance(entry.get("payload"), dict):
+                    for key in _CODEX_IDENTITY:
+                        entry["payload"].pop(key, None)
+                kept.append(json.dumps(entry, ensure_ascii=False))
+    except OSError:
+        return []
+    _write_scrubbed(dest, path.name, "\n".join(kept) + "\n")
+    return [path.name]

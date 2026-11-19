@@ -28,6 +28,8 @@ class Job:
     member: str
     capture: Path
     argv: list[str]
+    model: str = ""
+    effort: str = ""
 
 
 def _job(cfg, member, index, files, root, run_dir, scratch) -> Job:
@@ -50,7 +52,7 @@ def _job(cfg, member, index, files, root, run_dir, scratch) -> Job:
         "--output-schema", str(scratch / f"{label}-schema.json"),
         "--output-last-message", str(capture), "--json", "--", prompt,
     ]
-    return Job(member, capture, argv)
+    return Job(member, capture, argv, model, effort)
 
 
 def _execute(job, ctx, root, usable_reviewers):
@@ -118,6 +120,7 @@ def _run_panel(args, ctx, meta, root, run_dir, scratch) -> dict:
             if scope:
                 jobs.append(_job(ctx.config, member, index, scope, root, run_dir, scratch))
     aggregator = _job(ctx.config, "aggregator", 1, files, root, run_dir, scratch)
+    _record_runtime(ctx, meta, run_dir, [*jobs, aggregator])
     outputs = {name: _finding_path(run_dir, name) for name in [*members, "aggregator"]}
     for name, is_aggregator in (("reviewer", False), ("aggregator", True)):
         write_json(scratch / f"{name}-schema.json", capture_schema(is_aggregator))
@@ -153,6 +156,16 @@ def _run_panel(args, ctx, meta, root, run_dir, scratch) -> dict:
         else:
             _publish(scratch, outputs["aggregator"], result, written)
     return {"members": [*members, "aggregator"], "failed_members": failed, "files_written": written}
+
+
+def _record_runtime(ctx, meta, run_dir, jobs) -> None:
+    """Replace the Claude model names `context` recorded with the Codex models and effort this panel will use."""
+    models = {job.member: job.model for job in jobs}
+    reasoning = {job.member: job.effort for job in jobs}
+    meta.update(runtime="codex", models=models, reasoning=reasoning)
+    write_json(run_dir / "context.json", meta)
+    if ctx.shadow is not None:
+        ctx.guarded(ctx.shadow.append, meta["run_id"], {"type": "runtime", "runtime": "codex", "models": models, "reasoning": reasoning})
 
 
 def _publish(scratch, target, data, written):

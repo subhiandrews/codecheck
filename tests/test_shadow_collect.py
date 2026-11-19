@@ -216,3 +216,30 @@ def test_export_tolerates_malformed_records(tmp_path):
     shadow.append(new, {"type": "outcome", "thread_id": "T9"})  # no finding_id
     shadow.append(new, {"type": "human_comment", "thread_id": "T8", "path": "q", "author": "b", "body": "x"})
     assert export_golden(shadow, tmp_path / "g.jsonl") == 1
+
+
+@pytest.mark.parametrize("login", ["gitlab-bot", "GitLabDuo", "renovate_bot", "ci[bot]", "Release-Bot"])
+def test_automated_accounts_are_not_human_feedback(tmp_path, login):
+    shadow = ShadowStore(tmp_path)
+    seed(shadow)
+    provider = FakeProvider()
+    provider.threads[REF] = [Thread("TB", "a.py", 21, False, False, (tc(9, login, "Consider renaming this"),))]
+    assert collect_outcomes(provider, shadow, REF, "me")["human_comments"] == 0
+    assert not [r for r in shadow.read(RID) if r["type"] == "human_comment"]
+
+
+@pytest.mark.parametrize("login", ["alice", "abbot", "bot-fan", "robotics"])
+def test_ordinary_accounts_stay_human(login):
+    from codecheck.models import is_bot_login
+
+    assert not is_bot_login(login)
+
+
+def test_gitlab_provider_flags_ai_reviewer_and_bot_accounts():
+    from codecheck.providers.gitlab import _is_bot
+
+    assert _is_bot({"author": {"username": "GitLabDuo"}})
+    assert _is_bot({"author": {"username": "gitlab-bot"}})
+    assert _is_bot({"author": {"username": "svc", "bot": True}})
+    assert not _is_bot({"author": {"username": "kjamoralin"}})
+    assert not _is_bot({})

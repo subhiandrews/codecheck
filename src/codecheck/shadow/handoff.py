@@ -87,6 +87,10 @@ def render_markdown(h: dict) -> str:
         lines.append(f"- Build: {h['prompts_hash']} ({h.get('plugin_root')})")
     else:
         lines.append(f"- Build: unknown ({h.get('build_reason')})")
+    models, reasoning = h.get("models") or {}, h.get("reasoning") or {}
+    if models:
+        lines.append(f"- Runtime: {h.get('runtime') or 'claude'}; models: " + ", ".join(
+            f"{name} {model}" + (f" ({reasoning[name]})" if name in reasoning else "") for name, model in models.items()))
     decision = h.get("decision")
     lines.append(f"- Decision: {decision['event']} ({decision.get('reason')})" if decision else "- Decision: none recorded")
     lines += ["", "## Reviewers", ""]
@@ -94,9 +98,15 @@ def render_markdown(h: dict) -> str:
         state = f"{r.get('valid')} valid findings" if r.get("output") else "no output"
         lines.append(f"- {name}: {state}" + (f"; errors: {'; '.join(r['errors'])}" if r.get("errors") else ""))
     lines += ["", "## Findings", ""]
-    lines += [f"- {f['severity']} {f['category']} at {f['file']}:{f['line']} ({f['id']})" for f in h.get("findings") or []]
+    lines += [f"- {f['severity']} {f['category']} at {f['file']}:{f['line']} ({f['id']})"
+              + (f" from {', '.join(f['reviewers'])}" if f.get("reviewers") else "") for f in h.get("findings") or []]
     if not h.get("findings"):
         lines.append("- none")
+    acc = h.get("accounting")
+    if acc:
+        unaccounted = ", ".join(f"{m} ({n})" for m, n in (acc.get("possibly_unaccounted") or {}).items())
+        lines.append(f"- Reviewer findings {acc['reviewer_findings']}: {acc['kept']} kept, {acc['dropped']} dropped"
+                     + (f"; reviewers with findings not named on any kept or dropped item: {unaccounted}" if unaccounted else ""))
     unposted = h.get("comparison_mode") == "unposted" and h.get("comparison") is not None
     lines += ["", "## Human comments (unposted review; compared with the threads as they are now)" if unposted
               else "## Human comments", ""]

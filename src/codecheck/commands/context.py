@@ -49,7 +49,7 @@ def _build(args, ctx, run_id, run_dir) -> dict:
     existing_comments_error = None
     handoff = cfg.shadow.handoff
     blind = args.mode == "pr" and handoff
-    meta: dict = {"run_id": run_id, "mode": args.mode, "skill": args.skill or ("review-local" if args.mode == "local" else "review-pr")}
+    meta: dict = {"run_id": run_id, "runtime": "claude", "mode": args.mode, "skill": args.skill or ("review-local" if args.mode == "local" else "review-pr")}
 
     if args.mode == "local":
         sync = sync_base(ctx.git, cfg.remote, cfg.base_branch)

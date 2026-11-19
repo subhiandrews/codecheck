@@ -127,6 +127,11 @@ def test_measured_argv_and_valid_findings(tmp_path):
             assert option_like_path in call.argv[-1]
             assert option_like_path not in call.argv
     assert json.loads((run_dir / "findings/lang-python.json").read_text())[0]["line"] == 3
+    meta = json.loads((run_dir / "context.json").read_text())
+    assert meta["runtime"] == "codex"
+    assert meta["models"] == {"architect": "gpt-6.2-sol", "pragmatist": "gpt-6.2-sol", "skeptic": "gpt-6.2-sol",
+                              "lang-python": "gpt-6-luna", "aggregator": "gpt-6.2-astra"}
+    assert meta["reasoning"]["lang-python"] == "high" and meta["reasoning"]["skeptic"] == "medium"
 
 
 def test_unmeasured_platform_refuses_dispatch_without_user_config_override(tmp_path, monkeypatch):
