@@ -1,6 +1,6 @@
 # Codex support alongside Claude Code
 
-Status: proposal, for Codex to implement. This fills in the "Codex install" item of Phase 2 in `2026-11-12-code-check-design.md`. Authority order is unchanged: this spec, then the Codex spike (`docs/superpowers/spikes/2026-11-19-codex.md`, which records what Codex 0.170.0 really does and overrides this spec's prose where they disagree), then the plan.
+Status: proposal, for Codex to implement. This fills in the Codex install item of Phase 2 in `2026-11-12-code-check-design.md`. The [Codex spike](../spikes/2026-11-19-codex.md) takes precedence for measured Codex behaviour. For everything else, follow this spec, then the plan.
 
 ## Intent
 
@@ -24,6 +24,7 @@ A standalone `codex exec -s read-only` process denied every write (11 of 11, exi
 - Skills load by name from `<repo>/.agents/skills/<name>/SKILL.md` and `$HOME/.agents/skills/<name>/SKILL.md`. Setting only `CODEX_HOME` does not move user-skill discovery. Whether `argument-hint` is shown is unconfirmed.
 - Read-only reviewer processes: `-C` sets the working directory and does **not** limit reads, so a reviewer can read the run directory and a separate worktree. Writes are denied. Stdin closed with approval `never` runs without prompting.
 - Output: `--output-schema`, `--output-last-message` and `--json` together gave a final message that parsed as JSON in every run and matched the JSONL stream. Behaviour with any of the three omitted is unconfirmed.
+- Network: the read-only reviewer shell could reach neither the loopback HTTP server nor `https://example.com/`; both returned HTTP 200 in the control shell. Public numeric-IP egress and non-shell network tools are unconfirmed. This is residual risk and `panel run` performs no runtime network check.
 - Parallelism: 3 and 8 concurrent processes both finished in about 10 s with no rate limit seen. That is one account and a short prompt; sustained throughput on real prompts is unconfirmed.
 - Models seen in the catalog and on OpenAI's models page: `gpt-6.2-astra`, `gpt-6.2-sol`, `gpt-6-luna` (and others). Live requests to Astra and Luna are unconfirmed.
 - Shared Codex homes log harmless skill-install and shell-snapshot errors under concurrency.
@@ -83,8 +84,8 @@ Phases 2 to 4 are the second PR. Before Phase 2 ends, run one real review end to
 
 | Risk | Level | Mitigation |
 |---|---|---|
-| A reviewer reads untrusted PR text and can read anywhere on disk (`-C` does not limit reads), then puts what it read into a finding that is posted | Medium | The same exposure exists for Claude agents (the Read tool is not path-limited). Findings pass `ingest` validation and the existing scrub. Run reviewers with `--ignore-user-config` and no extra writable or network access, and document it |
-| Whether the read-only sandbox blocks network is unconfirmed | Medium | Check it before Phase 2 and fail closed: if network is reachable, `panel run` refuses to start the reviewers unless the spike's flags prevent it |
+| A reviewer can read Codex's own auth file and other credentials under the user's home. Prompt injection in a PR could try to put that material in a finding that is then posted | Medium | Ingest applies the scrubber to every finding's message and suggestion. It recognises patterns including JWT-shaped strings, `sk-` keys, bearer values and `token=...` assignments. It redacts matches in messages and withholds an entire suggestion if it matches. It can miss bare opaque tokens and private text without a recognised secret pattern |
+| Public numeric-IP egress and network access via non-shell tools remain unconfirmed after the reviewer shell failed to reach loopback and `example.com` | Medium | The CLI fixes the measured read-only argv. Residual risk remains and there is no runtime network check |
 | A failed reviewer read as "no findings" | High | A failed member is reported and makes the run's result say so; a test covers a non-zero exit, a timeout and unparseable output |
 | The `-s read-only` setting weakened by a config or flag | High | Fixed in code; `codex.*` keys rejected in repo config; a test asserts the argv for every member |
 | Guessed model names are wrong or retired | Medium | Defaults come from the catalog and are overridable; Astra and Luna are not yet tested live |
