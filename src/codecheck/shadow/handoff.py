@@ -48,6 +48,14 @@ def _skip_body(body: str) -> bool:
     return not (body or "").strip() or "<!-- code-check:run:" in body
 
 
+def near_finding(findings: Sequence[dict], path, line) -> str | None:
+    """The same rule as `shadow collect`: same file, line within 3; first finding wins."""
+    if not isinstance(line, int):
+        return None
+    return next((f.get("id") for f in findings if f.get("file") == path and isinstance(f.get("line"), int)
+                 and abs(f["line"] - line) <= 3), None)
+
+
 def build_comparison(records: Sequence[dict], findings: Sequence[dict], general_comments: Sequence[dict] = ()) -> dict:
     """`records` are a run's shadow records; the newest `human_comment` per thread wins, as in export."""
     latest: dict[str, dict] = {}

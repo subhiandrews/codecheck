@@ -24,6 +24,7 @@ from codecheck.commands import (
     shadow,
     status,
     sync,
+    telemetry,
     threads,
     workspace,
 )
@@ -32,5 +33,5 @@ ALL = [
     doctor, sync, precheck, context, ingest, post, handoff, cleanup,
     status, workspace, threads, commit, push, reply, resolve, request_review,
     checks, check_log, attempt, list_work, mark_done, shadow, gen_agents, run_pr, loop,
-    eval_run, handoff_queue,
+    eval_run, handoff_queue, telemetry,
 ]

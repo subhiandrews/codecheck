@@ -23,6 +23,7 @@ from codecheck.shadow.handoff import (
     SCHEMA,
     build_comparison,
     build_general_comments,
+    near_finding,
     render_markdown,
 )
 from codecheck.shadow.recorder import config_hash
@@ -35,6 +36,7 @@ from codecheck.shadow.transcripts import (
     find_transcript,
     subagent_transcripts,
 )
+from codecheck.telemetry.push import auto_push
 
 NAME = "handoff"
 HELP = argparse.SUPPRESS  # an internal skill step; hidden from `code-check --help`
@@ -107,8 +109,12 @@ def build_handoff(ctx, run_id: str) -> dict:
     handoff = scrub(handoff)  # structurally, so the JSON stays valid
     write_private(folder / "handoff.json", json.dumps(handoff, indent=2, ensure_ascii=False))
     write_private(folder / "handoff.md", scrub_text(render_markdown(handoff)))
-    return {"handoff": True, "dir": str(folder), "pr_url": pr_url, "transcript": transcript,
-            "comparison": True if comparison is not None else comparison_reason}
+    result = {"handoff": True, "dir": str(folder), "pr_url": pr_url, "transcript": transcript,
+              "comparison": True if comparison is not None else comparison_reason}
+    exported = auto_push(ctx, [run_id])
+    if exported is not None:  # only when telemetry is on: otherwise the output is what it always was
+        result["telemetry"] = exported
+    return result
 
 
 def _load(path: Path):
@@ -195,7 +201,7 @@ def _compare(ctx, ref: PRRef, run_id: str, *, findings: list[dict] | None = None
         (r for rid in ctx.shadow.runs_for_pr(str(ref)) for r in ctx.shadow.read(rid) if r.get("type") == "human_comment"),
         key=lambda r: r.get("ts") if isinstance(r.get("ts"), (int, float)) else 0,
     )
-    rematched = [{**r, "matches_finding": _near(ours, r.get("path"), r.get("line"))} for r in comments]
+    rematched = [{**r, "matches_finding": near_finding(ours, r.get("path"), r.get("line"))} for r in comments]
     general, general_reason = _general_comments(ctx, ref)
     return build_comparison(rematched, ours, general), None, general_reason
 
@@ -212,11 +218,3 @@ def _general_comments(ctx, ref: PRRef) -> tuple[list[dict], str | None]:
         return [{**g, "body": " ".join(scrub_text(g["body"]).split())[:300]} for g in general], None
     except Exception as e:  # noqa: BLE001 - the extra feedback is a convenience; the rest of the comparison stands
         return [], scrub_text(f"{step} failed: {type(e).__name__}")[:500]
-
-
-def _near(findings: list[dict], path, line) -> str | None:
-    """The same rule as `shadow collect`: same file, line within 3; first finding wins."""
-    if not isinstance(line, int):
-        return None
-    return next((f.get("id") for f in findings if f.get("file") == path and isinstance(f.get("line"), int)
-                 and abs(f["line"] - line) <= 3), None)

@@ -10,6 +10,7 @@ from codecheck.shadow.export import export_golden
 from codecheck.shadow.promote import draft_case, finalize_case
 from codecheck.shadow.scrub import scrub
 from codecheck.shadow.store import write_private
+from codecheck.telemetry.push import auto_push
 
 NAME = "shadow"
 HELP = "Shadow-mode data: collect human feedback, export a golden set, record verdicts"
@@ -107,11 +108,21 @@ def run(args, ctx) -> dict:
         return _record_verdicts(args, ctx)
     me = ctx.provider.whoami()
     if args.pr:
-        return collect_outcomes(ctx.provider, ctx.shadow, ctx.resolve_ref(args.pr), me)
-    results = []
+        ref = ctx.resolve_ref(args.pr)
+        return _with_telemetry(ctx, collect_outcomes(ctx.provider, ctx.shadow, ref, me), [str(ref)])
+    results, collected = [], []
     for pr in _prs_in_store(ctx.shadow):
         try:
             results.append({"pr": pr, **collect_outcomes(ctx.provider, ctx.shadow, ctx.parse_ref(pr), me)})
+            collected.append(pr)
         except (CodeCheckError, ValueError) as e:
             results.append({"pr": pr, "error": str(e)})
-    return {"results": results}
+    return _with_telemetry(ctx, {"results": results}, collected)
+
+
+def _with_telemetry(ctx, result: dict, prs: list[str]) -> dict:
+    """Feedback that arrived after a review goes to the collector too (a `code_check.feedback` span); nothing changes when telemetry is off."""
+    if not ctx.config.telemetry.enabled:
+        return result
+    exported = auto_push(ctx, [rid for pr in prs for rid in ctx.shadow.runs_for_pr(pr)])
+    return result if exported is None else {**result, "telemetry": exported}

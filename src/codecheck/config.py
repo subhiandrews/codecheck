@@ -60,6 +60,16 @@ class ShadowConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class TelemetryConfig:
+    enabled: bool = False  # export each hand-off to an OTLP collector; off means nothing leaves the machine
+    endpoint: str = ""  # OTLP/HTTP base URL; empty uses OTEL_EXPORTER_OTLP_(TRACES_)ENDPOINT. Headers/tokens come only from OTEL_EXPORTER_OTLP_HEADERS
+    content: bool = False  # also export free text: tool error messages, human comment bodies and authors, dropped-finding reasons
+    timeout_seconds: int = 5
+    token_file: str = ""  # a file holding the token (owner-only permissions); the token itself is never a config value
+    auth_header: str = "Authorization"  # the header that carries the token; a remote endpoint must be sent one
+
+
+@dataclass(frozen=True, slots=True)
 class AddressConfig:
     test_command: str = ""
     resolve_fixed_threads: bool = True
@@ -99,6 +109,7 @@ class Config:
     models: ModelsConfig = field(default_factory=ModelsConfig)
     deep_reviewer: DeepReviewerConfig = field(default_factory=DeepReviewerConfig)
     shadow: ShadowConfig = field(default_factory=ShadowConfig)
+    telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
     address: AddressConfig = field(default_factory=AddressConfig)
     run_pr: RunPrConfig = field(default_factory=RunPrConfig)
 
@@ -106,7 +117,7 @@ class Config:
 _FREEFORM = {("models", "per_language")}
 # Keys (or whole tables) a repository's .code-check.toml may not set.
 REPO_FORBIDDEN = {
-    ("state_dir",), ("run_pr",), ("shadow",), ("review", "auto_approve"), ("review", "attribution"), ("review", "label"), ("review", "login"), ("loop", "review_forks"),
+    ("state_dir",), ("run_pr",), ("shadow",), ("telemetry",), ("review", "auto_approve"), ("review", "attribution"), ("review", "label"), ("review", "login"), ("loop", "review_forks"),
     ("address", "test_command"), ("deep_reviewer", "command"),
 }
 MODEL_NAME = re.compile(r"[A-Za-z0-9._:\[\]-]+")
@@ -250,6 +261,13 @@ def validate(cfg: Config) -> Config:
     login = cfg.review.login
     if login and not LOGIN_NAME.fullmatch(login):
         raise ConfigError(f"config key review.login is not a valid GitHub login: {login!r}")
+    t = cfg.telemetry
+    if t.endpoint and not re.match(r"https?://", t.endpoint):
+        raise ConfigError("config key telemetry.endpoint must be an http:// or https:// URL")
+    if not re.fullmatch(r"[A-Za-z0-9-]{1,64}", t.auth_header):
+        raise ConfigError("config key telemetry.auth_header must be a plain header name")
+    if not 1 <= t.timeout_seconds <= 60:
+        raise ConfigError("config key telemetry.timeout_seconds must be between 1 and 60")
     r = cfg.run_pr
     for key in ("review_allowed_tools", "babysit_allowed_tools"):
         for tool in getattr(r, key):

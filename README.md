@@ -150,7 +150,7 @@ Orange boxes are LLM work and blue boxes are the deterministic CLI. A reviewer t
 
 Settings are layered, highest precedence first: environment (`CODE_CHECK_<SECTION>__<KEY>`, for example `CODE_CHECK_REVIEW__AUTO_APPROVE=true`), your `~/.config/code-check/config.toml`, the repository's `.code-check.toml`, then the defaults below. Your own settings therefore win over a repository's. Unknown keys and wrong types in files are errors.
 
-A repository's `.code-check.toml` may **not** set the security-sensitive keys `state_dir`, anything under `[run_pr]` or `[shadow]`, `review.auto_approve`, `review.attribution`, `review.label`, `review.login`, `loop.review_forks`, `address.test_command` or `deep_reviewer.command`: a repository you review is not trusted to choose what an unattended run may do or execute, where state is written, or whether reviews approve. Such a key in the repository file is an error that names the key; set it in your user file or the environment instead. Model names must match `[A-Za-z0-9._:[\]-]+`, `run_pr.permission_mode` must be one of `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`, and allowed-tool entries and prompts must not start with `-`.
+A repository's `.code-check.toml` may **not** set the security-sensitive keys `state_dir`, anything under `[run_pr]`, `[shadow]` or `[telemetry]`, `review.auto_approve`, `review.attribution`, `review.label`, `review.login`, `loop.review_forks`, `address.test_command` or `deep_reviewer.command`: a repository you review is not trusted to choose what an unattended run may do or execute, where state is written, or whether reviews approve. Such a key in the repository file is an error that names the key; set it in your user file or the environment instead. Model names must match `[A-Za-z0-9._:[\]-]+`, `run_pr.permission_mode` must be one of `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`, and allowed-tool entries and prompts must not start with `-`.
 
 ```toml
 provider = "auto"              # auto (a gitlab.com remote means gitlab, anything else github), "github" or "gitlab"
@@ -193,6 +193,14 @@ command = ""
 enabled = true
 store = "~/.local/share/code-check/shadow"
 handoff = false                # record hand-off data even when shadow.enabled is false (user config or CODE_CHECK_SHADOW__HANDOFF only)
+
+[telemetry]                    # user config or environment only; see "Team telemetry"
+enabled = false                # export each hand-off to an OpenTelemetry collector
+endpoint = ""                  # OTLP/HTTP base URL; empty uses OTEL_EXPORTER_OTLP_ENDPOINT
+token_file = ""                # a file (chmod 600) holding the token; or put it in OTEL_EXPORTER_OTLP_HEADERS. Never the token itself
+auth_header = "Authorization"  # the header the token is sent in
+content = false                # also export free text: tool error messages, human comment bodies and authors, dropped-finding reasons
+timeout_seconds = 5
 
 [address]
 test_command = ""              # run before every push; a failure blocks the push
@@ -330,7 +338,7 @@ Everything in a PR (code, comments, commit messages, the description) is untrust
 
 Use it first alongside human reviewers. It does not change behavior; it records what the tool did so human feedback can improve the skills and become a golden evaluation set.
 
-Everything is local: nothing leaves your machine. It is written as JSONL under `shadow.store`: the run, every reviewer finding, which ones the aggregator kept, what was posted, the decision, and the verdict for every comment `address-comments` evaluated.
+Everything is local by default: nothing leaves your machine unless you turn on [team telemetry](#team-telemetry-opentelemetry-export). It is written as JSONL under `shadow.store`: the run, every reviewer finding, which ones the aggregator kept, what was posted, the decision, and the verdict for every comment `address-comments` evaluated.
 
 `shadow.handoff` (default `false`) turns on the hand-off data recording and makes the shadow store available even when `shadow.enabled = false`. Like the rest of `[shadow]` it can only be set in your user config or with `CODE_CHECK_SHADOW__HANDOFF=1`, never in a repository's `.code-check.toml`.
 
@@ -360,6 +368,38 @@ code-check shadow export-golden --out golden.jsonl    # auto-labelled examples (
 ```
 
 `collect` records resolved or outdated threads, human replies and reactions, and human comments the tool never raised. Findings nobody reacted to are false-positive candidates; human comments with no matching finding are misses. Labels are marked `auto` for a human to review.
+
+### Team telemetry (OpenTelemetry export)
+
+Local mode is the default and is unchanged. For a team, each hand-off can also be sent to an OpenTelemetry collector, so the failures, findings and human feedback from everyone's runs land in one place. The local hand-off folder stays the source of truth: export only reads it, never moves or deletes it, and a collector that is down or rejecting cannot change or slow a review beyond `telemetry.timeout_seconds`.
+
+Turn it on in your user config or the environment (a repository's `.code-check.toml` cannot set `[telemetry]`), and point it at a collector with the standard variables:
+
+```bash
+export CODE_CHECK_TELEMETRY__ENABLED=1
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://otel.example.com:4318        # or telemetry.endpoint
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer%20<token>"      # the token (or use telemetry.token_file)
+export OTEL_RESOURCE_ATTRIBUTES="team=platform,deployment.environment=ci"  # optional: tag who and where
+```
+
+**A token is mandatory** for any collector that is not on this machine. With no token, an empty one (`Authorization=`, or `Bearer` with nothing after it) or an empty token file, the export is refused with an error and nothing is sent. Give it one of two ways: `Authorization` in `OTEL_EXPORTER_OTLP_HEADERS`, or `telemetry.token_file`, the path of a file holding just the token. The file must be a regular file only you can read (`chmod 600`), or it is refused, and when both are set the environment header wins. `telemetry.auth_header` changes the header name for backends that use another one (the file's token is then sent as is, without `Bearer`). Only `localhost`, `127.0.0.1` and `::1` may be used without a token, so you can try it against a local collector. The token is never a config value, is never written by code-check, and is not printed in errors.
+
+It needs `shadow.handoff = true`, because it exports hand-offs. It always sends OTLP/HTTP JSON to `<endpoint>/v1/traces` (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is used as given). It refuses `http://` except for localhost, refuses credentials in the URL, does not follow redirects (they would carry the token to another host), and rejects `OTEL_EXPORTER_OTLP_PROTOCOL=grpc` unless `telemetry.endpoint` names the HTTP URL; `OTEL_SDK_DISABLED=true` turns it off.
+
+What is sent, as one trace per run (the trace id is derived from the run id, so sending twice is harmless):
+
+- `code_check.run` (root): run id, skill, mode, repo, PR and **PR URL**, **`head_sha` (the commit reviewed)**, whether the head moved and the PR state, plugin build (`prompts_hash`, tool version, config hash), models, panel, the decision, counts of tool calls, failed calls, retries and permission denials, and `claude.session.id` (the main transcript's file name, to join with Claude Code's own telemetry). Events: one `code_check.finding` per posted finding (id, severity, category, file, line), one `code_check.finding.dropped` per finding the aggregator dropped, and one `code_check.reviewer` per panel member.
+- `code_check.agent` (one child per transcript): turns, output tokens, tool calls and failed tool calls, with a `code_check.tool_error` event per failed call (tool name; the message only with `content`). Agent spans reuse the run's time window, because the signals have no per-transcript timestamps, and subagents are identified by transcript file, not by panel member.
+- `code_check.feedback`: the human side, added when `handoff` ran after the PR had comments or whenever `code-check shadow collect` finds new ones. One `code_check.human_comment` event per thread (file, line, the finding it matched, the human's severity and ours, whether they agree), `code_check.finding_label` events (confirmed, disputed, no_signal, unreviewed) and counts of misses and findings no human raised. A trace cannot be edited, so each change in feedback adds a new feedback span to the same trace.
+
+Free text is off by default. With `telemetry.content = true` the export also carries tool error messages, human comment bodies (300 characters) and authors, general review comments, and the aggregator's reasons for dropping findings. Hand-offs hold no finding messages and no transcripts, so neither is ever exported. Everything has already been through the pattern scrub, which is best-effort, so treat the collector as sensitive when `content` is on.
+
+```bash
+code-check telemetry push --run <run_id> --dry-run   # print exactly what would be sent; works before you configure anything
+code-check telemetry push --all                      # send what changed, and retry failed sends
+```
+
+`handoff` and `shadow collect` push automatically when `telemetry.enabled` is true. A run's last successful send is recorded in `<run_id>.handoff/telemetry.json` (a digest, so an unchanged run is not resent, and the last error), which is also the retry queue: `--all` stops at the first failed send, so an unreachable collector costs one timeout. Any OTLP receiver works; for a quick local test, `docker run -p 3000:3000 -p 4318:4318 grafana/otel-lgtm` starts Grafana with Tempo and Loki, and `telemetry.endpoint = "http://localhost:4318"` points at it. For a team, run an OpenTelemetry Collector in front of the backend to handle authentication, retries and fan-out. The shared hand-off-round queue stays local: each maintainer analyzes the hand-offs on their own machine.
 
 ### Golden cases and replay
 
