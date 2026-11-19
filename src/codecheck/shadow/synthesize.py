@@ -48,6 +48,7 @@ def build_brief(case: Mapping) -> dict:
     return {
         "version": BRIEF_VERSION, "kind": "synthetic-brief",
         "language": _language([str(lab.get("file") or "") for lab in labelled]),
+        "allow": [],  # generic API names (standard library, well-known crates) the defect needs; a person fills this in
         "findings": [{"label": lab["label"], "category": str(lab.get("category") or ""), "severity": str(lab.get("severity") or ""),
                       "pattern": ""} for lab in labelled],
         "instructions": _INSTRUCTIONS,
@@ -123,6 +124,25 @@ def _long_lines(texts: list[str]) -> set[str]:
     return {n for t in texts for line in t.splitlines() if len(n := _normal(line)) >= MIN_LINE}
 
 
+def _body(snippet: Mapping) -> tuple[str, list[str]]:
+    """The text a leak could be in (name, paths, file contents), lowercased, and the file contents alone. Base and
+    change are kept apart in the second: a change that rewrites a base file must not hide what the base held."""
+    contents = [*snippet.get("base", {}).values(), *snippet.get("change", {}).values()]
+    paths = [*snippet.get("base", {}), *snippet.get("change", {})]
+    return "\n".join([str(snippet.get("name", "")), *paths, *contents]).lower(), contents
+
+
+def _allowed(allow: Collection[str], brief: Mapping | None) -> set[str]:
+    vouched = (brief or {}).get("allow") or []
+    return {str(a).strip().lower() for a in [*allow, *(vouched if isinstance(vouched, list) else [])]}
+
+
+def shared_terms(snippet: Mapping, source: Mapping, *, brief: Mapping | None = None, allow: Collection[str] = ()) -> list[str]:
+    """The source's distinctive terms the snippet shares, minus the ones a person allowed (here or in the brief)."""
+    lowered, _ = _body(snippet)
+    return sorted(t for t in leak_terms(source) - _allowed(allow, brief) if t in lowered)
+
+
 def check_synthetic(snippet: Mapping, source: Mapping, *, brief: Mapping | None = None, allow: Collection[str] = ()) -> list[str]:
     """Why this snippet may not stand in for the source, or [] when it may."""
     schema = snippet_problems(dict(snippet))
@@ -131,13 +151,9 @@ def check_synthetic(snippet: Mapping, source: Mapping, *, brief: Mapping | None 
     problems = []
     if snippet.get("calibrated") is True:
         problems.append("calibrated must be absent or false: run `eval --live --only <name>` twice before setting it")
-    # base and change are scanned apart: a change that rewrites a base file must not hide what the base held
-    contents = [*snippet.get("base", {}).values(), *snippet.get("change", {}).values()]
-    paths = [*snippet.get("base", {}), *snippet.get("change", {})]
-    body = "\n".join([str(snippet.get("name", "")), *paths, *contents])
-    lowered, allowed = body.lower(), {a.strip().lower() for a in allow}
-    problems += [f"shares {t!r} with the source (use another name, or --allow it if it is generic)"
-                 for t in sorted(leak_terms(source) - allowed) if t in lowered]
+    _, contents = _body(snippet)
+    problems += [f"shares {t!r} with the source (use another name, or allow it if it is a generic API name)"
+                 for t in shared_terms(snippet, source, brief=brief, allow=allow)]
     copied = _long_lines(contents) & _long_lines([str(source.get("diff") or "")])
     problems += [f"copies a line from the source: {line[:60]!r}" for line in sorted(copied)]
     if brief is not None:

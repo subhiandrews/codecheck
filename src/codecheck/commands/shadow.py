@@ -10,7 +10,12 @@ from codecheck.shadow.export import export_golden
 from codecheck.shadow.promote import draft_case, finalize_case
 from codecheck.shadow.scrub import scrub
 from codecheck.shadow.store import write_private
-from codecheck.shadow.synthesize import build_brief, check_synthetic, load_json_object
+from codecheck.shadow.synthesize import (
+    build_brief,
+    check_synthetic,
+    load_json_object,
+    shared_terms,
+)
 
 NAME = "shadow"
 HELP = "Shadow-mode data: collect human feedback, export a golden set, record verdicts"
@@ -114,15 +119,19 @@ def _synthetic(args, ctx) -> dict:
         out.parent.mkdir(parents=True, exist_ok=True)
         write_private(out, json.dumps(brief, indent=2, ensure_ascii=False) + "\n")  # private until a person has read it
         return {"brief": str(out), "language": brief["language"], "findings": len(brief["findings"]),
-                "next": "fill in each pattern with one sentence about the kind of mistake (never the code), then have a model "
-                        "write the snippet from this brief alone, and run: code-check shadow promote --check-synthetic <dir> --source <case> --against <brief>"}
+                "next": "fill in each pattern with one sentence about the kind of mistake (never the code), list in `allow` the generic "
+                        "API names the defect needs, then have a model write the snippet from this brief alone, and run: code-check shadow promote --check-synthetic <dir> --source <case> --against <brief>"}
     if not args.source:
         raise CodeCheckError("promote --check-synthetic needs --source <the case the snippet was written from>")
     snippet_dir = _path(ctx, args.check_synthetic)
     snippet = load_json_object(snippet_dir / "case.json", "snippet")
     against = load_json_object(_path(ctx, args.against), "brief") if args.against else None
-    problems = check_synthetic(snippet, load_json_object(_path(ctx, args.source), "case"), brief=against, allow=args.allow)
+    source = load_json_object(_path(ctx, args.source), "case")
+    problems = check_synthetic(snippet, source, brief=against, allow=args.allow)
+    shared = shared_terms(snippet, source, brief=against, allow=args.allow)
+    hint = " ".join(f"--allow {t}" for t in shared) if shared else None
     return {"ok": not problems, "problems": problems, "snippet": snippet.get("name"),
+            "allow_hint": hint,  # paste after reading them: only generic API names, never a project's own
             "next": "read it, run `code-check eval --live --only <name>` twice, then set calibrated and add it to tests/snippets" if not problems else None}
 
 

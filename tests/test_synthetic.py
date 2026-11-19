@@ -61,6 +61,7 @@ def test_the_brief_is_general_and_holds_nothing_that_identifies_the_source():
     assert [(f["label"], f["category"], f["severity"]) for f in brief["findings"]] == [
         ("expected", "bug", "warning"), ("not_expected", "style", "suggestion")]  # the unlabelled one is left out
     assert all(f["pattern"] == "" for f in brief["findings"])  # a person fills this in
+    assert brief["allow"] == []  # and lists the generic API names the defect needs
 
 
 def test_the_language_is_the_panels_detection_for_the_most_common_labelled_file():
@@ -138,6 +139,22 @@ def test_a_copied_line_in_a_base_file_is_found_even_when_the_change_drops_it():
     assert any("copies" in p for p in problems(snippet))
 
 
+def test_the_brief_can_vouch_for_the_generic_api_names_the_defect_needs():
+    snippet = clone()
+    snippet["change"]["inventory.go"] += "var _ = strictRoundingMode\nvar _ = postTo\n"
+    assert {"strictroundingmode", "postto"} <= {p.split("'")[1] for p in problems(snippet) if p.startswith("shares")}
+    vouched = {**BRIEF, "allow": ["strictRoundingMode", "postTo"]}
+    assert check_synthetic(snippet, SOURCE, brief=vouched) == []
+    assert check_synthetic(snippet, SOURCE, brief=vouched, allow=["other"]) == []  # the two lists add up
+
+
+def test_a_vouched_name_does_not_excuse_a_project_name():
+    snippet = clone()
+    snippet["change"]["inventory.go"] += "var _ = reconcile_ledger_entries\n"
+    vouched = {**BRIEF, "allow": ["strictRoundingMode"]}
+    assert any("reconcile_ledger_entries" in p for p in check_synthetic(snippet, SOURCE, brief=vouched))
+
+
 def test_allow_clears_a_term_a_person_decided_is_generic():
     snippet = clone()
     snippet["change"]["inventory.go"] += "var x = strictRoundingMode\n"
@@ -205,6 +222,9 @@ def test_the_cli_writes_a_brief_and_checks_a_snippet(tmp_path):
     (snip / "case.json").write_text(json.dumps({**CLEAN, "name": "reconcile_ledger_entries"}))
     code, out = run_cli(tmp_path, "--check-synthetic", str(snip), "--source", str(src), "--against", str(brief))
     assert code == 0 and out["ok"] is False and out["problems"]
+    assert out["allow_hint"] == "--allow reconcile_ledger_entries"  # printed to paste, after reading, if the term is generic
+    code, out = run_cli(tmp_path, "--check-synthetic", str(snip), "--source", str(src), "--against", str(brief), "--allow", "reconcile_ledger_entries")
+    assert out["ok"] is True and out["allow_hint"] is None
 
 
 def test_the_cli_needs_its_companion_arguments(tmp_path):
