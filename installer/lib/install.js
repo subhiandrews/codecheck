@@ -100,6 +100,7 @@ export function install({ exec = realExec, env = process.env, log = () => {}, pr
   if (gen.status !== 0) log('warning: could not apply configured models to the agents; using defaults');
 
   let configRecord = null;
+  if (config && !block) log(`${paths.configFile} already has the requested settings; leaving it untouched`);
   if (block) {
     const created = writeConfig(block, paths);
     configRecord = { file: paths.configFile, created: created || previous?.config?.created === true };

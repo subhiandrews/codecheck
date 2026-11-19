@@ -7,7 +7,17 @@ export const BLOCK_START = '# >>> code-check installer >>>';
 export const BLOCK_END = '# <<< code-check installer <<<';
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 const OWN_BLOCK = new RegExp(`\\n?${BLOCK_START}[\\s\\S]*?${BLOCK_END}\\n?`, 'g');
-const TABLE = /^\s*\[\s*(shadow|telemetry)\s*[\].]/m;
+const header = (name) => new RegExp(`^[ \\t]*\\[[ \\t]*${name}[ \\t]*\\][ \\t]*(#.*)?$`, 'm');
+const SUBTABLE = /^[ \t]*\[[ \t]*(shadow|telemetry)[ \t]*\./m;
+
+// The lines of a table, up to the next table header; null when the table is not there.
+function tableBody(text, name) {
+  const m = header(name).exec(text);
+  if (!m) return null;
+  const rest = text.slice(m.index + m[0].length);
+  const next = /^[ \t]*\[/m.exec(rest);
+  return next ? rest.slice(0, next.index) : rest;
+}
 
 const toml = (s) => JSON.stringify(s); // a JSON string is a valid TOML basic string
 
@@ -69,7 +79,18 @@ const hasHeaderToken = (env) =>
 /** Validate before the install changes anything; returns the block text to write, or null. */
 export function planConfig(opts, paths, env) {
   if (!opts) return null;
-  const lines = [BLOCK_START, '[shadow]', 'handoff = true', ''];
+  const file = fs.existsSync(paths.configFile) ? stripBlock(fs.readFileSync(paths.configFile, 'utf8')) : '';
+  const shadow = tableBody(file, 'shadow');
+  const shadowDone = shadow !== null && /^[ \t]*handoff[ \t]*=[ \t]*true[ \t]*(#.*)?$/m.test(shadow);
+  if (SUBTABLE.test(file)) throw new Error(`${paths.configFile} has a [shadow.*] or [telemetry.*] table; edit it by hand instead`);
+  if (shadow !== null && !shadowDone) {
+    throw new Error(`${paths.configFile} has a [shadow] table without \`handoff = true\`: add that line to it, or remove the table (TOML cannot repeat a table)`);
+  }
+  if (opts.endpoint && tableBody(file, 'telemetry') !== null) {
+    throw new Error(`${paths.configFile} already has a [telemetry] table; edit it by hand instead (TOML cannot repeat a table)`);
+  }
+  const lines = [BLOCK_START];
+  if (!shadowDone) lines.push('[shadow]', 'handoff = true', '');
   if (opts.endpoint) {
     const local = checkEndpoint(opts.endpoint);
     const tokenFile = opts.tokenFile ? checkTokenFile(opts.tokenFile) : null;
@@ -81,11 +102,8 @@ export function planConfig(opts, paths, env) {
     if (opts.content) lines.push('content = true');
     lines.push('');
   }
+  if (lines.length === 1) return null; // everything asked for is already in the file
   lines.push(BLOCK_END, '');
-  const existing = fs.existsSync(paths.configFile) ? stripBlock(fs.readFileSync(paths.configFile, 'utf8')) : '';
-  if (TABLE.test(existing)) {
-    throw new Error(`${paths.configFile} already has a [shadow] or [telemetry] table; edit it by hand instead (TOML cannot repeat a table)`);
-  }
   return lines.join('\n');
 }
 

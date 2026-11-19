@@ -33,7 +33,7 @@ The hand-off spec's anti-goal "Nothing leaves the machine" holds **unless `telem
 
 - **A token is mandatory for a remote collector.** `resolve_target` refuses an endpoint whose host is not loopback unless the auth header (`telemetry.auth_header`, default `Authorization`) carries a non-empty credential; `Bearer` or `Basic` with nothing after it counts as empty. Loopback is exempt only so a local test collector works.
 - The token comes from `OTEL_EXPORTER_OTLP_(TRACES_)HEADERS` or `telemetry.token_file` (a regular file readable only by its owner, one non-empty line). The environment header wins. The token is never a config value, is not in `repr`, and is not in errors. `telemetry.*` stays rejected in a repository's `.code-check.toml`.
-- **The installer** (`install --shadow`, `--telemetry-endpoint`, `--telemetry-token-file`, `--telemetry-content`) validates everything first, then writes one marked block into `~/.config/code-check/config.toml`: `shadow.handoff = true` and the `[telemetry]` table, with the token file's path only. It refuses an existing `[shadow]`/`[telemetry]` table, records the block in the receipt, and uninstall removes it.
+- **The installer** (`install --shadow`, `--telemetry-endpoint`, `--telemetry-token-file`, `--telemetry-content`) validates everything first, then writes one marked block into `~/.config/code-check/config.toml`: `shadow.handoff = true` and the `[telemetry]` table, with the token file's path only. It keeps a `[shadow]` table that already has `handoff = true` and writes only what is missing; it refuses a `[shadow]` table without that line, a `[telemetry]` table and any sub-table, and never edits the user's own tables, records the block in the receipt, and uninstall removes it.
 
 ## Verified and not verified
 

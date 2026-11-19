@@ -84,12 +84,47 @@ test('token and content flags need an endpoint', () => {
   assert.throws(() => opts('--telemetry-endpoint'), /needs a value/);
 });
 
-test('an existing [shadow] or [telemetry] table is never duplicated or overwritten', () => {
-  const { env } = makeEnv();
+const seed = (env, text) => {
   fs.mkdirSync(path.dirname(cfgPath(env)), { recursive: true });
-  fs.writeFileSync(cfgPath(env), '[shadow]\nstore = "/x"\n');
-  assert.throws(() => install({ exec: fakeExec(), env, config: opts('--shadow') }), /already has a \[shadow\] or \[telemetry\] table/);
-  assert.equal(fs.readFileSync(cfgPath(env), 'utf8'), '[shadow]\nstore = "/x"\n');
+  fs.writeFileSync(cfgPath(env), text);
+};
+
+test('an existing [shadow] table that already has handoff = true is kept, and only [telemetry] is added', () => {
+  const { env } = makeEnv();
+  seed(env, '[shadow]\nenabled = true\nhandoff = true  # on\n');
+  install({ exec: fakeExec(), env, config: opts('--telemetry-endpoint', 'http://localhost:4318') });
+  const text = fs.readFileSync(cfgPath(env), 'utf8');
+  assert.equal(text.match(/\[shadow\]/g).length, 1);
+  assert.match(text, /\[telemetry\]\nenabled = true/);
+  uninstall({ exec: fakeExec(), env });
+  assert.equal(fs.readFileSync(cfgPath(env), 'utf8').trim(), '[shadow]\nenabled = true\nhandoff = true  # on');
+});
+
+test('--shadow on a file that already has handoff = true changes nothing', () => {
+  const { env } = makeEnv();
+  seed(env, '[shadow]\nhandoff = true\n');
+  const logs = [];
+  install({ exec: fakeExec(), env, config: opts('--shadow'), log: (m) => logs.push(m) });
+  assert.equal(fs.readFileSync(cfgPath(env), 'utf8'), '[shadow]\nhandoff = true\n');
+  assert.ok(logs.some((l) => l.includes('already has the requested settings')));
+});
+
+test('a [shadow] table without handoff = true is a conflict, and nothing is changed', () => {
+  const { env } = makeEnv();
+  for (const text of ['[shadow]\nstore = "/x"\n', '[shadow]\nhandoff = false\n']) {
+    seed(env, text);
+    assert.throws(() => install({ exec: fakeExec(), env, config: opts('--shadow') }), /\[shadow\] table without `handoff = true`/);
+    assert.equal(fs.readFileSync(cfgPath(env), 'utf8'), text);
+  }
+});
+
+test('an existing [telemetry] table or a sub-table is a conflict', () => {
+  const { env } = makeEnv();
+  seed(env, '[shadow]\nhandoff = true\n\n[telemetry]\nenabled = false\n');
+  assert.throws(() => install({ exec: fakeExec(), env, config: opts('--telemetry-endpoint', 'http://localhost:4318') }), /already has a \[telemetry\] table/);
+  seed(env, '[telemetry.extra]\nx = 1\n');
+  assert.throws(() => install({ exec: fakeExec(), env, config: opts('--shadow') }), /\[telemetry\.\*\]/);
+  assert.equal(fs.readFileSync(cfgPath(env), 'utf8'), '[telemetry.extra]\nx = 1\n');
 });
 
 test('re-install replaces the block, and uninstall removes only the block', () => {
