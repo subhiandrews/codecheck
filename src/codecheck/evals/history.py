@@ -21,6 +21,7 @@ MODES = ("live", "calibrate")
 CHART_RUNS = 30  # the chart shows the latest runs of a mode, the table the latest TABLE_RUNS
 TABLE_RUNS = 15
 WINDOW = 3  # trailing runs in the rolling average
+Y_MAX = 110  # headroom above 100%, so a perfect run is not drawn along the chart's top border
 LIVE_MODELS = ("aggregator", "language_experts", "reviewers", "deep", "security", "performance")
 TITLES = {"live": "Live eval: snippets passed", "calibrate": "Judge calibration: agreement with the human labels"}
 
@@ -166,11 +167,20 @@ def _section(mode: str, entries: list[dict]) -> list[str]:
     numbered = list(enumerate(full, start=1))
     shown = numbered[-CHART_RUNS:]
     scores = [_score(e) for _, e in shown]
-    out += ["```mermaid", "xychart-beta", f'    title "{TITLES[mode]} (%), rolling average of {WINDOW} runs"',
-            f"    x-axis [{', '.join(str(n) for n, _ in shown)}]", '    y-axis "percent" 0 --> 100',
-            f"    line [{', '.join(f'{s:.0f}' for s in scores)}]",
-            f"    line [{', '.join(f'{s:.0f}' for s in _rolling(scores))}]", "```", "",
-            "| # | date | commit | branch | score | outcome | models | cost |", "|---|---|---|---|---|---|---|---|"]
+    if len(shown) < 2:  # a line needs two points to draw anything
+        out += ["The chart appears once there are two runs.", ""]
+    else:
+        runs = [f"{s:.0f}" for s in scores]
+        rolling = [f"{s:.0f}" for s in _rolling(scores)]
+        same = rolling == runs  # a second line on top of the first would only hide it
+        title = f"{TITLES[mode]} (%)" + ("" if same else f", rolling average of {WINDOW} runs")
+        out += ["```mermaid", "xychart-beta", f'    title "{title}"',
+                f"    x-axis [{', '.join(str(n) for n, _ in shown)}]", f'    y-axis "percent" 0 --> {Y_MAX}',
+                f"    line [{', '.join(runs)}]"]
+        if not same:
+            out.append(f"    line [{', '.join(rolling)}]")
+        out += ["```", ""]
+    out += ["| # | date | commit | branch | score | outcome | models | cost |", "|---|---|---|---|---|---|---|---|"]
     out += [_row(n, e) for n, e in reversed(numbered[-TABLE_RUNS:])]
     return [*out, ""]
 
@@ -181,7 +191,8 @@ def render(entries: list[dict], bad: int = 0) -> str:
              "`eval --live` or `eval --calibrate` run appends one line to that file and rewrites this one, and the",
              "developer commits both. Runs limited with `--only` are kept in the file but left out here. Live",
              "results vary from run to run, so read the rolling line (the second one) and not a single point, and",
-             "check the models column before putting a change down to a prompt. The judge score measures the judge",
+             "check the models column before putting a change down to a prompt. The rolling line is left out while",
+             "it would sit exactly on the run line, and a chart needs two runs. The judge score measures the judge",
              "against the human labels, not the reviewers: it moves when the judge or the labels change.", ""]
     for mode in MODES:
         lines += _section(mode, entries)

@@ -93,7 +93,10 @@ def test_recording_appends_a_line_and_rebuilds_the_report(docs):
     assert first["dirty"] is False and lines[1]["dirty"] is True  # the first line itself made the tree dirty
     assert first["partial"] is None and first["models"]["reviewers"] == "sonnet" and "judge" not in first["models"]
     assert lines[1]["models"] == {"judge": "opus"}
-    assert (docs / REPORT).read_text().count("```mermaid") == 2
+    report = (docs / REPORT).read_text()
+    assert report.count("| 1 | ") == 2  # one table row per mode; a single run draws no chart yet
+    record(_ctx(), "live", LIVE, None, docs)
+    assert (docs / REPORT).read_text().count("```mermaid") == 1  # the second live run is enough for a chart
 
 
 def test_nothing_is_recorded_without_a_docs_directory_or_a_measurement(tmp_path, docs):
@@ -152,9 +155,32 @@ def test_report_table_lists_the_newest_run_first_with_its_context():
 
 
 def test_partial_runs_stay_in_the_record_but_out_of_the_report():
-    entries = [_entry("live", "2026-11-01T00:00:00+00:00"), _entry("live", "2026-11-02T00:00:00+00:00", partial="tiny-bug")]
+    entries = [_entry("live", "2026-11-01T00:00:00+00:00"), _entry("live", "2026-11-02T00:00:00+00:00"),
+               _entry("live", "2026-11-03T00:00:00+00:00", partial="tiny-bug")]
     text = render(entries)
-    assert "x-axis [1]" in text and "2026-11-02" not in text
+    assert "x-axis [1, 2]" in text and "2026-11-03" not in text
+
+
+def test_the_y_axis_leaves_room_above_a_perfect_score():
+    entries = [_entry("live", f"2026-11-0{i}T00:00:00+00:00", cases={"n": 4, "passed": p, "failed": []})
+               for i, p in ((1, 4), (2, 2))]
+    assert f'y-axis "percent" 0 --> {history.Y_MAX}' in render(entries) and history.Y_MAX > 100
+
+
+def test_a_single_run_gets_a_table_but_no_chart():
+    text = render([_entry("live", "2026-11-01T00:00:00+00:00")])
+    live = text.split("## Judge calibration")[0]
+    assert "xychart-beta" not in live and "The chart appears once there are two runs." in live
+    assert "| 1 | 2026-11-01 |" in live  # the run is still listed
+
+
+def test_the_rolling_line_is_left_out_while_it_equals_the_run_line():
+    same = [_entry("live", f"2026-11-0{i}T00:00:00+00:00", cases={"n": 4, "passed": 4, "failed": []}) for i in (1, 2)]
+    text = render(same)
+    assert text.count("    line [") == 1 and "line [100, 100]" in text and "rolling average" not in text.split("```")[1]
+    differ = [_entry("live", f"2026-11-0{i}T00:00:00+00:00", cases={"n": 4, "passed": p, "failed": []})
+              for i, p in ((1, 4), (2, 2))]
+    assert render(differ).count("    line [") == 2 and "rolling average of 3 runs" in render(differ)
 
 
 def test_the_chart_and_table_keep_the_run_numbers_when_cut_to_the_latest_runs():
