@@ -281,19 +281,21 @@ def _codex_keep(entry: dict) -> bool:
     return kind == "event_msg" and payload.get("type") in _CODEX_EVENTS
 
 
-def _codex_window_start(entries: list[dict], started: float) -> datetime:
-    """Where the review's turn begins: the last turn started before the run, else a minute before it."""
+def _codex_window(entries: list[dict], started: float) -> tuple[datetime, datetime | None]:
+    """Bound the review by surrounding turn starts, with a one-minute lookback if there is no start."""
     run_start = datetime.fromtimestamp(started, UTC)
     turns = [t for e in entries
-             if isinstance(e.get("payload"), dict) and e["payload"].get("type") == "task_started"
-             and (t := _entry_time(e)) is not None and t <= run_start]
-    return max(turns) if turns else run_start - timedelta(seconds=60)
+             if e.get("type") == "event_msg" and isinstance(e.get("payload"), dict)
+             and e["payload"].get("type") == "task_started" and (t := _entry_time(e)) is not None]
+    start = max((t for t in turns if t <= run_start), default=run_start - timedelta(seconds=60))
+    end = min((t for t in turns if t > run_start), default=None)
+    return start, end
 
 
 def copy_codex_scrubbed(path: Path, dest: Path, *, started: float) -> list[str]:
-    """Copy the part of a Codex session that belongs to this review: from the turn that began it onward.
+    """Copy the turn that began this review from its Codex session.
 
-    Earlier turns of the same session can be about unrelated work, so they are not copied. Reasoning, token counts
+    Earlier and later turns can contain unrelated work. Reasoning, token counts
     and account ids are dropped, and every string is scrubbed before it is serialised so that a credential inside
     embedded JSON is seen unescaped."""
     entries = []
@@ -308,12 +310,12 @@ def copy_codex_scrubbed(path: Path, dest: Path, *, started: float) -> list[str]:
                     entries.append(entry)
     except OSError:
         return []
-    start = _codex_window_start(entries, started)
+    start, end = _codex_window(entries, started)
     kept = []
     for entry in entries:
         if entry.get("type") != "session_meta":
             when = _entry_time(entry)
-            if when is None or when < start:
+            if when is None or when < start or (end is not None and when >= end):
                 continue
         elif isinstance(entry.get("payload"), dict):
             for key in _CODEX_IDENTITY:

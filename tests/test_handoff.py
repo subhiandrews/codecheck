@@ -702,7 +702,7 @@ def _codex_setup(tmp_path):
     return ctx, out, day, _started(ctx, out)
 
 
-def test_handoff_copies_the_codex_review_turn_and_nothing_earlier(tmp_path):
+def test_handoff_copies_only_the_codex_review_turn(tmp_path):
     ctx, out, day, t0 = _codex_setup(tmp_path)
     run_id = out["run_id"]
     secret = "ghp_" + "Z9" * 20
@@ -717,6 +717,9 @@ def test_handoff_copies_the_codex_review_turn_and_nothing_earlier(tmp_path):
                                               "output": f'{{"run_id": "{run_id}"}} {secret} {embedded}'}),
         _codex_line("response_item", t0 + 2, {"type": "reasoning", "encrypted_content": "BLOB"}),
         _codex_line("event_msg", t0 + 3, {"type": "token_count", "info": 1}),
+        _codex_line("event_msg", t0 + 4, {"type": "task_complete", "last_agent_message": "REVIEW COMPLETE"}),
+        _codex_line("event_msg", t0 + 5, {"type": "task_started", "turn_id": "LATER TURN"}),
+        _codex_line("response_item", t0 + 6, {"type": "message", "content": "UNRELATED FOLLOW-UP"}),
     ]) + "\n")
     # a later session that only quotes the run id must not be chosen even though it is newer
     (day / "rollout-b.jsonl").write_text(
@@ -729,6 +732,8 @@ def test_handoff_copies_the_codex_review_turn_and_nothing_earlier(tmp_path):
     entries = [json.loads(line) for line in copied.splitlines()]  # every kept line is still valid JSON
     assert run_id in copied and secret not in copied and "hunter2xyz" not in copied and "kept" in copied
     assert "UNRELATED PRIVATE TASK" not in copied
+    assert "REVIEW COMPLETE" in copied
+    assert "LATER TURN" not in copied and "UNRELATED FOLLOW-UP" not in copied
     assert "SECRETID" not in copied and "ACCOUNTID" not in copied and "BLOB" not in copied and "token_count" not in copied
     assert entries[0]["type"] == "session_meta"
 
