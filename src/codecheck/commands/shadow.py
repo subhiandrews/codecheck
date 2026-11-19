@@ -73,15 +73,25 @@ def _path(ctx, value: str) -> Path:
     return path if path.is_absolute() else ctx.cwd / path
 
 
-def _recorded_license(ctx, draft: Path) -> str | None:
-    """The license the run recorded for this draft, when the shadow store still has the run."""
+def _recorded_license(ctx, draft: Path, *, allow_license: bool) -> str | None:
+    """The license the run recorded for this draft ("" when it recorded none).
+
+    A draft whose run cannot be read back is refused, because its own `repo_license` could have been edited;
+    `--allow-license` is the explicit way past that."""
     try:
         run_id = json.loads(draft.read_text(encoding="utf-8")).get("run_id")
-        run = next((r for r in ctx.shadow.read(check_run_id(run_id)) if r.get("type") == "run"), {}) if ctx.shadow else {}
+        records = ctx.shadow.read(check_run_id(run_id)) if ctx.shadow else []
+        run = next((r for r in records if r.get("type") == "run"), None)
     except (OSError, ValueError, AttributeError, CodeCheckError):
-        return None
+        run = None
+    if run is None:
+        if allow_license:
+            return None
+        raise CodeCheckError(f"draft {draft.name}: the run it came from is not in the shadow store, so its repo_license "
+                             "cannot be checked; regenerate the draft, or pass --allow-license if you have the right "
+                             "to publish this diff")
     lic = run.get("repo_license")
-    return lic if isinstance(lic, str) and lic else None
+    return lic if isinstance(lic, str) else ""
 
 
 def _promote(args, ctx) -> dict:
@@ -92,8 +102,10 @@ def _promote(args, ctx) -> dict:
             dest = DEFAULT_CASES
         else:  # an installed package has no tests/golden; never invent one inside site-packages
             raise CodeCheckError("no tests/golden directory next to this install; pass --dest")
-        case = finalize_case(_path(ctx, args.finalize), dest, recorded_license=_recorded_license(ctx, _path(ctx, args.finalize)), allow_private=args.allow_private, force=args.force,
-                             allowed_licenses=ctx.config.golden.licenses, allow_license=args.allow_license)
+        draft = _path(ctx, args.finalize)
+        case = finalize_case(draft, dest, allow_private=args.allow_private, force=args.force,
+                             allowed_licenses=ctx.config.golden.licenses, allow_license=args.allow_license,
+                             recorded_license=_recorded_license(ctx, draft, allow_license=args.allow_license))
         return {"case": str(case), "case_id": json.loads(case.read_text(encoding="utf-8"))["case_id"]}
     if not args.out:
         raise CodeCheckError("promote --run needs --out <draft path>")

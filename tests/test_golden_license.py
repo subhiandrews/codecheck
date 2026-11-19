@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from fakes import FakeRunner
-from test_promote import labelled, review_run, write
+from test_promote import call, labelled, review_run, write
 
 from codecheck.cli import build_parser
 from codecheck.config import DEFAULT_LICENSES, GoldenConfig, load_config
@@ -160,3 +160,49 @@ def test_a_bare_string_for_licenses_is_a_config_error(tmp_path):
 def test_committed_case_files_are_valid_json_objects():
     for path in sorted(DEFAULT_CASES.glob("*.json")):
         assert isinstance(json.loads(path.read_text(encoding="utf-8")), dict), path.name
+
+
+# -- the CLI reads the recorded license back -------------------------------------------------------------------
+
+
+def cli_finalize(ctx, tmp_path, draft, *extra):
+    return call(ctx, "shadow", "promote", "--finalize", str(draft), "--dest", str(tmp_path / "golden"), *extra)
+
+
+def test_cli_refuses_a_draft_whose_license_was_edited_away_from_the_runs(tmp_path):
+    ctx, _pr, out, _ids = review_run(tmp_path)
+    case = labelled(draft_case(ctx.shadow, out["run_id"]))
+    draft = write(tmp_path / "draft.json", {**case, "repo_license": "isc"})  # allowed, but not what the run recorded
+    code, res = cli_finalize(ctx, tmp_path, draft)
+    assert code != 0 and "differs from the license recorded" in res["error"], res
+    assert cli_finalize(ctx, tmp_path, write(tmp_path / "ok.json", case))[0] == 0
+
+
+def test_cli_treats_a_recorded_unknown_license_as_authoritative(tmp_path):
+    ctx, _pr, out, _ids = review_run(tmp_path, license=None)
+    case = labelled(draft_case(ctx.shadow, out["run_id"]))
+    draft = write(tmp_path / "draft.json", {**case, "repo_license": "mit"})
+    code, res = cli_finalize(ctx, tmp_path, draft)
+    assert code != 0 and "differs from the license recorded" in res["error"], res
+
+
+@pytest.mark.parametrize("edit", [{"run_id": None}, {"run_id": "not-a-run"}, {"run_id": "0123456789ab"}])
+def test_cli_refuses_a_draft_whose_run_cannot_be_read_back_unless_allowed(tmp_path, edit):
+    ctx, _pr, out, _ids = review_run(tmp_path)
+    case = labelled(draft_case(ctx.shadow, out["run_id"]))
+    draft = write(tmp_path / "draft.json", {**case, **edit})
+    code, res = cli_finalize(ctx, tmp_path, draft)
+    assert code != 0 and "--allow-license" in res["error"], res
+    assert cli_finalize(ctx, tmp_path, draft, "--allow-license")[0] == 0
+
+
+def test_a_finalized_case_does_not_carry_the_local_run_id(tmp_path):
+    draft = draft_with(tmp_path, "mit")
+    assert "run_id" in json.loads(draft.read_text())
+    assert "run_id" not in json.loads(finalize_case(draft, tmp_path / "golden", allow_private=False).read_text())
+
+
+def test_an_empty_entry_in_the_allow_list_does_not_allow_an_unknown_license(tmp_path):
+    draft = draft_with(tmp_path, "")
+    with pytest.raises(CodeCheckError, match="license"):
+        finalize_case(draft, tmp_path / "golden", allow_private=False, allowed_licenses=("", "mit"))

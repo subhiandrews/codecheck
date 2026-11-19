@@ -112,7 +112,7 @@ def _file_name(case: dict) -> str:
 def license_problem(case: dict, allowed: Collection[str]) -> str | None:
     """Why this case's repository license does not allow putting its diff in the public golden set, or None."""
     lic = case.get("repo_license")
-    ok = {str(x).strip().lower() for x in allowed}
+    ok = {s for s in (str(x).strip().lower() for x in allowed) if s}
     if isinstance(lic, str) and lic.strip().lower() in ok:
         return None
     shown = f"license {lic!r}" if isinstance(lic, str) and lic else "no known license"
@@ -125,6 +125,7 @@ def finalize_case(path: Path, dest_dir: Path, *, allow_private: bool, force: boo
                   recorded_license: str | None = None) -> Path:
     """Check a confirmed draft and write it, scrubbed, as `dest_dir/<repo>-<pr>-<sha8>.json`.
 
+    `recorded_license` is the license the run recorded ("" when it recorded none); None skips that comparison.
     An existing case with different content is only replaced with `force`; identical content is left alone."""
     path, dest_dir = Path(path), Path(dest_dir)
     try:
@@ -141,7 +142,7 @@ def finalize_case(path: Path, dest_dir: Path, *, allow_private: bool, force: boo
     if case["repo_private"] is not False and not allow_private:
         reason = "private" if case["repo_private"] else "possibly private (visibility unknown)"
         raise CodeCheckError(f"draft {path.name}: the repository is {reason}; pass --allow-private to promote it anyway")
-    if recorded_license is not None and str(case.get("repo_license")).lower() != recorded_license.lower():
+    if recorded_license is not None and str(case.get("repo_license") or "").lower() != recorded_license.lower():
         raise CodeCheckError(f"draft {path.name}: repo_license {case.get('repo_license')!r} differs from the license recorded "
                              f"for the run ({recorded_license!r}); regenerate the draft instead of editing it")
     if not allow_license:
@@ -151,6 +152,7 @@ def finalize_case(path: Path, dest_dir: Path, *, allow_private: bool, force: boo
     problems = check_case(case)
     if problems:
         raise CodeCheckError(f"draft {path.name} does not replay: " + "; ".join(problems[:5]))
+    case.pop("run_id", None)  # a local shadow run id means nothing in the public golden set
     if dest_dir.is_symlink():
         raise CodeCheckError(f"refusing to write through symlink {dest_dir}")
     dest_dir.mkdir(parents=True, exist_ok=True)

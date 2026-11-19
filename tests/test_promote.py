@@ -34,10 +34,11 @@ def human(tid, line, body):
     return Thread(tid, "app.py", line, False, False, (ThreadComment(1, "bob", body, "2026-01-02T00:00:00Z"),))
 
 
-def review_run(tmp_path, *, handoff=True, private=False, aggregated=None, threads=None):
+def review_run(tmp_path, *, handoff=True, private=False, aggregated=None, threads=None, license="mit"):
     """A posted PR review made through the real commands, with the PR's threads collected by `handoff`."""
     ctx, provider, pr = pr_setup(tmp_path)
     provider.private = private
+    provider.license = license
     if handoff:
         ctx.config = replace(ctx.config, shadow=replace(ctx.config.shadow, handoff=True))
         ctx.env = {"CLAUDE_CONFIG_DIR": str(tmp_path / "claude")}
