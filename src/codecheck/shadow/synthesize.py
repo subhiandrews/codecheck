@@ -21,6 +21,10 @@ MIN_IDENTIFIER = 12  # a plain word this long, in code, is distinctive enough to
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _CAMEL = re.compile(r"[a-z][A-Z]|[A-Z]{2,}[a-z]")
 _BACKTICKED = re.compile(r"`([^`\n]+)`")
+_TOKEN = re.compile(r"[A-Za-z0-9_]+")
+_SUBWORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
+_NAME_TERM = re.compile(r"[a-z0-9_]+")
+MAX_RUN = 64  # a run of sub-words longer than this is not an identifier worth matching (and bounds the work on a blob)
 _PATH = re.compile(r"[\w.-]+(?:/[\w.-]+)+")
 _HOST = re.compile(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 _HOST_TLDS = {"com", "org", "net", "io", "dev", "internal", "local", "corp", "example", "test", "lan", "intranet"}
@@ -48,6 +52,10 @@ def build_brief(case: Mapping) -> dict:
     labelled = _labelled(case)
     if not labelled:
         raise CodeCheckError("the case has no labelled findings (expected or not_expected): nothing to learn from")
+    terms = leak_terms(case)
+    if any(found_terms(terms, str(lab.get("category") or "")) for lab in labelled):  # category is free reviewer text
+        raise CodeCheckError("a labelled finding's category contains a name from the source; rename the category in "
+                             "the case to a general one (bug, security, ...) before making a brief")
     return {
         "version": BRIEF_VERSION, "kind": "synthetic-brief",
         "language": _language([str(lab.get("file") or "") for lab in labelled]),
@@ -123,16 +131,40 @@ def leak_terms(case: Mapping) -> set[str]:
     return {t for t in terms if len(t) >= 4}
 
 
+def _runs(text: str) -> set[str]:
+    """Every run of consecutive sub-words of each identifier in the text, lowercased and joined: `AcmeInvoiceRouter` and
+    `acme_invoice_router` both give `acme`, `acmeinvoice`, `acmeinvoicerouter`, `invoicerouter`, ..."""
+    out: set[str] = set()
+    for token in _TOKEN.findall(text):
+        words = [w.lower() for w in _SUBWORD.findall(token)]
+        for i in range(len(words)):
+            run = ""
+            for word in words[i:]:
+                run += word
+                if len(run) > MAX_RUN:
+                    break
+                out.add(run)
+    return out
+
+
+def found_terms(terms: Collection[str], text: str) -> list[str]:
+    """The terms that appear in the text. A name matches whatever its case style (`reconcile_ledger_entries` finds
+    `reconcileLedgerEntries`) and only on identifier boundaries (`core` is not in `score`, but is in `CoreClient`); a
+    path or host name matches as a plain substring."""
+    lowered, runs = text.lower(), _runs(text)
+    return sorted(t for t in terms if (t.replace("_", "") in runs if _NAME_TERM.fullmatch(t) else t in lowered))
+
+
 def _long_lines(texts: list[str]) -> set[str]:
     return {n for t in texts for line in t.splitlines() if len(n := _normal(line)) >= MIN_LINE}
 
 
 def _body(snippet: Mapping) -> tuple[str, list[str]]:
-    """The text a leak could be in (name, paths, file contents), lowercased, and the file contents alone. Base and
-    change are kept apart in the second: a change that rewrites a base file must not hide what the base held."""
+    """The text a leak could be in (every string in the snippet, and the file paths), and the file contents alone. Base
+    and change are kept apart in the second: a change that rewrites a base file must not hide what the base held."""
     contents = [*snippet.get("base", {}).values(), *snippet.get("change", {}).values()]
     paths = [*snippet.get("base", {}), *snippet.get("change", {})]
-    return "\n".join([str(snippet.get("name", "")), *paths, *contents]).lower(), contents
+    return "\n".join([*_strings(snippet), *paths]), contents
 
 
 def _allowed(allow: Collection[str], brief: Mapping | None) -> set[str]:
@@ -141,9 +173,12 @@ def _allowed(allow: Collection[str], brief: Mapping | None) -> set[str]:
 
 
 def shared_terms(snippet: Mapping, source: Mapping, *, brief: Mapping | None = None, allow: Collection[str] = ()) -> list[str]:
-    """The source's distinctive terms the snippet shares, minus the ones a person allowed (here or in the brief)."""
-    lowered, _ = _body(snippet)
-    return sorted(t for t in leak_terms(source) - _allowed(allow, brief) if t in lowered)
+    """The source's distinctive terms the snippet shares, minus the ones a person allowed (here or in the brief).
+    A snippet the schema refuses shares nothing here: `check_synthetic` reports its schema problems instead."""
+    if snippet_problems(dict(snippet)):
+        return []
+    text, _ = _body(snippet)
+    return found_terms(leak_terms(source) - _allowed(allow, brief), text)
 
 
 def check_synthetic(snippet: Mapping, source: Mapping, *, brief: Mapping | None = None, allow: Collection[str] = ()) -> list[str]:

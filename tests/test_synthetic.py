@@ -19,6 +19,7 @@ SOURCE = {
         "diff --git a/internal/billing/ledger_reconciler.go b/internal/billing/ledger_reconciler.go\n"
         "+func reconcile_ledger_entries(AcmeInvoiceRouter *Router) error {\n"
         "+    entry := ledgerIndex[key]\n"
+        "+    if len(parts) > 0 && parts[0] == \"\" {\n"
         "+    return postTo(\"ledger.acme-internal.example.com\", entry.Amount, strictRoundingMode(entry))\n"
     ),
     "reviewer_outputs": {"skeptic": [{"message": "entry may be nil when the key is absent; see `settlementWindow` and synchronization"}]},
@@ -111,8 +112,8 @@ def test_attribute_chains_and_prose_slashes_are_not_hosts_or_paths():
     case = {"diff": "+x = os.path.join(a, b)\n+cfg.dev = 1\n+np.io.read()\n", "reviewer_outputs": {"r": ["read/write and try/except"]},
             "labels": [], "repo": "o/r"}
     assert leak_terms(case) == set()
-    assert "build.example.com" in leak_terms({**case, "diff": "+url = 'https://build.example.com/x'\n"})
-    assert "example.org" in leak_terms({**case, "diff": "+u = 'example.org'\n"})
+    assert {"build.example.com"} <= leak_terms({**case, "diff": "+url = 'https://build.example.com/x'\n"})
+    assert {"example.org"} <= leak_terms({**case, "diff": "+u = 'example.org'\n"})
 
 
 @pytest.mark.parametrize("where,mutate", [
@@ -123,13 +124,37 @@ def test_attribute_chains_and_prose_slashes_are_not_hosts_or_paths():
     ("the name", lambda s: s.update(name="strictRoundingMode-case")),
     ("the project name", lambda s: s["change"].update({"inventory.go": "// the payments service\n"})),
     ("a name only a label message used", lambda s: s["change"].update({"inventory.go": "var vaultCheckpoint int\n"})),
-    ("a copied line", lambda s: s["base"].update({"x.go": "    return postTo(\"ledger.acme-internal.example.com\", entry.Amount)\n"})),
+    ("a case-style rename", lambda s: s["change"].update({"inventory.go": "func reconcileLedgerEntries() {}\n"})),
+    ("a snake_case rename", lambda s: s["change"].update({"inventory.go": "func acme_invoice_router() {}\n"})),
+    ("the project name inside an identifier", lambda s: s["change"].update({"inventory.go": "type PaymentsClient struct{}\n"})),
+    ("a name only in the expectations", lambda s: s["expected"][0].update({"note": "see vaultCheckpoint"})),
+    ("a name only in must_not_report", lambda s: s["must_not_report"][0].update({"why": "strictRoundingMode"})),
+    ("a name in an extra key", lambda s: s.update(description="reconciles ledger.acme-internal.example.com")),
 ])
 def test_the_snippet_may_not_share_what_is_distinctive_with_the_source(where, mutate):
     snippet = clone()
     mutate(snippet)
     found = problems(snippet)
-    assert any("shares" in p or "copies" in p for p in found), (where, found)
+    assert any("shares" in p for p in found), (where, found)
+
+
+def test_a_line_copied_from_the_source_is_found_without_any_distinctive_term_in_it():
+    snippet = clone()
+    snippet["base"]["x.go"] = "func f() {\n        if len(parts)   > 0 && parts[0] == \"\" {\n}\n"
+    found = problems(snippet)
+    assert any("copies a line" in p for p in found) and not any("shares" in p for p in found), found
+
+
+def test_a_term_matches_on_identifier_boundaries_not_inside_another_word():
+    snippet = clone()
+    snippet["change"]["inventory.go"] += "// the paymentsish score and a decode of the payments_per_page\n"
+    assert [p for p in problems(snippet) if "shares" in p] == ["shares 'payments' with the source (use another name, or allow it if it is a generic API name)"]
+    source = {**SOURCE, "repo": "acme/core"}  # `core` is a repository name, and `score` is an ordinary word
+    ordinary = clone()
+    ordinary["change"]["inventory.go"] += "var score = decode(barcode)\n"
+    assert check_synthetic(ordinary, source, brief=BRIEF) == []
+    ordinary["change"]["inventory.go"] += "type CoreClient struct{}\n"
+    assert any("'core'" in p for p in check_synthetic(ordinary, source, brief=BRIEF))
 
 
 def test_a_change_that_rewrites_a_base_file_cannot_hide_what_the_base_held():
@@ -171,7 +196,7 @@ def test_allow_clears_a_term_a_person_decided_is_generic():
 
 
 def test_the_snippet_must_expect_what_the_brief_expects():
-    assert any("expected" in p for p in problems({**CLEAN, "expected": []}))
+    assert "the brief expects 1 expected finding(s); the snippet has 0" in problems({**CLEAN, "expected": []})
     # severity is advisory: a standalone snippet can deserve a different one than the original's context gave
     assert problems({**CLEAN, "expected": [{**CLEAN["expected"][0], "severity": "critical"}]}) == []
     assert any("must_not_report" in p for p in problems({**CLEAN, "must_not_report": []}))
@@ -227,9 +252,10 @@ def test_the_cli_writes_a_brief_and_checks_a_snippet(tmp_path):
     (snip / "case.json").write_text(json.dumps({**CLEAN, "name": "reconcile_ledger_entries"}))
     code, out = run_cli(tmp_path, "--check-synthetic", str(snip), "--source", str(src), "--against", str(brief))
     assert code == 0 and out["ok"] is False and out["problems"]
-    assert out["allow_hint"] == "--allow reconcile_ledger_entries"  # printed to paste, after reading, if the term is generic
+    assert "allow_hint" not in out  # a ready-to-paste --allow would make the easy step the one that defeats the check
+    assert "do not pass this output to the model" in out["next"]
     code, out = run_cli(tmp_path, "--check-synthetic", str(snip), "--source", str(src), "--against", str(brief), "--allow", "reconcile_ledger_entries")
-    assert out["ok"] is True and out["allow_hint"] is None
+    assert out["ok"] is True and out["next"].startswith("read it")
 
 
 def test_the_cli_needs_its_companion_arguments(tmp_path):
@@ -246,3 +272,30 @@ def test_a_flag_for_another_mode_is_an_error_not_silently_ignored(tmp_path):
     assert code == 1 and "--source" in out["error"] and "does not apply" in out["error"]
     code, out = run_cli(tmp_path, "--check-synthetic", str(tmp_path), "--source", str(src), "--out", str(tmp_path / "b.json"))
     assert code == 1 and "--out" in out["error"]
+
+
+def test_a_malformed_snippet_gets_its_schema_problems_not_a_crash(tmp_path):
+    src = tmp_path / "source.json"
+    src.write_text(json.dumps(SOURCE))
+    snip = tmp_path / "snip"
+    snip.mkdir()
+    for bad in ({**CLEAN, "base": [1]}, {**CLEAN, "change": None}, {**CLEAN, "base": {"inventory.go": 7}}):
+        (snip / "case.json").write_text(json.dumps(bad))
+        code, out = run_cli(tmp_path, "--check-synthetic", str(snip), "--source", str(src))
+        assert code == 0 and out["ok"] is False and out["problems"], bad
+        assert not any(p.startswith("shares") for p in out["problems"])
+
+
+def test_a_brief_will_not_overwrite_the_case_it_is_built_from(tmp_path):
+    src = tmp_path / "source.json"
+    src.write_text(json.dumps(SOURCE))
+    for out_path in (str(src), str(tmp_path / "." / "source.json")):
+        code, out = run_cli(tmp_path, "--brief", str(src), "--out", out_path)
+        assert code == 1 and "overwrite" in out["error"], out
+    assert json.loads(src.read_text()) == SOURCE
+
+
+def test_a_category_that_names_the_source_is_refused_in_the_brief():
+    labels = [{**SOURCE["labels"][0], "category": "ledger_reconciler-bug"}, *SOURCE["labels"][1:]]
+    with pytest.raises(CodeCheckError, match="category"):
+        build_brief({**SOURCE, "labels": labels})
