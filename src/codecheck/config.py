@@ -72,6 +72,7 @@ class CodexReasoningConfig(ModelsConfig):
 class CodexConfig:
     max_parallel: int = 4
     timeout_seconds: int = 300
+    allow_unmeasured_platform: bool = False
 
 
 @dataclass(frozen=True, slots=True)

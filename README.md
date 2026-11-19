@@ -223,7 +223,7 @@ After changing `[models]`, re-run the installer (`node installer/cli.js install`
 
 For a Codex review, run `code-check panel run --run <run_id>` after `context`. The CLI starts read-only reviewers and the aggregator, validates their JSON, and runs `ingest` before aggregation. Check `failed_members` in the result. If the aggregator failed, stop before `post` and clean up the run. Other failed members make the review incomplete.
 
-`[codex_models]` and `[codex_reasoning]` use the same keys as `[models]`, including `per_language`. The defaults are GPT-6.2 Astra at high effort for aggregation, security and judging, GPT-6.2 Sol at medium effort for general, deep and performance review, and GPT-6 Luna at high effort for the language experts. Codex model values cannot start with `-`. `codex.max_parallel` defaults to 4 concurrent reviewers and `codex.timeout_seconds` to 300 seconds per process. Codex picks up these settings at run time.
+`[codex_models]` and `[codex_reasoning]` use the same keys as `[models]`, including `per_language`. The defaults are GPT-6.2 Astra at high effort for aggregation, security and judging, GPT-6.2 Sol at medium effort for general, deep and performance review, and GPT-6 Luna at high effort for the language experts. Codex model values cannot start with `-`. `codex.max_parallel` defaults to 4 concurrent reviewers and `codex.timeout_seconds` to 300 seconds per process. Codex picks up these settings at run time. `codex.allow_unmeasured_platform` defaults to false and lets users explicitly opt in outside macOS.
 
 Regenerate the Codex skill templates from a checkout with `code-check gen-skills --out codex/skills`. Automatic queues via `loop` and `run-pr` use Claude Code.
 

@@ -3,6 +3,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from sys import platform
 from tempfile import TemporaryDirectory
 
 from codecheck.agentgen import render_codex_prompt
@@ -44,6 +45,8 @@ def _job(cfg, member, index, files, root, run_dir, scratch) -> Job:
         "codex", "exec", "-s", "read-only", "-C", str(root), "--ephemeral",
         "--ignore-user-config", "--disable", "hooks", f"--model={model}", "-c",
         'approval_policy="never"', "-c", f'model_reasoning_effort="{effort}"',
+        "-c", 'shell_environment_policy.inherit="core"',
+        "-c", 'shell_environment_policy.include_only=["HOME","PATH","TMPDIR"]',
         "--output-schema", str(scratch / f"{label}-schema.json"),
         "--output-last-message", str(capture), "--json", "--", prompt,
     ]
@@ -78,6 +81,11 @@ def _finding_path(run_dir, name):
 
 def run(args, ctx) -> dict:
     validate_codex(ctx.config)
+    if platform != "darwin" and ctx.config.codex.allow_unmeasured_platform is not True:
+        raise CodeCheckError(
+            f"Codex reviewer isolation was measured only on macOS, not {platform}. "
+            "To opt in on an unmeasured platform, set codex.allow_unmeasured_platform = true in user config."
+        )
     run_dir = ctx.run_dir(args.run).resolve()
     meta = load_meta(ctx, args.run)
     root = Path(meta["root"])

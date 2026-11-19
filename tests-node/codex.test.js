@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { runDoctor } from '../installer/lib/doctor.js';
+import { formatDoctor, runDoctor } from '../installer/lib/doctor.js';
 import { install } from '../installer/lib/install.js';
 import { uninstall } from '../installer/lib/uninstall.js';
 import { fakeExec, makeEnv } from './helpers.js';
@@ -37,6 +37,15 @@ test('Codex doctor checks version and login, with no Claude invocation', () => {
     if (options.installed !== false) assert.match(checks.codex.detail, /0\.170\.0/);
     assert.equal(checks['codex login'].ok, result.ok);
   }
+});
+
+test('doctor warns only for the Codex target on an unmeasured platform', () => {
+  const { exec } = fixture();
+  const unmeasured = runDoctor({ exec, target: 'codex', platform: 'linux' });
+  assert.ok(unmeasured.ok);
+  assert.match(formatDoctor(unmeasured), /\[warn\] codex platform: .*macOS/);
+  assert.doesNotMatch(formatDoctor(runDoctor({ exec, target: 'codex', platform: 'darwin' })), /\[warn\] codex platform/);
+  assert.doesNotMatch(formatDoctor(runDoctor({ exec, target: 'claude', platform: 'linux' })), /codex platform/);
 });
 
 test('Codex install renders the absolute launcher path, records only owned files and preserves Claude data', () => {

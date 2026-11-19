@@ -43,7 +43,7 @@ export function parseTarget(value) {
   return value;
 }
 
-export function runDoctor({ exec, provider = 'github', target = 'claude' }) {
+export function runDoctor({ exec, provider = 'github', target = 'claude', platform = process.platform }) {
   const checks = [];
   const runtime = parseTarget(target) === 'codex'
     ? [['codex', 'codex', ['--version'], true], ['codex login', 'codex', ['login', 'status'], true]]
@@ -67,6 +67,12 @@ export function runDoctor({ exec, provider = 'github', target = 'claude' }) {
     const r = exec(cmd, args);
     const detail = r.status === 127 && NOT_FOUND_HINT[cmd] ? NOT_FOUND_HINT[cmd] : ((r.stdout || r.stderr).trim().split('\n')[0]) || '';
     checks.push({ name, ok: r.status === 0, required, warn: false, detail });
+  }
+  if (target === 'codex' && platform !== 'darwin') {
+    checks.push({
+      name: 'codex platform', ok: true, required: false, warn: true,
+      detail: `reviewer isolation was measured only on macOS; ${platform} requires the user-only opt-in`,
+    });
   }
   return { ok: checks.every((c) => c.ok || !c.required), checks };
 }
