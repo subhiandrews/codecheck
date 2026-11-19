@@ -104,10 +104,14 @@ def test_failed_members_never_look_clean(tmp_path):
         (run_dir / "findings" / f"{member}.json").write_text("[]")
     code, result = execute(ctx)
     assert code == 0
-    assert set(result["failed_members"]) == set(MEMBERS)
+    assert set(result["failed_members"]) == {*MEMBERS, "aggregator"}
     for member, reason in zip(MEMBERS, ("exit", "timed out", "JSON", "schema"), strict=True):
         assert reason in result["failed_members"][member]
         assert not (run_dir / "findings" / f"{member}.json").exists()
+    assert result["failed_members"]["aggregator"] == "no usable reviewer output"
+    assert sum(call.argv[0] == "codex" for call in runner.calls) == len(MEMBERS)
+    assert result["files_written"] == []
+    assert not (run_dir / "findings" / "aggregator.json").exists()
 
 
 def test_parallel_cap(tmp_path):
@@ -170,3 +174,12 @@ def test_model_selection_and_user_override(tmp_path):
     assert model_for(cfg, "language_expert", "python", runtime="codex") == "gpt-custom"
     assert model_for(Config(), "language_expert", "python", runtime="codex") == "gpt-6-luna"
     assert model_for(cfg.models, "language_expert", "python") == "haiku"
+    assert model_for(cfg, "judge", runtime="codex") == "gpt-6.2-astra"
+    with pytest.raises(ConfigError, match="unknown model role"):
+        model_for(cfg.models, "judge")
+
+
+@pytest.mark.parametrize("effort", ["xhigh", "max", "ultra"])
+def test_unmeasured_reasoning_effort_is_rejected(tmp_path, effort):
+    with pytest.raises(ConfigError, match="must be one of low, medium, high"):
+        load_config(tmp_path, tmp_path, {"CODE_CHECK_CODEX_REASONING__REVIEWERS": effort})

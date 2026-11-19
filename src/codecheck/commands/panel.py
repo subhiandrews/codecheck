@@ -135,11 +135,15 @@ def _run_panel(args, ctx, meta, root, run_dir, scratch) -> dict:
         if name not in failed:
             _publish(scratch, outputs[name], findings, written)
     summary = ingest.run(args, ctx)
-    result, error = _execute(aggregator, ctx, root, set(summary["valid"]))
-    if error:
-        failed["aggregator"] = error
+    usable = set(summary["valid"])
+    if not usable:
+        failed["aggregator"] = "no usable reviewer output"
     else:
-        _publish(scratch, outputs["aggregator"], result, written)
+        result, error = _execute(aggregator, ctx, root, usable)
+        if error:
+            failed["aggregator"] = error
+        else:
+            _publish(scratch, outputs["aggregator"], result, written)
     return {"members": [*members, "aggregator"], "failed_members": failed, "files_written": written}
 
 

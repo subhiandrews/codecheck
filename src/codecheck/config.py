@@ -155,7 +155,7 @@ REPO_FORBIDDEN = {
     ("codex",), ("codex_models",), ("codex_reasoning",),
 }
 MODEL_NAME = re.compile(r"[A-Za-z0-9._:\[\]-]+")
-CODEX_EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra")
+CODEX_EFFORTS = ("low", "medium", "high")
 LABEL_NAME = re.compile(r"[A-Za-z0-9._ :-]{1,50}")
 # A GitHub login, optionally a bot: octocat, github-actions[bot]. Never starts with '-'.
 LOGIN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}(\[bot\])?")
@@ -173,12 +173,16 @@ def model_for(models: ModelsConfig | Config, role: str, language: str | None = N
     if runtime == "claude":
         return _role_value(models.models if isinstance(models, Config) else models, role, language)
     if runtime == "codex" and isinstance(models, Config):
-        return _role_value(models.codex_models, role, language)
+        return _codex_role_value(models.codex_models, role, language)
     raise ConfigError(f"cannot select a model for runtime {runtime!r} with this config")
 
 
 def reasoning_for(cfg: Config, role: str, language: str | None = None) -> str:
-    return _role_value(cfg.codex_reasoning, role, language)
+    return _codex_role_value(cfg.codex_reasoning, role, language)
+
+
+def _codex_role_value(models: ModelsConfig, role: str, language: str | None) -> str:
+    return models.judge if role == "judge" else _role_value(models, role, language)
 
 
 def _role_value(models: ModelsConfig, role: str, language: str | None) -> str:
@@ -186,7 +190,7 @@ def _role_value(models: ModelsConfig, role: str, language: str | None) -> str:
         if language and language in models.per_language:
             return models.per_language[language]
         return models.language_experts
-    if role in ("aggregator", "reviewers", "deep", "security", "performance", "judge"):
+    if role in ("aggregator", "reviewers", "deep", "security", "performance"):
         return getattr(models, role)
     raise ConfigError(f"unknown model role {role!r}")
 
