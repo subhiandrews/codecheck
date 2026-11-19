@@ -158,16 +158,29 @@ def _findings(run_dir: Path, meta: dict, raw) -> list[dict]:
              "reviewers": list(f.reviewers)} for f in finalize_findings(findings, files)]
 
 
+def _named(item) -> set[str]:
+    reviewers = item.get("reviewers") if isinstance(item, dict) else None
+    return {name for name in reviewers if isinstance(name, str)} if isinstance(reviewers, list) else set()
+
+
+def _count(data) -> int:
+    try:
+        items = finding_items(data)
+    except (TypeError, KeyError):
+        return 0
+    return len(items) if isinstance(items, list) else 0
+
+
 def _accounting(reviewer_raw: dict, findings: list[dict], dropped: list) -> dict:
     """Where the reviewers' findings went: kept, dropped, or neither.
 
     A reviewer named on a kept or dropped item accounts for at least one of its findings. A reviewer with more
     findings than that may have had several merged into one item, so `possibly_unaccounted` is a prompt to look,
-    not proof that something was lost."""
-    raw = {m: len(finding_items(data)) for m, data in reviewer_raw.items()}
+    not proof that something was lost. Malformed items are tolerated and a name counts once per item."""
+    raw = {m: _count(data) for m, data in reviewer_raw.items()}
     named: dict[str, int] = {}
-    for item in [*findings, *(d for d in dropped if isinstance(d, dict))]:
-        for name in item.get("reviewers") or []:
+    for item in [*findings, *dropped]:
+        for name in _named(item):
             named[name] = named.get(name, 0) + 1
     return {"reviewer_findings": sum(raw.values()), "kept": len(findings), "dropped": len(dropped),
             "possibly_unaccounted": {m: raw[m] - named.get(m, 0) for m in raw if raw[m] > named.get(m, 0)}}
@@ -196,8 +209,10 @@ def _transcripts(ctx, run_id: str, folder: Path, started: float | None, runtime:
             return False, "no Codex session from the last day mentions this run id", [], None
         # Reviewers ran as separate `codex exec --ephemeral` processes, so only the orchestrating session is kept,
         # and its Claude-format signals (tool errors, retries) do not apply.
-        copied = copy_codex_scrubbed(session, folder / "transcript")
-        return bool(copied), "Codex session copied; no signals extracted for Codex", copied, None
+        if started is None:
+            return False, "Codex session found but the run start is unknown, so its turns cannot be scoped", [], None
+        copied = copy_codex_scrubbed(session, folder / "transcript", started=started)
+        return bool(copied), "Codex session copied from the review's turn onward; no signals extracted for Codex", copied, None
     main = find_transcript(_projects_dir(ctx), run_id)
     if main is None:
         return False, "no Claude Code transcript from the last day mentions this run id", [], None

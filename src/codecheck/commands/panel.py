@@ -1,5 +1,6 @@
 """Run the context plan through independent read-only Codex processes."""
 
+import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -120,7 +121,6 @@ def _run_panel(args, ctx, meta, root, run_dir, scratch) -> dict:
             if scope:
                 jobs.append(_job(ctx.config, member, index, scope, root, run_dir, scratch))
     aggregator = _job(ctx.config, "aggregator", 1, files, root, run_dir, scratch)
-    _record_runtime(ctx, meta, run_dir, [*jobs, aggregator])
     outputs = {name: _finding_path(run_dir, name) for name in [*members, "aggregator"]}
     for name, is_aggregator in (("reviewer", False), ("aggregator", True)):
         write_json(scratch / f"{name}-schema.json", capture_schema(is_aggregator))
@@ -129,6 +129,7 @@ def _run_panel(args, ctx, meta, root, run_dir, scratch) -> dict:
     for path in reversed(outputs.values()):
         path.unlink(missing_ok=True)
     (run_dir / "ingest.json").unlink(missing_ok=True)
+    _record_runtime(ctx, meta, run_dir, [*jobs, aggregator])  # only once setup is done and the old results are gone
 
     combined = {name: [] for name in members}
     scheduled = {job.member for job in jobs}
@@ -163,7 +164,9 @@ def _record_runtime(ctx, meta, run_dir, jobs) -> None:
     models = {job.member: job.model for job in jobs}
     reasoning = {job.member: job.effort for job in jobs}
     meta.update(runtime="codex", models=models, reasoning=reasoning)
-    write_json(run_dir / "context.json", meta)
+    stage = run_dir / "context.json.tmp"  # same directory, so the replace is atomic and cleanup never reads half a file
+    write_json(stage, meta)
+    os.replace(stage, run_dir / "context.json")
     if ctx.shadow is not None:
         ctx.guarded(ctx.shadow.append, meta["run_id"], {"type": "runtime", "runtime": "codex", "models": models, "reasoning": reasoning})
 

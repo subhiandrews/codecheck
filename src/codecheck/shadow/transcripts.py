@@ -4,10 +4,10 @@ import json
 import os
 import time
 from collections.abc import Callable, Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from codecheck.shadow.scrub import scrub_text
+from codecheck.shadow.scrub import scrub, scrub_text
 
 _ERROR_CAP = 300
 _GUIDANCE_CAP = 20  # entries; each is cut to _ERROR_CAP characters
@@ -206,20 +206,43 @@ _CODEX_EVENTS = frozenset({"task_started", "task_complete", "user_message", "age
 _CODEX_IDENTITY = ("creator_user_id", "creator_account_id")
 
 
-def _first_mention(path: Path, needle: str) -> datetime | None:
-    """When the run id first appears in a Codex session, from the entry's own timestamp."""
+def _entry_time(entry: dict) -> datetime | None:
+    """The entry's timestamp, only when it carries a timezone (a naive one cannot be ordered against the others)."""
+    try:
+        when = datetime.fromisoformat(str(entry.get("timestamp")))
+    except ValueError:
+        return None
+    return when if when.tzinfo is not None else None
+
+
+def _is_context_result(entry: dict, run_id: str) -> bool:
+    """A tool result holding `context`'s JSON for this run: the session that ran the command, not one that quotes the id."""
+    payload = entry.get("payload")
+    return (isinstance(payload, dict) and str(payload.get("type", "")).endswith("_output")
+            and f'"run_id": "{run_id}"' in str(payload.get("output")))
+
+
+def _first_mention(path: Path, run_id: str) -> tuple[int, datetime] | None:
+    """Rank of a session for this run: (0 if it holds context's result else 1, time of the first readable mention)."""
+    best = None
     try:
         with path.open(encoding="utf-8", errors="replace") as f:
             for line in f:
-                if needle not in line:
+                if run_id not in line:
                     continue
                 try:
-                    return datetime.fromisoformat(str(json.loads(line).get("timestamp")))
-                except (ValueError, AttributeError, RecursionError):
-                    return datetime.min.replace(tzinfo=UTC)  # mentioned, but the time is unreadable: sorts first
+                    entry = json.loads(line)
+                except (ValueError, RecursionError):
+                    continue  # a partly written line says nothing reliable
+                when = _entry_time(entry) if isinstance(entry, dict) else None
+                if when is None:
+                    continue
+                rank = (0 if _is_context_result(entry, run_id) else 1, when)
+                if best is None or rank < best:
+                    best = rank
     except OSError:
         return None
-    return None
+    return best
 
 
 def find_codex_transcript(
@@ -229,7 +252,7 @@ def find_codex_transcript(
     max_age_s: float = 86400,
     now: Callable[[], float] = time.time,
 ) -> Path | None:
-    """The Codex session where the run id first appeared, which is the session that ran `context`.
+    """The Codex session that ran `context` for this run, else the one that mentioned the id first.
 
     Later sessions may quote the id (a hand-off pasted into another session), so the newest match would be wrong."""
     try:
@@ -241,8 +264,8 @@ def find_codex_transcript(
                     continue
             except OSError:
                 continue
-            if (when := _first_mention(p, run_id)) is not None:
-                found.append((when, p))
+            if (rank := _first_mention(p, run_id)) is not None:
+                found.append((rank, p))
     except OSError:
         return None
     return min(found, key=lambda c: c[0])[1] if found else None
@@ -258,9 +281,22 @@ def _codex_keep(entry: dict) -> bool:
     return kind == "event_msg" and payload.get("type") in _CODEX_EVENTS
 
 
-def copy_codex_scrubbed(path: Path, dest: Path) -> list[str]:
-    """Copy the conversation of a Codex session (no token counts, reasoning or account ids), scrubbed."""
-    kept = []
+def _codex_window_start(entries: list[dict], started: float) -> datetime:
+    """Where the review's turn begins: the last turn started before the run, else a minute before it."""
+    run_start = datetime.fromtimestamp(started, UTC)
+    turns = [t for e in entries
+             if isinstance(e.get("payload"), dict) and e["payload"].get("type") == "task_started"
+             and (t := _entry_time(e)) is not None and t <= run_start]
+    return max(turns) if turns else run_start - timedelta(seconds=60)
+
+
+def copy_codex_scrubbed(path: Path, dest: Path, *, started: float) -> list[str]:
+    """Copy the part of a Codex session that belongs to this review: from the turn that began it onward.
+
+    Earlier turns of the same session can be about unrelated work, so they are not copied. Reasoning, token counts
+    and account ids are dropped, and every string is scrubbed before it is serialised so that a credential inside
+    embedded JSON is seen unescaped."""
+    entries = []
     try:
         with path.open(encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -268,13 +304,20 @@ def copy_codex_scrubbed(path: Path, dest: Path) -> list[str]:
                     entry = json.loads(line)
                 except (ValueError, RecursionError):
                     continue
-                if not isinstance(entry, dict) or not _codex_keep(entry):
-                    continue
-                if entry.get("type") == "session_meta" and isinstance(entry.get("payload"), dict):
-                    for key in _CODEX_IDENTITY:
-                        entry["payload"].pop(key, None)
-                kept.append(json.dumps(entry, ensure_ascii=False))
+                if isinstance(entry, dict) and _codex_keep(entry):
+                    entries.append(entry)
     except OSError:
         return []
+    start = _codex_window_start(entries, started)
+    kept = []
+    for entry in entries:
+        if entry.get("type") != "session_meta":
+            when = _entry_time(entry)
+            if when is None or when < start:
+                continue
+        elif isinstance(entry.get("payload"), dict):
+            for key in _CODEX_IDENTITY:
+                entry["payload"].pop(key, None)
+        kept.append(json.dumps(scrub(entry), ensure_ascii=False))
     _write_scrubbed(dest, path.name, "\n".join(kept) + "\n")
     return [path.name]

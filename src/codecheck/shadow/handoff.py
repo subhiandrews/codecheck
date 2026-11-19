@@ -54,6 +54,7 @@ def build_comparison(records: Sequence[dict], findings: Sequence[dict], general_
     for rec in records:
         if rec.get("type") == "human_comment" and isinstance(rec.get("thread_id"), str):
             latest[rec["thread_id"]] = rec
+    latest = {tid: rec for tid, rec in latest.items() if not rec.get("withdrawn")}
     severity: dict[str, str | None] = {}
     for f in findings:
         if isinstance(f.get("id"), str):
@@ -106,7 +107,8 @@ def render_markdown(h: dict) -> str:
     if acc:
         unaccounted = ", ".join(f"{m} ({n})" for m, n in (acc.get("possibly_unaccounted") or {}).items())
         lines.append(f"- Reviewer findings {acc['reviewer_findings']}: {acc['kept']} kept, {acc['dropped']} dropped"
-                     + (f"; reviewers with findings not named on any kept or dropped item: {unaccounted}" if unaccounted else ""))
+                     + (f"; possibly unaccounted findings (several from one reviewer may have merged into one item): {unaccounted}"
+                        if unaccounted else ""))
     unposted = h.get("comparison_mode") == "unposted" and h.get("comparison") is not None
     lines += ["", "## Human comments (unposted review; compared with the threads as they are now)" if unposted
               else "## Human comments", ""]

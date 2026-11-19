@@ -19,8 +19,8 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\bsk-[A-Za-z0-9_-]{20,}"), REDACTED),
     (re.compile(r"\beyJ[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){0,2}"), REDACTED),
     (re.compile(
-        r"""(?i)((?:api[_-]?key|secret|token|password|passwd)\w{0,200}+)(["']?)(\s*[:=]\s*)"""
-        r"""(?:"[^"\n]*"?|'[^'\n]*'?|[^\s"',;]+)"""), rf"\1\2\3{REDACTED}"),
+        r"""(?i)((?:api[_-]?key|secret|token|password|passwd)\w{0,200}+)(\\*["']?)(\s*[:=]\s*)"""
+        r"""(?:\\*"[^"\n]*"?|\\*'[^'\n]*'?|[^\s"',;]+)"""), rf"\1\2\3{REDACTED}"),
 ]
 
 

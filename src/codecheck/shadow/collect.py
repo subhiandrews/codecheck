@@ -13,6 +13,24 @@ def _is_bot(comment) -> bool:
     return comment.is_bot or is_bot_login(comment.author)
 
 
+def _withdraw_bot_feedback(shadow: ShadowStore, run_ids: list[str], thread_id: str, author: str) -> int:
+    """A thread recorded as human feedback by an earlier version whose author is now recognised as automated.
+
+    The newest record per thread wins everywhere feedback is read, so a `withdrawn` record supersedes the old one."""
+    newest = None
+    for rid in run_ids:
+        for rec in shadow.read(rid):
+            is_newer = newest is None or (rec.get("ts") or 0) >= (newest[1].get("ts") or 0)
+            if rec.get("type") == "human_comment" and rec.get("thread_id") == thread_id and is_newer:
+                newest = (rid, rec)
+    if newest is None or newest[1].get("withdrawn"):
+        return 0
+    rid, old = newest
+    shadow.append(rid, {"type": "human_comment", "thread_id": thread_id, "path": old.get("path"), "line": old.get("line"),
+                        "author": author, "body": "", "matches_finding": None, "withdrawn": True})
+    return 1
+
+
 def _own_marker(body: str) -> str | None:
     """Finding id from the trailing marker we render; a marker earlier in the (unescaped) message is ignored."""
     matches = list(FINDING_MARKER.finditer(body))
@@ -52,7 +70,9 @@ def collect_outcomes(provider, shadow: ShadowStore, ref: PRRef, me: str) -> dict
                 "replies": replies, "reactions": dict(Counter(root.reactions)),
             })
             outcomes += 1
-        elif root.author != me and not _is_bot(root):
+        elif root.author != me and _is_bot(root):
+            _withdraw_bot_feedback(shadow, run_ids, thread.id, root.author)
+        elif root.author != me:
             near, home = None, latest_run
             for rid in reversed(run_ids):  # newest run whose own findings it matches
                 near = next(

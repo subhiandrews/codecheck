@@ -335,3 +335,28 @@ def test_every_skill_rewrite_rule_still_matches():
             if not count:
                 unmatched.add((name, pattern[:len(" If any subagent's final")]))
     assert unmatched == shared_rule_unused
+
+
+def test_runtime_is_recorded_only_after_the_previous_attempt_is_cleared(tmp_path, monkeypatch):
+    runner = CaptureRunner()
+    _, ctx, run_dir = prepare(tmp_path, runner)
+    (run_dir / "findings" / "architect.json").write_text("[]")
+    (run_dir / "ingest.json").write_text("{}")
+    seen = {}
+    original = panel._record_runtime
+
+    def spy(*args):
+        seen["stale"] = [p.name for p in (run_dir / "findings").glob("*.json")] + [p.name for p in run_dir.glob("ingest.json")]
+        return original(*args)
+
+    monkeypatch.setattr(panel, "_record_runtime", spy)
+    execute(ctx)
+    assert seen["stale"] == []
+
+
+def test_runtime_update_replaces_context_json_atomically(tmp_path):
+    runner = CaptureRunner()
+    _, ctx, run_dir = prepare(tmp_path, runner)
+    execute(ctx)
+    assert json.loads((run_dir / "context.json").read_text())["runtime"] == "codex"
+    assert not (run_dir / "context.json.tmp").exists()

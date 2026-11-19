@@ -175,3 +175,14 @@ def test_extract_signals_window_counts_only_timestamped_entries_inside(tmp_path)
     hi = datetime.fromisoformat("2026-11-13T10:30:00Z").timestamp()
     assert extract_signals([p], windows={p: (lo, hi)})["tool_calls"] == 1
     assert extract_signals([p])["tool_calls"] == 4
+
+
+def test_scrub_catches_credentials_inside_embedded_json():
+    import json
+
+    from codecheck.shadow.scrub import scrub_text
+
+    line = json.dumps({"output": json.dumps({"password": "hunter2xyz", "api_key": "abcd1234efgh5678"})})
+    text = scrub_text(line)
+    assert "hunter2xyz" not in text and "abcd1234efgh5678" not in text
+    assert json.loads(text)  # still valid JSON after redaction

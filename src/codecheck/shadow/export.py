@@ -63,7 +63,8 @@ def run_feedback(shadow: ShadowStore) -> dict[str, tuple[dict[str, dict], dict[s
         }
         humans = {
             r["thread_id"]: r for r in recs
-            if r.get("type") == "human_comment" and winners["human_comment"].get(r.get("thread_id"), (None, None))[1] is r
+            if r.get("type") == "human_comment" and not r.get("withdrawn")
+            and winners["human_comment"].get(r.get("thread_id"), (None, None))[1] is r
         }
         out[rid] = (outcomes, humans)
     return out
@@ -84,6 +85,7 @@ def export_golden(shadow: ShadowStore, out_path: Path) -> int:
         recs = shadow.read(rid)
         run = next((r for r in recs if r.get("type") == "run"), None)
         diff = shadow.read_diff(rid)
+        runtime = next((r for r in reversed(recs) if r.get("type") == "runtime"), None)  # newest wins; older runs have none
         if run is None or not diff or not (outcomes or humans):
             continue
         findings = []
@@ -92,7 +94,8 @@ def export_golden(shadow: ShadowStore, out_path: Path) -> int:
             findings.append({k: r.get(k) for k in ("id", "file", "line", "severity", "category", "message", "reviewers")} | {"label": label})
         rows.append({
             "run_id": rid, "repo": run.get("repo"), "pr": run.get("pr"), "head_sha": run.get("head_sha"),
-            "tool_version": run.get("tool_version"), "models": run.get("models"), "diff": diff, "findings": findings,
+            "tool_version": run.get("tool_version"), "runtime": (runtime or {}).get("runtime", "claude"),
+            "models": (runtime or run).get("models"), "diff": diff, "findings": findings,
             "misses": [{k: h.get(k) for k in ("path", "line", "author", "body")} for h in humans.values() if not h.get("matches_finding")],
             "label_status": "auto",
         })

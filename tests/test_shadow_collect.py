@@ -239,7 +239,45 @@ def test_gitlab_provider_flags_ai_reviewer_and_bot_accounts():
     from codecheck.providers.gitlab import _is_bot
 
     assert _is_bot({"author": {"username": "GitLabDuo"}})
-    assert _is_bot({"author": {"username": "gitlab-bot"}})
+    assert not _is_bot({"author": {"username": "ci-bot", "bot": False}})  # a person's login is not a bot because of its name
+    assert not _is_bot({"author": {"username": "release_bot"}})
+    assert _is_bot({"author": {"username": "renovate[bot]"}})
     assert _is_bot({"author": {"username": "svc", "bot": True}})
     assert not _is_bot({"author": {"username": "kjamoralin"}})
     assert not _is_bot({})
+
+
+def test_a_bot_recorded_as_human_feedback_before_the_upgrade_is_withdrawn_on_recollect(tmp_path):
+    from codecheck.shadow.handoff import build_comparison
+
+    shadow = ShadowStore(tmp_path)
+    seed(shadow)
+    shadow.append(RID, {"type": "human_comment", "thread_id": "TB", "path": "a.py", "line": 21, "author": "GitLabDuo",
+                        "body": "Consider renaming this", "matches_finding": "c" * 12})
+    provider = FakeProvider()
+    provider.threads[REF] = [Thread("TB", "a.py", 21, False, False, (tc(9, "GitLabDuo", "Consider renaming this"),))]
+    collect_outcomes(provider, shadow, REF, "me")
+    collect_outcomes(provider, shadow, REF, "me")  # idempotent
+    recs = [r for r in shadow.read(RID) if r.get("thread_id") == "TB"]
+    assert [bool(r.get("withdrawn")) for r in recs] == [False, True]
+    comparison = build_comparison(shadow.read(RID), [{"id": "c" * 12, "severity": "warning"}])
+    assert comparison["human_comments"] == [] and comparison["misses"] == []
+    assert comparison["unraised_findings"] == ["c" * 12]
+
+
+def test_export_ignores_withdrawn_bot_feedback_and_names_the_models_that_ran(tmp_path):
+    shadow = ShadowStore(tmp_path)
+    seed(shadow)
+    shadow.append(RID, {"type": "human_comment", "thread_id": "TB", "path": "a.py", "line": 21, "author": "GitLabDuo",
+                        "body": "x", "matches_finding": "c" * 12})
+    provider = FakeProvider()
+    provider.threads[REF] = [Thread("TB", "a.py", 21, False, False, (tc(9, "GitLabDuo", "x"),)),
+                             Thread("T9", "b.py", 40, False, False, (tc(10, "alice", "this one"),))]
+    collect_outcomes(provider, shadow, REF, "me")
+    shadow.append(RID, {"type": "runtime", "runtime": "codex", "models": {"skeptic": "gpt-6.2-sol"}, "reasoning": {"skeptic": "medium"}})
+    out = tmp_path / "golden.jsonl"
+    assert export_golden(shadow, out) == 1
+    row = json.loads(out.read_text().splitlines()[0])
+    assert row["runtime"] == "codex" and row["models"] == {"skeptic": "gpt-6.2-sol"}
+    assert [m["author"] for m in row["misses"]] == ["alice"]
+    assert next(f["label"] for f in row["findings"] if f["id"] == "c" * 12) != "confirmed"

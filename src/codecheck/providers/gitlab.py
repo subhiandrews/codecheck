@@ -26,7 +26,7 @@ from codecheck.models import (
     ReviewComment,
     Thread,
     ThreadComment,
-    is_bot_login,
+    is_service_login,
 )
 from codecheck.runner import CommandResult, CommandRunner
 
@@ -128,7 +128,7 @@ def _author(note: dict) -> str:
 
 def _is_bot(note: dict) -> bool:
     author = note.get("author") or {}
-    return bool(author.get("bot")) or is_bot_login(author.get("username") or "")
+    return bool(author.get("bot")) or is_service_login(author.get("username") or "")
 
 
 def thread_id(repo: str, number: int, discussion: str) -> str:
