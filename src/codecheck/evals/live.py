@@ -8,14 +8,14 @@ store or review bookkeeping. This costs real tokens; it is local developer tooli
 """
 
 import json
-import re
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from codecheck.commands.run_pr import parse_result
 from codecheck.core.findings import merge_exact_duplicates, validate_findings
 from codecheck.core.paths import contained, finding_items
 from codecheck.errors import CodeCheckError
 from codecheck.evals.match import match_case
+from codecheck.evals.snippet import path_ok, snippet_problems
 from codecheck.runner import run_checked
 from codecheck.shadow.store import ShadowStore
 
@@ -24,7 +24,6 @@ DEFAULT_SNIPPETS = Path(__file__).resolve().parents[3] / "tests" / "snippets"
 REVIEW_PROMPT = ("Use the code-check review-local skill. Run unattended: never ask questions; "
                  "finish with one line summarizing the outcome.")
 PROBE_TIMEOUT = 60
-SEVERITIES = ("critical", "warning", "suggestion")
 # Variables that make git work on another repository than the one in its cwd, or inject config. Git exports several
 # of them to hooks (a pre-commit hook runs this eval), so they are unset for the setup and for the headless review:
 # otherwise the setup would commit into, and push from, the user's own repository.
@@ -46,81 +45,6 @@ def plugin_root(env) -> Path:
 # --- snippets ----------------------------------------------------------------------------------------------------
 
 
-# Code points HFS+ ignores in names, so `.g\u200cit` is `.git` there (git's own core.protectHFS list).
-_HFS_IGNORED = re.compile("[\u200c-\u200f\u202a-\u202e\u206a-\u206f\ufeff]")
-
-
-def _is_git_dir_name(part: str) -> bool:
-    """`.git` however a filesystem may spell it: any case (APFS and NTFS default to case-insensitive), with
-    HFS-ignored characters or trailing dots and spaces (NTFS), or as an 8.3 short name like `GIT~1`."""
-    name = _HFS_IGNORED.sub("", part).lower().rstrip(". ")
-    return name == ".git" or re.fullmatch(r"git~\d+", name) is not None
-
-
-def _path_ok(rel: object) -> bool:
-    if not isinstance(rel, str) or not rel or "\0" in rel or "\\" in rel:
-        return False
-    p = PurePosixPath(rel)
-    return not p.is_absolute() and all(part != ".." and not _is_git_dir_name(part) for part in p.parts)
-
-
-def _category_ok(value: object) -> bool:
-    if isinstance(value, str):
-        return bool(value.strip())
-    return isinstance(value, list) and bool(value) and all(isinstance(v, str) and v.strip() for v in value)
-
-
-def _severities_ok(value: object) -> bool:
-    return isinstance(value, list) and bool(value) and all(v in SEVERITIES for v in value)
-
-
-def _int_line(value: object) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and value >= 1
-
-
-def _problems(snippet: object) -> list[str]:
-    if not isinstance(snippet, dict):
-        return ["expected a JSON object"]
-    out = []
-    if not isinstance(snippet.get("name"), str) or not snippet["name"].strip():
-        out.append("name must be a non-empty string")
-    for key in ("base", "change"):
-        files = snippet.get(key)
-        if not isinstance(files, dict):
-            out.append(f"{key} must be an object of path: content")
-            continue
-        for rel, text in files.items():
-            if not _path_ok(rel):
-                out.append(f"{key}: path {rel!r} must be relative, without '..' or '.git' (it would escape the repository)")
-            if not isinstance(text, str):
-                out.append(f"{key}: content of {rel!r} must be a string")
-    if not snippet.get("change"):
-        out.append("change must not be empty: there would be nothing to review")
-    expected = snippet.get("expected")
-    if not isinstance(expected, list):
-        out.append("expected must be a list")
-    else:
-        for i, e in enumerate(expected):
-            if not (isinstance(e, dict) and _path_ok(e.get("file")) and _int_line(e.get("line"))
-                    and _category_ok(e.get("category")) and e.get("severity") in SEVERITIES):
-                out.append(f"expected[{i}] needs file, line (>= 1), category (a name or a list of names) and "
-                           f"severity ({', '.join(SEVERITIES)})")
-    rules = snippet.get("must_not_report", [])
-    if not isinstance(rules, list):
-        out.append("must_not_report must be a list")
-    else:
-        for i, r in enumerate(rules):
-            if not (isinstance(r, dict) and _path_ok(r.get("file"))
-                    and (r.get("category") is None or _category_ok(r["category"]))
-                    and (r.get("line") is None or _int_line(r["line"]))
-                    and (r.get("severity") is None or _severities_ok(r["severity"]))):
-                out.append(f"must_not_report[{i}] needs file, and optionally category, line and severity "
-                           f"(a non-empty list of {', '.join(SEVERITIES)})")
-    if "calibrated" in snippet and not isinstance(snippet["calibrated"], bool):
-        out.append("calibrated must be true or false")
-    return out
-
-
 def load_snippets(directory: Path) -> list[dict]:
     """Every `<directory>/<snippet>/case.json`, sorted by folder; an error names the offending file."""
     directory = Path(directory)
@@ -133,7 +57,7 @@ def load_snippets(directory: Path) -> list[dict]:
             snippet = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
             raise CodeCheckError(f"snippet {where}: not readable JSON: {e}") from e
-        problems = _problems(snippet)
+        problems = snippet_problems(snippet)
         if problems:
             raise CodeCheckError(f"snippet {where}: " + "; ".join(problems))
         if snippet["name"] in seen:
@@ -182,7 +106,7 @@ def _git(ctx, cwd: Path, *args: str) -> None:
 
 def _write_files(repo: Path, files: dict) -> None:
     for rel, text in files.items():
-        target = contained(repo, rel) if _path_ok(rel) else None
+        target = contained(repo, rel) if path_ok(rel) else None
         if target is None:  # load_snippets already refused these; this also stops a symlink in the base
             raise CodeCheckError(f"snippet path {rel!r} escapes the repository")
         target.parent.mkdir(parents=True, exist_ok=True)

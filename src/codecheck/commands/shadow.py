@@ -10,6 +10,11 @@ from codecheck.shadow.export import export_golden
 from codecheck.shadow.promote import draft_case, finalize_case
 from codecheck.shadow.scrub import scrub
 from codecheck.shadow.store import write_private
+from codecheck.shadow.synthesize import (
+    build_brief,
+    check_synthetic,
+    load_json_object,
+)
 
 NAME = "shadow"
 HELP = "Shadow-mode data: collect human feedback, export a golden set, record verdicts"
@@ -30,11 +35,16 @@ def add_arguments(p) -> None:
     # Developer tooling for hand-off runs, hidden from help like `handoff` (a `help=` would print "==SUPPRESS==").
     pr = sub.add_parser("promote")
     mode = pr.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--brief", help="write a synthetic-case brief (what is general, nothing identifying) from this case or draft")
+    mode.add_argument("--check-synthetic", help="check a hand-written snippet directory against its source case")
     mode.add_argument("--run", help="draft a golden case from this hand-off run")
     mode.add_argument("--finalize", help="check a confirmed draft and write it into the golden set")
-    pr.add_argument("--out", help="where to write the draft (with --run)")
+    pr.add_argument("--out", help="where to write the draft (with --run) or the brief (with --brief)")
     pr.add_argument("--allow-private", action="store_true", help="promote a case from a private or unknown repository")
     pr.add_argument("--allow-license", action="store_true", help="promote a case whose repository license is not on the allowed list")
+    pr.add_argument("--source", help="with --check-synthetic, the private case the snippet was written from")
+    pr.add_argument("--against", help="with --check-synthetic, the brief the snippet was written from")
+    pr.add_argument("--allow", action="append", default=[], help="with --check-synthetic, accept this shared term as generic")
     pr.add_argument("--force", action="store_true", help="with --finalize, overwrite an existing case with different content")
     pr.add_argument("--dest", default=None, help="golden case directory (default: the plugin repository's tests/golden)")
     sub.metavar = "{collect,export-golden,record-verdict}"
@@ -93,8 +103,42 @@ def _recorded_license(ctx, draft: Path, *, allow_license: bool) -> str | None:
     lic = run.get("repo_license")
     return lic if isinstance(lic, str) else ""
 
+def _synthetic(args, ctx) -> dict:
+    stray = [flag for flag, given in (
+        ("--source", args.source and not args.check_synthetic), ("--against", args.against and not args.check_synthetic),
+        ("--allow", args.allow and not args.check_synthetic), ("--out", args.out and args.check_synthetic)) if given]
+    if stray:
+        raise CodeCheckError(f"{', '.join(stray)} does not apply to this mode: --source, --against and --allow go with "
+                             "--check-synthetic, and --out goes with --brief")
+    if args.brief:
+        if not args.out:
+            raise CodeCheckError("promote --brief needs --out <brief path>")
+        out = _path(ctx, args.out)
+        if out.resolve() == _path(ctx, args.brief).resolve():
+            raise CodeCheckError("--out is the case --brief reads: the brief would overwrite the labelled case it is built from")
+        brief = build_brief(load_json_object(_path(ctx, args.brief), "case"))
+        out.parent.mkdir(parents=True, exist_ok=True)
+        write_private(out, json.dumps(brief, indent=2, ensure_ascii=False) + "\n")  # private until a person has read it
+        return {"brief": str(out), "language": brief["language"], "findings": len(brief["findings"]),
+                "next": "fill in each pattern with one sentence about the kind of mistake (never the code), list in `allow` the generic "
+                        "API names the defect needs, then have a model write the snippet from this brief alone. You, not the model, then run (its output quotes the source): code-check shadow promote --check-synthetic <dir> --source <case> --against <brief>"}
+    if not args.source:
+        raise CodeCheckError("promote --check-synthetic needs --source <the case the snippet was written from>")
+    snippet_dir = _path(ctx, args.check_synthetic)
+    snippet = load_json_object(snippet_dir / "case.json", "snippet")
+    against = load_json_object(_path(ctx, args.against), "brief") if args.against else None
+    source = load_json_object(_path(ctx, args.source), "case")
+    problems = check_synthetic(snippet, source, brief=against, allow=args.allow)
+    # The problems quote source terms and copied lines: for a person, never for the model that writes the snippet.
+    return {"ok": not problems, "problems": problems, "snippet": snippet.get("name"),
+            "next": "read it, run `code-check eval --live --only <name>` twice, then set calibrated and add it to tests/snippets" if not problems
+            else "read the problems yourself and allow a shared term only if it is a generic API name; do not pass this output to the model "
+                 "that wrote the snippet, since it quotes the source"}
+
 
 def _promote(args, ctx) -> dict:
+    if args.brief or args.check_synthetic:
+        return _synthetic(args, ctx)
     if args.finalize:
         if args.dest is not None:
             dest = _path(ctx, args.dest)
