@@ -87,6 +87,10 @@ Unattended runs have nobody to answer prompts, so they use `--permission-mode do
 
 Mount a volume at the data directory (`state_dir` and `shadow.store` in the config) so state and shadow data survive between runs. Nothing in the CLI prompts interactively.
 
+### Codex
+
+Use the Node installer with `--target codex` to install the interactive skills. See the [Codex installation guide](docs/INSTALL-CODEX.md) for prerequisites, configuration, first run and measured sandbox limits.
+
 ## Quick start
 
 ```text

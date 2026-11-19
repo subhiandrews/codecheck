@@ -3,6 +3,7 @@ import path from 'node:path';
 import { runDoctor } from './doctor.js';
 import { realExec } from './exec.js';
 import { resolvePaths } from './paths.js';
+import { installCodex } from './codex.js';
 import { CLAUDE_CMDS } from './commands.js';
 import { OWNER_MARKER, isOwned, readReceipt, reverseReceipt } from './uninstall.js';
 
@@ -12,10 +13,10 @@ export const PAYLOAD = ['.claude-plugin', 'hooks', 'bin', 'skills', 'agents', 's
 
 export const stageDir = (paths) => path.join(paths.dataDir, 'plugin');
 
-function copyPayload(src, dest) {
+function copyPayload(src, dest, payload = PAYLOAD) {
   fs.rmSync(dest, { recursive: true, force: true });
   fs.mkdirSync(dest, { recursive: true });
-  for (const item of PAYLOAD) {
+  for (const item of payload) {
     const from = path.join(src, item);
     if (fs.existsSync(from)) {
       fs.cpSync(from, path.join(dest, item), {
@@ -72,12 +73,14 @@ function copyMode(paths, stage, log) {
   return { files, skipped };
 }
 
-export function install({ exec = realExec, env = process.env, log = () => {}, provider = 'github' } = {}) {
+export function install({ exec = realExec, env = process.env, log = () => {}, provider = 'github', target = 'claude' } = {}) {
   const paths = resolvePaths(env);
-  const doctor = runDoctor({ exec, provider }); // validates `provider` and requires the matching host CLI(s)
+  const doctor = runDoctor({ exec, provider, target }); // validates `provider` and requires the matching host CLI(s)
   const failed = doctor.checks.filter((c) => c.required && !c.ok);
   if (failed.length) throw new Error(`prerequisites missing: ${failed.map((c) => `${c.name} (${c.detail})`).join('; ')}`);
   for (const c of doctor.checks.filter((x) => x.warn)) log(`warning: ${c.name}: ${c.detail}`);
+
+  if (target === 'codex') return installCodex({ env, log, provider, copyPayload });
 
   const stage = stageDir(paths);
   // Reverse any previous install first (registrations and copied files), so a re-install is
