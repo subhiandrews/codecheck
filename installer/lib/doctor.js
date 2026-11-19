@@ -38,8 +38,16 @@ const NOT_FOUND_HINT = {
 };
 const hostChecks = (provider) => (provider === 'both' ? [...HOST_CHECKS.github, ...HOST_CHECKS.gitlab] : HOST_CHECKS[provider]);
 
-export function runDoctor({ exec, provider = 'github' }) {
+export function parseTarget(value) {
+  if (value !== 'claude' && value !== 'codex') throw new Error('--target must be claude or codex');
+  return value;
+}
+
+export function runDoctor({ exec, provider = 'github', target = 'claude', platform = process.platform }) {
   const checks = [];
+  const runtime = parseTarget(target) === 'codex'
+    ? [['codex', 'codex', ['--version'], true], ['codex login', 'codex', ['login', 'status'], true]]
+    : [['claude', 'claude', ['--version'], false]];
   const hosts = hostChecks(parseProvider(provider));
   const py = findPython(exec);
   if (py) {
@@ -54,11 +62,17 @@ export function runDoctor({ exec, provider = 'github' }) {
   for (const [name, cmd, args, required] of [
     ['git', 'git', ['--version'], true],
     ...hosts,
-    ['claude', 'claude', ['--version'], false],
+    ...runtime,
   ]) {
     const r = exec(cmd, args);
     const detail = r.status === 127 && NOT_FOUND_HINT[cmd] ? NOT_FOUND_HINT[cmd] : ((r.stdout || r.stderr).trim().split('\n')[0]) || '';
     checks.push({ name, ok: r.status === 0, required, warn: false, detail });
+  }
+  if (target === 'codex' && platform !== 'darwin') {
+    checks.push({
+      name: 'codex platform', ok: true, required: false, warn: true,
+      detail: `reviewer isolation was measured only on macOS; ${platform} requires the user-only opt-in`,
+    });
   }
   return { ok: checks.every((c) => c.ok || !c.required), checks };
 }

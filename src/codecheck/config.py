@@ -47,6 +47,35 @@ class ModelsConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class CodexModelsConfig(ModelsConfig):
+    aggregator: str = "gpt-6.2-astra"
+    language_experts: str = "gpt-6-luna"
+    reviewers: str = "gpt-6.2-sol"
+    deep: str = "gpt-6.2-sol"
+    security: str = "gpt-6.2-astra"
+    performance: str = "gpt-6.2-sol"
+    judge: str = "gpt-6.2-astra"
+
+
+@dataclass(frozen=True, slots=True)
+class CodexReasoningConfig(ModelsConfig):
+    aggregator: str = "high"
+    language_experts: str = "high"
+    reviewers: str = "medium"
+    deep: str = "medium"
+    security: str = "high"
+    performance: str = "medium"
+    judge: str = "high"
+
+
+@dataclass(frozen=True, slots=True)
+class CodexConfig:
+    max_parallel: int = 4
+    timeout_seconds: int = 300
+    allow_unmeasured_platform: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class DeepReviewerConfig:
     enabled: bool = False
     command: str = ""
@@ -109,6 +138,9 @@ class Config:
     review: ReviewConfig = field(default_factory=ReviewConfig)
     loop: LoopConfig = field(default_factory=LoopConfig)
     models: ModelsConfig = field(default_factory=ModelsConfig)
+    codex_models: CodexModelsConfig = field(default_factory=CodexModelsConfig)
+    codex_reasoning: CodexReasoningConfig = field(default_factory=CodexReasoningConfig)
+    codex: CodexConfig = field(default_factory=CodexConfig)
     deep_reviewer: DeepReviewerConfig = field(default_factory=DeepReviewerConfig)
     shadow: ShadowConfig = field(default_factory=ShadowConfig)
     golden: GoldenConfig = field(default_factory=GoldenConfig)
@@ -116,13 +148,15 @@ class Config:
     run_pr: RunPrConfig = field(default_factory=RunPrConfig)
 
 
-_FREEFORM = {("models", "per_language")}
+_FREEFORM = {(table, "per_language") for table in ("models", "codex_models", "codex_reasoning")}
 # Keys (or whole tables) a repository's .code-check.toml may not set.
 REPO_FORBIDDEN = {
     ("state_dir",), ("run_pr",), ("shadow",), ("golden",), ("review", "auto_approve"), ("review", "attribution"), ("review", "label"), ("review", "login"), ("loop", "review_forks"),
     ("address", "test_command"), ("deep_reviewer", "command"),
+    ("codex",), ("codex_models",), ("codex_reasoning",),
 }
 MODEL_NAME = re.compile(r"[A-Za-z0-9._:\[\]-]+")
+CODEX_EFFORTS = ("low", "medium", "high")
 LABEL_NAME = re.compile(r"[A-Za-z0-9._ :-]{1,50}")
 # A GitHub login, optionally a bot: octocat, github-actions[bot]. Never starts with '-'.
 LOGIN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}(\[bot\])?")
@@ -136,7 +170,23 @@ def expand_path(value: str) -> Path:
     return Path(value).expanduser()
 
 
-def model_for(models: ModelsConfig, role: str, language: str | None = None) -> str:
+def model_for(models: ModelsConfig | Config, role: str, language: str | None = None, *, runtime: str = "claude") -> str:
+    if runtime == "claude":
+        return _role_value(models.models if isinstance(models, Config) else models, role, language)
+    if runtime == "codex" and isinstance(models, Config):
+        return _codex_role_value(models.codex_models, role, language)
+    raise ConfigError(f"cannot select a model for runtime {runtime!r} with this config")
+
+
+def reasoning_for(cfg: Config, role: str, language: str | None = None) -> str:
+    return _codex_role_value(cfg.codex_reasoning, role, language)
+
+
+def _codex_role_value(models: ModelsConfig, role: str, language: str | None) -> str:
+    return models.judge if role == "judge" else _role_value(models, role, language)
+
+
+def _role_value(models: ModelsConfig, role: str, language: str | None) -> str:
     if role == "language_expert":
         if language and language in models.per_language:
             return models.per_language[language]
@@ -247,16 +297,29 @@ def _reject_repo_keys(repo: Mapping) -> None:
                 f"set it in ~/.config/code-check/config.toml or with a CODE_CHECK_ environment variable")
 
 
+def _role_entries(table: ModelsConfig):
+    yield from ((f.name, getattr(table, f.name)) for f in fields(table) if f.name != "per_language")
+    yield from ((f"per_language.{k}", v) for k, v in table.per_language.items())
+
+
+def validate_codex(cfg: Config) -> None:
+    for key, value in _role_entries(cfg.codex_models):
+        if not isinstance(value, str) or value.startswith("-") or not MODEL_NAME.fullmatch(value):
+            raise ConfigError(f"config key codex_models.{key} is not a valid model name: {value!r}")
+    for key, value in _role_entries(cfg.codex_reasoning):
+        if value not in CODEX_EFFORTS:
+            raise ConfigError(f"config key codex_reasoning.{key} must be one of {', '.join(CODEX_EFFORTS)}")
+    for key in ("max_parallel", "timeout_seconds"):
+        value = getattr(cfg.codex, key)
+        if type(value) is not int or value < 1:
+            raise ConfigError(f"config key codex.{key} must be a positive integer")
+
+
 def validate(cfg: Config) -> Config:
-    m = cfg.models
-    named = {"models.aggregator": m.aggregator, "models.language_experts": m.language_experts,
-             "models.reviewers": m.reviewers, "models.deep": m.deep, "models.security": m.security,
-             "models.performance": m.performance,
-             "models.judge": m.judge}
-    named |= {f"models.per_language.{k}": v for k, v in m.per_language.items()}
-    for key, value in named.items():
+    for key, value in _role_entries(cfg.models):
         if not isinstance(value, str) or not MODEL_NAME.fullmatch(value):
-            raise ConfigError(f"config key {key} is not a valid model name: {value!r}")
+            raise ConfigError(f"config key models.{key} is not a valid model name: {value!r}")
+    validate_codex(cfg)
     label = cfg.review.label
     if label and (label.startswith("-") or not LABEL_NAME.fullmatch(label)):
         raise ConfigError(f"config key review.label is not a valid label name: {label!r}")

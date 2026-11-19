@@ -87,6 +87,10 @@ Unattended runs have nobody to answer prompts, so they use `--permission-mode do
 
 Mount a volume at the data directory (`state_dir` and `shadow.store` in the config) so state and shadow data survive between runs. Nothing in the CLI prompts interactively.
 
+### Codex
+
+Use the Node installer with `--target codex` to install the interactive skills. See the [Codex installation guide](docs/INSTALL-CODEX.md) for prerequisites, configuration, first run and measured sandbox limits.
+
 ## Quick start
 
 ```text
@@ -150,7 +154,7 @@ Orange boxes are LLM work and blue boxes are the deterministic CLI. A reviewer t
 
 Settings are layered, highest precedence first: environment (`CODE_CHECK_<SECTION>__<KEY>`, for example `CODE_CHECK_REVIEW__AUTO_APPROVE=true`), your `~/.config/code-check/config.toml`, the repository's `.code-check.toml`, then the defaults below. Your own settings therefore win over a repository's. Unknown keys and wrong types in files are errors.
 
-A repository's `.code-check.toml` may **not** set the security-sensitive keys `state_dir`, anything under `[run_pr]`, `[shadow]` or `[golden]`, `review.auto_approve`, `review.attribution`, `review.label`, `review.login`, `loop.review_forks`, `address.test_command` or `deep_reviewer.command`: a repository you review is not trusted to choose what an unattended run may do or execute, where state is written, or whether reviews approve. Such a key in the repository file is an error that names the key; set it in your user file or the environment instead. Model names must match `[A-Za-z0-9._:[\]-]+`, `run_pr.permission_mode` must be one of `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`, and allowed-tool entries and prompts must not start with `-`.
+A repository's `.code-check.toml` may **not** set the security-sensitive keys `state_dir`, anything under `[run_pr]`, `[shadow]`, `[golden]`, `[codex]`, `[codex_models]` or `[codex_reasoning]`, `review.auto_approve`, `review.attribution`, `review.label`, `review.login`, `loop.review_forks`, `address.test_command` or `deep_reviewer.command`: a repository you review is not trusted to choose what an unattended run may do or execute, where state is written, or whether reviews approve. Such a key in the repository file is an error that names the key; set it in your user file or the environment instead. Model names must match `[A-Za-z0-9._:[\]-]+`, `run_pr.permission_mode` must be one of `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`, and allowed-tool entries and prompts must not start with `-`.
 
 ```toml
 provider = "auto"              # auto (a gitlab.com remote means gitlab, anything else github), "github" or "gitlab"
@@ -226,6 +230,12 @@ After changing `[models]`, re-run the installer (`node installer/cli.js install`
 | 15 language experts | Haiku 4.5 |
 
 Haiku keeps the language-expert fan-out cheap, and the Opus aggregator verifies Critical and Warning findings before they are posted. The risk is recall: the aggregator cannot recover a bug that nobody reported. Use `models.per_language` to move a language up a tier, and use shadow data to see which ones need it. Opus is used for the aggregator and, only when you turn it on, the security reviewer.
+
+For a Codex review, run `code-check panel run --run <run_id>` after `context`. The CLI starts read-only reviewers and the aggregator, validates their JSON, and runs `ingest` before aggregation. Check `failed_members` in the result. If the aggregator failed, stop before `post` and clean up the run. Other failed members make the review incomplete.
+
+`[codex_models]` and `[codex_reasoning]` use the same keys as `[models]`, including `per_language`. The defaults are GPT-6.2 Astra at high effort for aggregation, security and judging, GPT-6.2 Sol at medium effort for general, deep and performance review, and GPT-6 Luna at high effort for the language experts. Codex model values cannot start with `-`. `codex.max_parallel` defaults to 4 concurrent reviewers and `codex.timeout_seconds` to 300 seconds per process. Codex picks up these settings at run time. `codex.allow_unmeasured_platform` defaults to false and lets users explicitly opt in outside macOS.
+
+Regenerate the Codex skill templates from a checkout with `code-check gen-skills --out codex/skills`. Automatic queues via `loop` and `run-pr` use Claude Code.
 
 ### GitLab
 

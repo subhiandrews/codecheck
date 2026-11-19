@@ -1,6 +1,6 @@
 {
   "name": "code-check",
-  "version": "0.2.1",
+  "version": "1.0.0",
   "description": "PR review and review-comment tooling for Claude Code",
   "license": "Apache-2.0",
   "type": "module",
@@ -12,6 +12,9 @@
     "hooks",
     "bin",
     "skills",
+    "codex/skills",
+    "docs/INSTALL-CODEX.md",
+    "docs/superpowers/spikes/2026-11-19-codex.md",
     "agents",
     "src",
     "pyproject.toml",
