@@ -167,6 +167,14 @@ class GitHubProvider:
             return None
         return {"true": True, "false": False}.get(out)
 
+    def repo_license(self, repo: str) -> str | None:
+        try:
+            out = self._gh("repo", "view", _repo(repo), "--json", "licenseInfo", "--jq", ".licenseInfo.key").stdout.strip()
+        except ProviderError:
+            return None
+        key = out.lower()
+        return key if re.fullmatch(r"[a-z0-9.+-]{1,64}", key) and key not in ("other", "noassertion", "null") else None
+
     def clone_argv(self, repo: str, dest: str) -> list[str]:
         if dest.startswith("-"):
             raise ProviderError(f"invalid clone destination {dest!r}")

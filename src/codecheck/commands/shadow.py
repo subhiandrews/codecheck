@@ -34,6 +34,7 @@ def add_arguments(p) -> None:
     mode.add_argument("--finalize", help="check a confirmed draft and write it into the golden set")
     pr.add_argument("--out", help="where to write the draft (with --run)")
     pr.add_argument("--allow-private", action="store_true", help="promote a case from a private or unknown repository")
+    pr.add_argument("--allow-license", action="store_true", help="promote a case whose repository license is not on the allowed list")
     pr.add_argument("--force", action="store_true", help="with --finalize, overwrite an existing case with different content")
     pr.add_argument("--dest", default=None, help="golden case directory (default: the plugin repository's tests/golden)")
     sub.metavar = "{collect,export-golden,record-verdict}"
@@ -72,6 +73,27 @@ def _path(ctx, value: str) -> Path:
     return path if path.is_absolute() else ctx.cwd / path
 
 
+def _recorded_license(ctx, draft: Path, *, allow_license: bool) -> str | None:
+    """The license the run recorded for this draft ("" when it recorded none).
+
+    A draft whose run cannot be read back is refused, because its own `repo_license` could have been edited;
+    `--allow-license` is the explicit way past that."""
+    try:
+        run_id = json.loads(draft.read_text(encoding="utf-8")).get("run_id")
+        records = ctx.shadow.read(check_run_id(run_id)) if ctx.shadow else []
+        run = next((r for r in records if r.get("type") == "run"), None)
+    except (OSError, ValueError, AttributeError, CodeCheckError):
+        run = None
+    if run is None:
+        if allow_license:
+            return None
+        raise CodeCheckError(f"draft {draft.name}: the run it came from is not in the shadow store, so its repo_license "
+                             "cannot be checked; regenerate the draft, or pass --allow-license if you have the right "
+                             "to publish this diff")
+    lic = run.get("repo_license")
+    return lic if isinstance(lic, str) else ""
+
+
 def _promote(args, ctx) -> dict:
     if args.finalize:
         if args.dest is not None:
@@ -80,7 +102,10 @@ def _promote(args, ctx) -> dict:
             dest = DEFAULT_CASES
         else:  # an installed package has no tests/golden; never invent one inside site-packages
             raise CodeCheckError("no tests/golden directory next to this install; pass --dest")
-        case = finalize_case(_path(ctx, args.finalize), dest, allow_private=args.allow_private, force=args.force)
+        draft = _path(ctx, args.finalize)
+        case = finalize_case(draft, dest, allow_private=args.allow_private, force=args.force,
+                             allowed_licenses=ctx.config.golden.licenses, allow_license=args.allow_license,
+                             recorded_license=_recorded_license(ctx, draft, allow_license=args.allow_license))
         return {"case": str(case), "case_id": json.loads(case.read_text(encoding="utf-8"))["case_id"]}
     if not args.out:
         raise CodeCheckError("promote --run needs --out <draft path>")

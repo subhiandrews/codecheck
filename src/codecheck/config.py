@@ -59,6 +59,18 @@ class ShadowConfig:
     handoff: bool = False
 
 
+# Licenses under which a reviewed PR's diff may be committed to the public golden set (lowercase SPDX ids).
+DEFAULT_LICENSES = ("mit", "apache-2.0", "bsd-2-clause", "bsd-3-clause", "isc", "0bsd", "unlicense")
+
+
+@dataclass(frozen=True, slots=True)
+class GoldenConfig:
+    licenses: tuple[str, ...] = DEFAULT_LICENSES  # `shadow promote --finalize` refuses any other license
+
+    def __post_init__(self):
+        object.__setattr__(self, "licenses", tuple(str(x).strip().lower() for x in self.licenses))
+
+
 @dataclass(frozen=True, slots=True)
 class AddressConfig:
     test_command: str = ""
@@ -99,6 +111,7 @@ class Config:
     models: ModelsConfig = field(default_factory=ModelsConfig)
     deep_reviewer: DeepReviewerConfig = field(default_factory=DeepReviewerConfig)
     shadow: ShadowConfig = field(default_factory=ShadowConfig)
+    golden: GoldenConfig = field(default_factory=GoldenConfig)
     address: AddressConfig = field(default_factory=AddressConfig)
     run_pr: RunPrConfig = field(default_factory=RunPrConfig)
 
@@ -106,7 +119,7 @@ class Config:
 _FREEFORM = {("models", "per_language")}
 # Keys (or whole tables) a repository's .code-check.toml may not set.
 REPO_FORBIDDEN = {
-    ("state_dir",), ("run_pr",), ("shadow",), ("review", "auto_approve"), ("review", "attribution"), ("review", "label"), ("review", "login"), ("loop", "review_forks"),
+    ("state_dir",), ("run_pr",), ("shadow",), ("golden",), ("review", "auto_approve"), ("review", "attribution"), ("review", "label"), ("review", "login"), ("loop", "review_forks"),
     ("address", "test_command"), ("deep_reviewer", "command"),
 }
 MODEL_NAME = re.compile(r"[A-Za-z0-9._:\[\]-]+")
@@ -250,6 +263,9 @@ def validate(cfg: Config) -> Config:
     login = cfg.review.login
     if login and not LOGIN_NAME.fullmatch(login):
         raise ConfigError(f"config key review.login is not a valid GitHub login: {login!r}")
+    for lic in cfg.golden.licenses:
+        if not re.fullmatch(r"[a-z0-9.+-]{2,64}", lic):
+            raise ConfigError(f"config key golden.licenses must be a list of license ids such as \"mit\"; got {lic!r}")
     r = cfg.run_pr
     for key in ("review_allowed_tools", "babysit_allowed_tools"):
         for tool in getattr(r, key):

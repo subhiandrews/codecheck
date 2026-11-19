@@ -7,8 +7,10 @@ that does not replay exactly, and private (or unknown) repositories unless expli
 import json
 import os
 import re
+from collections.abc import Collection
 from pathlib import Path
 
+from codecheck.config import DEFAULT_LICENSES
 from codecheck.core.findings import _clean_path
 from codecheck.errors import CodeCheckError
 from codecheck.evals.golden import SCHEMA_VERSION, check_case, load_case, posted_view
@@ -93,7 +95,7 @@ def draft_case(shadow: ShadowStore, run_id: str) -> dict:
         "misses": [{k: h.get(k) for k in ("path", "line", "author", "body")} for h in humans.values() if not h.get("matches_finding")],
         "signals": _signals(shadow, run_id),
         "label_status": "auto",
-        "repo_private": run.get("repo_private"),
+        "repo_private": run.get("repo_private"), "repo_license": run.get("repo_license"), "run_id": run_id,
     })
 
 
@@ -107,9 +109,23 @@ def _file_name(case: dict) -> str:
     return f"{name}.json"
 
 
-def finalize_case(path: Path, dest_dir: Path, *, allow_private: bool, force: bool = False) -> Path:
+def license_problem(case: dict, allowed: Collection[str]) -> str | None:
+    """Why this case's repository license does not allow putting its diff in the public golden set, or None."""
+    lic = case.get("repo_license")
+    ok = {s for s in (str(x).strip().lower() for x in allowed) if s}
+    if isinstance(lic, str) and lic.strip().lower() in ok:
+        return None
+    shown = f"license {lic!r}" if isinstance(lic, str) and lic else "no known license"
+    return (f"the repository has {shown}, which is not in the allowed list ({', '.join(sorted(ok))}); pass --allow-license "
+            "only if you have the right to publish this diff")
+
+
+def finalize_case(path: Path, dest_dir: Path, *, allow_private: bool, force: bool = False,
+                  allowed_licenses: Collection[str] = DEFAULT_LICENSES, allow_license: bool = False,
+                  recorded_license: str | None = None) -> Path:
     """Check a confirmed draft and write it, scrubbed, as `dest_dir/<repo>-<pr>-<sha8>.json`.
 
+    `recorded_license` is the license the run recorded ("" when it recorded none); None skips that comparison.
     An existing case with different content is only replaced with `force`; identical content is left alone."""
     path, dest_dir = Path(path), Path(dest_dir)
     try:
@@ -126,9 +142,17 @@ def finalize_case(path: Path, dest_dir: Path, *, allow_private: bool, force: boo
     if case["repo_private"] is not False and not allow_private:
         reason = "private" if case["repo_private"] else "possibly private (visibility unknown)"
         raise CodeCheckError(f"draft {path.name}: the repository is {reason}; pass --allow-private to promote it anyway")
+    if recorded_license is not None and str(case.get("repo_license") or "").lower() != recorded_license.lower():
+        raise CodeCheckError(f"draft {path.name}: repo_license {case.get('repo_license')!r} differs from the license recorded "
+                             f"for the run ({recorded_license!r}); regenerate the draft instead of editing it")
+    if not allow_license:
+        reason = license_problem(case, allowed_licenses)
+        if reason:
+            raise CodeCheckError(f"draft {path.name}: {reason}")
     problems = check_case(case)
     if problems:
         raise CodeCheckError(f"draft {path.name} does not replay: " + "; ".join(problems[:5]))
+    case.pop("run_id", None)  # a local shadow run id means nothing in the public golden set
     if dest_dir.is_symlink():
         raise CodeCheckError(f"refusing to write through symlink {dest_dir}")
     dest_dir.mkdir(parents=True, exist_ok=True)

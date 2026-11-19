@@ -84,6 +84,7 @@ class FakeProvider:
         self.label_error = False
         self.private: bool | None = None
         self.private_calls: list = []
+        self.license: str | None = "mit"
 
     def add_pr(self, number: int = 7, **over) -> PullRequest:
         ref = PRRef(self.repo, number)
@@ -115,6 +116,9 @@ class FakeProvider:
     def repo_is_private(self, repo):
         self.private_calls.append(repo)
         return self.private
+
+    def repo_license(self, repo):
+        return self.license
 
     def clone_argv(self, repo, dest):
         return ["git", "clone", f"file:///fake/{repo}", dest]
