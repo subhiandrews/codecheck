@@ -324,7 +324,7 @@ def test_every_skill_rewrite_rule_still_matches():
     shared_rule_unused = {("review-pr", " If any subagent's final")}
     unmatched = set()
     for name, rules in SUBSTITUTIONS.items():
-        text = Path(__file__).resolve().parent.parent / "skills" / name / "SKILL.md".read_text(encoding="utf-8").replace("${CLAUDE_PLUGIN_ROOT}/bin/code-check", INSTALL_BIN)
+        text = (Path(__file__).resolve().parent.parent / "skills" / name / "SKILL.md").read_text(encoding="utf-8").replace("${CLAUDE_PLUGIN_ROOT}/bin/code-check", INSTALL_BIN)
         for pattern, replacement in rules:
             text, count = re.subn(pattern, replacement, text, flags=re.MULTILINE)
             if not count:
