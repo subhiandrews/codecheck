@@ -475,3 +475,23 @@ def test_wrapper_gives_the_cli_its_plugin_root(tmp_path):
     env = {**os.environ, "CODE_CHECK_PYTHON": str(probe)}
     res = subprocess.run([str(REPO / "bin/code-check")], env=env, capture_output=True, text=True, check=False)
     assert res.stdout.strip() == str(REPO)
+
+
+def test_codex_skills_are_generated_and_use_real_cli():
+    from codecheck.skillgen import render_codex_skills
+
+    output = REPO / "codex/skills"
+    generated = render_codex_skills(REPO / "skills")
+    assert {p.relative_to(output).as_posix() for p in output.glob("*/SKILL.md")} == set(generated)
+    for relative, expected in generated.items():
+        text = (output / relative).read_text()
+        assert text == expected
+        assert frontmatter(text)["name"] == Path(relative).parent.name
+        assert "@CODE_CHECK_BIN@" in text
+        assert not re.search(r"CLAUDE_PLUGIN_ROOT|subagent_type|code-check:|AskUserQuestion|Bash tool|run_in_background|/loop", text)
+        assert set(CLI_REF.findall(text)) <= SUBCOMMANDS
+        assert all(not invocation_errors(span) for span in SPAN.findall(text))
+        if relative.startswith("review-"):
+            assert text.count("`code-check panel run --run <run_id>`") == 1
+            assert "`code-check loop " not in text
+            assert "Note `run_id`. If" in text
