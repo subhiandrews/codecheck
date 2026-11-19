@@ -1,7 +1,24 @@
 """Provider-independent data types shared by every layer."""
 
+import re
 from dataclasses import asdict, dataclass
 from enum import StrEnum
+
+_BOT_SUFFIX = re.compile(r"\[bot\]$", re.IGNORECASE)
+_BOT_NAME = re.compile(r"[-_]bot$", re.IGNORECASE)
+# Accounts that review automatically but carry no bot flag on their host.
+_AUTOMATED_LOGINS = frozenset({"gitlabduo", "gitlab-duo"})
+
+
+def is_service_login(login: str) -> bool:
+    """A login that is certainly automated: `name[bot]` or a known AI reviewer such as GitLab Duo."""
+    return bool(_BOT_SUFFIX.search(login)) or login.lower() in _AUTOMATED_LOGINS
+
+
+def is_bot_login(login: str) -> bool:
+    """Wider, for sorting feedback only: also `name-bot` and `name_bot`, which a person could own. Never use it to
+    drop someone's reply from a review decision."""
+    return is_service_login(login) or bool(_BOT_NAME.search(login))
 
 
 class Severity(StrEnum):

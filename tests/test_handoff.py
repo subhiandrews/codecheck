@@ -643,3 +643,139 @@ def test_handoff_head_moved_is_null_without_a_recorded_head(tmp_path):
     call(ctx, "handoff", "--run", out["run_id"])
     _folder, data = handoff_files(ctx, out["run_id"])
     assert data["comparison_mode"] == "unposted" and data["head_moved"] is None
+
+
+def test_handoff_names_the_reviewers_behind_each_finding_and_accounts_for_every_reviewer_finding(tmp_path):
+    _, clone = make_origin_and_clone(tmp_path)
+    ctx = make_ctx(tmp_path, clone)
+    enable_handoff(ctx, tmp_path)
+    sh(clone, "checkout", "-b", "feat")
+    commit_file(clone, "app.py", "x = 1\ny = 2\n", "add app")
+    _code, out = call(ctx, "context", "--mode", "local", "--skill", "review-local")
+    finish_review(ctx, out, {"skeptic": [FINDING, FAR], "architect": [FINDING]},
+                  {"findings": [{**FINDING, "reviewers": ["skeptic", "architect"]}], "dropped": []})
+    call(ctx, "ingest", "--run", out["run_id"])
+    call(ctx, "post", "--run", out["run_id"])
+    call(ctx, "handoff", "--run", out["run_id"])
+    folder, data = handoff_files(ctx, out["run_id"])
+    assert data["findings"][0]["reviewers"] == ["skeptic", "architect"]
+    assert data["accounting"] == {"reviewer_findings": 3, "kept": 1, "dropped": 0, "possibly_unaccounted": {"skeptic": 1}}
+    text = (folder / "handoff.md").read_text()
+    assert "from skeptic, architect" in text
+    assert "Reviewer findings 3: 1 kept, 0 dropped; possibly unaccounted findings (several from one reviewer may have merged into one item): skeptic (1)" in text
+
+
+def test_handoff_accounting_is_clean_when_every_finding_is_merged_or_dropped(tmp_path):
+    ctx, out = local_run(tmp_path)
+    call(ctx, "handoff", "--run", out["run_id"])
+    folder, data = handoff_files(ctx, out["run_id"])
+    assert data["accounting"] == {"reviewer_findings": 1, "kept": 1, "dropped": 0, "possibly_unaccounted": {}}
+    assert "Reviewer findings 1: 1 kept, 0 dropped\n" in (folder / "handoff.md").read_text()
+
+
+def test_handoff_records_the_runtime_models_and_effort(tmp_path):
+    ctx, out = local_run(tmp_path)
+    call(ctx, "handoff", "--run", out["run_id"])
+    _, data = handoff_files(ctx, out["run_id"])
+    assert data["runtime"] == "claude" and data["reasoning"] is None
+    meta_path = Path(out["run_dir"]) / "context.json"
+    meta = json.loads(meta_path.read_text())
+    meta.update(runtime="codex", models={"skeptic": "gpt-6.2-sol"}, reasoning={"skeptic": "medium"})
+    meta_path.write_text(json.dumps(meta))
+    call(ctx, "handoff", "--run", out["run_id"])
+    folder, data = handoff_files(ctx, out["run_id"])
+    assert (data["runtime"], data["models"], data["reasoning"]) == ("codex", {"skeptic": "gpt-6.2-sol"}, {"skeptic": "medium"})
+    assert "Runtime: codex; models: skeptic gpt-6.2-sol (medium)" in (folder / "handoff.md").read_text()
+
+
+def _codex_line(kind, epoch, payload, *, stamp=None):
+    return json.dumps({"timestamp": stamp or _iso(epoch), "type": kind, "payload": payload})
+
+
+def _codex_setup(tmp_path):
+    ctx, out = local_run(tmp_path)
+    meta_path = Path(out["run_dir"]) / "context.json"
+    meta_path.write_text(json.dumps({**json.loads(meta_path.read_text()), "runtime": "codex"}))
+    ctx.env = {**ctx.env, "CODEX_HOME": str(tmp_path / "codex")}
+    day = tmp_path / "codex" / "sessions" / "2026" / "11" / "19"
+    day.mkdir(parents=True)
+    return ctx, out, day, _started(ctx, out)
+
+
+def test_handoff_copies_only_the_codex_review_turn(tmp_path):
+    ctx, out, day, t0 = _codex_setup(tmp_path)
+    run_id = out["run_id"]
+    secret = "ghp_" + "Z9" * 20
+    embedded = json.dumps({"password": "hunter2xyz", "note": "kept"})
+    meta = {"id": "s", "creator_user_id": "user-SECRETID", "creator_account_id": "ACCOUNTID", "cwd": "/repo"}
+    (day / "rollout-a.jsonl").write_text("\n".join([
+        _codex_line("session_meta", t0 - 9000, meta),
+        _codex_line("event_msg", t0 - 8000, {"type": "task_started"}),
+        _codex_line("response_item", t0 - 7999, {"type": "message", "content": "UNRELATED PRIVATE TASK"}),
+        _codex_line("event_msg", t0 - 5, {"type": "task_started"}),
+        _codex_line("response_item", t0 + 1, {"type": "function_call_output",
+                                              "output": f'{{"run_id": "{run_id}"}} {secret} {embedded}'}),
+        _codex_line("response_item", t0 + 2, {"type": "reasoning", "encrypted_content": "BLOB"}),
+        _codex_line("event_msg", t0 + 3, {"type": "token_count", "info": 1}),
+        _codex_line("event_msg", t0 + 4, {"type": "task_complete", "last_agent_message": "REVIEW COMPLETE"}),
+        _codex_line("event_msg", t0 + 5, {"type": "task_started", "turn_id": "LATER TURN"}),
+        _codex_line("response_item", t0 + 6, {"type": "message", "content": "UNRELATED FOLLOW-UP"}),
+    ]) + "\n")
+    # a later session that only quotes the run id must not be chosen even though it is newer
+    (day / "rollout-b.jsonl").write_text(
+        _codex_line("response_item", t0 + 500, {"type": "message", "content": f"see {run_id}"}) + "\n")
+    code, res = call(ctx, "handoff", "--run", run_id)
+    assert code == 0 and res["transcript"] is True
+    folder, data = handoff_files(ctx, run_id)
+    assert data["transcript_files"] == ["rollout-a.jsonl"] and data["signals"] is None
+    copied = (folder / "transcript" / "rollout-a.jsonl").read_text()
+    entries = [json.loads(line) for line in copied.splitlines()]  # every kept line is still valid JSON
+    assert run_id in copied and secret not in copied and "hunter2xyz" not in copied and "kept" in copied
+    assert "UNRELATED PRIVATE TASK" not in copied
+    assert "REVIEW COMPLETE" in copied
+    assert "LATER TURN" not in copied and "UNRELATED FOLLOW-UP" not in copied
+    assert "SECRETID" not in copied and "ACCOUNTID" not in copied and "BLOB" not in copied and "token_count" not in copied
+    assert entries[0]["type"] == "session_meta"
+
+
+def test_codex_session_choice_prefers_the_context_result_and_skips_unreadable_entries(tmp_path):
+    ctx, out, day, t0 = _codex_setup(tmp_path)
+    run_id = out["run_id"]
+    quote = _codex_line("response_item", t0 - 100, {"type": "message", "content": f"see {run_id}"})
+    (day / "rollout-quote.jsonl").write_text(quote + "\n")  # earlier, but only an incidental mention
+    (day / "rollout-partial.jsonl").write_text(f'{{"timestamp": "2026-11-19T00:00:00Z", "run {run_id}\n')  # cut off mid-write
+    (day / "rollout-naive.jsonl").write_text(
+        _codex_line("response_item", 0, {"type": "message", "content": run_id}, stamp="2026-11-19T00:00:00") + "\n")
+    (day / "rollout-ran.jsonl").write_text(
+        _codex_line("response_item", t0 + 1, {"type": "function_call_output", "output": f'{{"run_id": "{run_id}"}}'}) + "\n")
+    code, res = call(ctx, "handoff", "--run", run_id)
+    assert code == 0 and res["transcript"] is True
+    _, data = handoff_files(ctx, run_id)
+    assert data["transcript_files"] == ["rollout-ran.jsonl"]
+
+
+def test_handoff_accounting_survives_malformed_reviewer_lists_and_counts_a_name_once(tmp_path):
+    ctx, out = local_run(tmp_path)
+    run_dir = Path(out["run_dir"])
+    path = run_dir / "findings" / "aggregator.json"
+    agg = json.loads(path.read_text())
+    agg["dropped"] = [{"reviewers": [1, {}, "skeptic", "skeptic"], "file": "a.py", "line": 1, "message": "m", "reason": "duplicate"},
+                      {"reviewers": "skeptic"}, "junk"]
+    path.write_text(json.dumps(agg))
+    (run_dir / "findings" / "skeptic.json").write_text(json.dumps([FINDING, FAR, FAR]))
+    code, _ = call(ctx, "handoff", "--run", out["run_id"])
+    assert code == 0
+    _, data = handoff_files(ctx, out["run_id"])
+    assert data["dropped"] == agg["dropped"]  # the aggregator's own entries are kept as written
+    # skeptic has 3 findings; it is named once on the kept item and once (not twice) on the first dropped item
+    assert data["accounting"]["possibly_unaccounted"] == {"skeptic": 1}
+
+
+def test_handoff_codex_run_without_a_session_says_so(tmp_path):
+    ctx, out = local_run(tmp_path)
+    meta_path = Path(out["run_dir"]) / "context.json"
+    meta_path.write_text(json.dumps({**json.loads(meta_path.read_text()), "runtime": "codex"}))
+    ctx.env = {**ctx.env, "CODEX_HOME": str(tmp_path / "empty")}
+    call(ctx, "handoff", "--run", out["run_id"])
+    _, data = handoff_files(ctx, out["run_id"])
+    assert data["transcript"] is False and "Codex session" in data["transcript_reason"]

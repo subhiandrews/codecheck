@@ -4,10 +4,10 @@ import json
 import os
 import time
 from collections.abc import Callable, Mapping, Sequence
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from codecheck.shadow.scrub import scrub_text
+from codecheck.shadow.scrub import scrub, scrub_text
 
 _ERROR_CAP = 300
 _GUIDANCE_CAP = 20  # entries; each is cut to _ERROR_CAP characters
@@ -171,6 +171,23 @@ def extract_signals(paths: Sequence[Path], *, windows: Mapping[Path, tuple[float
     return out
 
 
+def _write_scrubbed(dest: Path, name: str, text: str) -> None:
+    dest.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(dest, 0o700)
+    target = dest / name
+    if target.is_symlink():
+        target.unlink()
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    try:
+        f = os.fdopen(fd, "wb")
+    except BaseException:
+        os.close(fd)
+        raise
+    with f:
+        os.fchmod(f.fileno(), 0o600)  # the descriptor, not the path: nothing can swap the file in between
+        f.write(scrub_text(text).encode("utf-8"))
+
+
 def copy_scrubbed(paths: Sequence[Path], dest: Path) -> list[str]:
     dest.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(dest, 0o700)
@@ -180,17 +197,129 @@ def copy_scrubbed(paths: Sequence[Path], dest: Path) -> list[str]:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        target = dest / path.name
-        if target.is_symlink():
-            target.unlink()
-        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-        try:
-            f = os.fdopen(fd, "wb")
-        except BaseException:
-            os.close(fd)
-            raise
-        with f:
-            os.fchmod(f.fileno(), 0o600)  # the descriptor, not the path: nothing can swap the file in between
-            f.write(scrub_text(text).encode("utf-8"))
+        _write_scrubbed(dest, path.name, text)
         written.append(path.name)
     return written
+
+
+_CODEX_EVENTS = frozenset({"task_started", "task_complete", "user_message", "agent_message"})
+_CODEX_IDENTITY = ("creator_user_id", "creator_account_id")
+
+
+def _entry_time(entry: dict) -> datetime | None:
+    """The entry's timestamp, only when it carries a timezone (a naive one cannot be ordered against the others)."""
+    try:
+        when = datetime.fromisoformat(str(entry.get("timestamp")))
+    except ValueError:
+        return None
+    return when if when.tzinfo is not None else None
+
+
+def _is_context_result(entry: dict, run_id: str) -> bool:
+    """A tool result holding `context`'s JSON for this run: the session that ran the command, not one that quotes the id."""
+    payload = entry.get("payload")
+    return (isinstance(payload, dict) and str(payload.get("type", "")).endswith("_output")
+            and f'"run_id": "{run_id}"' in str(payload.get("output")))
+
+
+def _first_mention(path: Path, run_id: str) -> tuple[int, datetime] | None:
+    """Rank of a session for this run: (0 if it holds context's result else 1, time of the first readable mention)."""
+    best = None
+    try:
+        with path.open(encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if run_id not in line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except (ValueError, RecursionError):
+                    continue  # a partly written line says nothing reliable
+                when = _entry_time(entry) if isinstance(entry, dict) else None
+                if when is None:
+                    continue
+                rank = (0 if _is_context_result(entry, run_id) else 1, when)
+                if best is None or rank < best:
+                    best = rank
+    except OSError:
+        return None
+    return best
+
+
+def find_codex_transcript(
+    sessions_dir: Path,
+    run_id: str,
+    *,
+    max_age_s: float = 86400,
+    now: Callable[[], float] = time.time,
+) -> Path | None:
+    """The Codex session that ran `context` for this run, else the one that mentioned the id first.
+
+    Later sessions may quote the id (a hand-off pasted into another session), so the newest match would be wrong."""
+    try:
+        cutoff = now() - max_age_s
+        found = []
+        for p in sessions_dir.glob("*/*/*/rollout-*.jsonl"):
+            try:
+                if not p.is_file() or p.is_symlink() or p.stat().st_mtime < cutoff:
+                    continue
+            except OSError:
+                continue
+            if (rank := _first_mention(p, run_id)) is not None:
+                found.append((rank, p))
+    except OSError:
+        return None
+    return min(found, key=lambda c: c[0])[1] if found else None
+
+
+def _codex_keep(entry: dict) -> bool:
+    payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else {}
+    kind = entry.get("type")
+    if kind == "session_meta":
+        return True
+    if kind == "response_item":
+        return payload.get("type") != "reasoning"  # the model's reasoning is encrypted noise here
+    return kind == "event_msg" and payload.get("type") in _CODEX_EVENTS
+
+
+def _codex_window(entries: list[dict], started: float) -> tuple[datetime, datetime | None]:
+    """Bound the review by surrounding turn starts, with a one-minute lookback if there is no start."""
+    run_start = datetime.fromtimestamp(started, UTC)
+    turns = [t for e in entries
+             if e.get("type") == "event_msg" and isinstance(e.get("payload"), dict)
+             and e["payload"].get("type") == "task_started" and (t := _entry_time(e)) is not None]
+    start = max((t for t in turns if t <= run_start), default=run_start - timedelta(seconds=60))
+    end = min((t for t in turns if t > run_start), default=None)
+    return start, end
+
+
+def copy_codex_scrubbed(path: Path, dest: Path, *, started: float) -> list[str]:
+    """Copy the turn that began this review from its Codex session.
+
+    Earlier and later turns can contain unrelated work. Reasoning, token counts
+    and account ids are dropped, and every string is scrubbed before it is serialised so that a credential inside
+    embedded JSON is seen unescaped."""
+    entries = []
+    try:
+        with path.open(encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                except (ValueError, RecursionError):
+                    continue
+                if isinstance(entry, dict) and _codex_keep(entry):
+                    entries.append(entry)
+    except OSError:
+        return []
+    start, end = _codex_window(entries, started)
+    kept = []
+    for entry in entries:
+        if entry.get("type") != "session_meta":
+            when = _entry_time(entry)
+            if when is None or when < start or (end is not None and when >= end):
+                continue
+        elif isinstance(entry.get("payload"), dict):
+            for key in _CODEX_IDENTITY:
+                entry["payload"].pop(key, None)
+        kept.append(json.dumps(scrub(entry), ensure_ascii=False))
+    _write_scrubbed(dest, path.name, "\n".join(kept) + "\n")
+    return [path.name]

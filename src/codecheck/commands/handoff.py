@@ -30,8 +30,10 @@ from codecheck.shadow.scrub import scrub, scrub_text
 from codecheck.shadow.store import write_private
 from codecheck.shadow.transcripts import (
     belongs_to_run,
+    copy_codex_scrubbed,
     copy_scrubbed,
     extract_signals,
+    find_codex_transcript,
     find_transcript,
     subagent_transcripts,
 )
@@ -65,7 +67,7 @@ def build_handoff(ctx, run_id: str) -> dict:
     folder = ctx.shadow.handoff_dir(run_id)
     records = ctx.shadow.read(run_id)
     started = next((r["ts"] for r in records if r.get("type") == "run" and isinstance(r.get("ts"), (int, float))), None)
-    transcript, transcript_reason, transcript_files, signals = _transcripts(ctx, run_id, folder, started)
+    transcript, transcript_reason, transcript_files, signals = _transcripts(ctx, run_id, folder, started, meta.get("runtime"))
     ignored_guidance = signals.pop("ignored_guidance", []) if signals else []
     decision = next((r for r in reversed(records) if r.get("type") == "decision"), None)
     findings = _findings(run_dir, meta, aggregator_raw)
@@ -95,9 +97,11 @@ def build_handoff(ctx, run_id: str) -> dict:
         "schema": SCHEMA, "run_id": run_id, "skill": meta.get("skill"), "mode": meta.get("mode"), "repo": meta.get("repo"),
         "pr": meta.get("pr"), "pr_url": pr_url, "head_sha": meta.get("head_sha"), "tool_version": __version__,
         **plugin_build(ctx.env),
-        "config_hash": config_hash(ctx.config), "models": meta.get("models"), "panel": meta.get("panel"), "blind": bool(meta.get("blind")),
+        "config_hash": config_hash(ctx.config), "runtime": meta.get("runtime") or "claude",
+        "models": meta.get("models"), "reasoning": meta.get("reasoning"), "panel": meta.get("panel"), "blind": bool(meta.get("blind")),
         "reviewers": _reviewers(run_dir, meta, ingest), "signals": signals,
         "findings": findings, "dropped": _dropped(aggregator_raw),
+        "accounting": _accounting(reviewer_raw, findings, _dropped(aggregator_raw)),
         "ignored_guidance": ignored_guidance,
         "decision": {k: decision.get(k) for k in ("event", "reason", "incomplete")} if decision else None,
         "comparison": comparison, "comparison_reason": comparison_reason, "general_comments_reason": general_reason,
@@ -150,8 +154,36 @@ def _findings(run_dir: Path, meta: dict, raw) -> list[dict]:
     findings, _ = check_finding_paths(findings, errors, meta.get("root"), "aggregator")
     diff = run_dir / "diff.patch"
     files = parse_diff(diff.read_text(encoding="utf-8")) if diff.exists() else {}
-    return [{"id": finding_id(f), "file": f.file, "line": f.line, "severity": f.severity.value, "category": f.category}
-            for f in finalize_findings(findings, files)]
+    return [{"id": finding_id(f), "file": f.file, "line": f.line, "severity": f.severity.value, "category": f.category,
+             "reviewers": list(f.reviewers)} for f in finalize_findings(findings, files)]
+
+
+def _named(item) -> set[str]:
+    reviewers = item.get("reviewers") if isinstance(item, dict) else None
+    return {name for name in reviewers if isinstance(name, str)} if isinstance(reviewers, list) else set()
+
+
+def _count(data) -> int:
+    try:
+        items = finding_items(data)
+    except (TypeError, KeyError):
+        return 0
+    return len(items) if isinstance(items, list) else 0
+
+
+def _accounting(reviewer_raw: dict, findings: list[dict], dropped: list) -> dict:
+    """Where the reviewers' findings went: kept, dropped, or neither.
+
+    A reviewer named on a kept or dropped item accounts for at least one of its findings. A reviewer with more
+    findings than that may have had several merged into one item, so `possibly_unaccounted` is a prompt to look,
+    not proof that something was lost. Malformed items are tolerated and a name counts once per item."""
+    raw = {m: _count(data) for m, data in reviewer_raw.items()}
+    named: dict[str, int] = {}
+    for item in [*findings, *dropped]:
+        for name in _named(item):
+            named[name] = named.get(name, 0) + 1
+    return {"reviewer_findings": sum(raw.values()), "kept": len(findings), "dropped": len(dropped),
+            "possibly_unaccounted": {m: raw[m] - named.get(m, 0) for m in raw if raw[m] > named.get(m, 0)}}
 
 
 def _dropped(raw) -> list:
@@ -165,7 +197,22 @@ def _projects_dir(ctx) -> Path:
     return (Path(base).expanduser() if base else Path.home() / ".claude") / "projects"
 
 
-def _transcripts(ctx, run_id: str, folder: Path, started: float | None) -> tuple[bool, str | None, list[str], dict | None]:
+def _codex_sessions_dir(ctx) -> Path:
+    base = ctx.env.get("CODEX_HOME")
+    return (Path(base).expanduser() if base else Path.home() / ".codex") / "sessions"
+
+
+def _transcripts(ctx, run_id: str, folder: Path, started: float | None, runtime: str | None = None) -> tuple[bool, str | None, list[str], dict | None]:
+    if runtime == "codex":
+        session = find_codex_transcript(_codex_sessions_dir(ctx), run_id)
+        if session is None:
+            return False, "no Codex session from the last day mentions this run id", [], None
+        # Reviewers ran as separate `codex exec --ephemeral` processes, so only the orchestrating session is kept,
+        # and its Claude-format signals (tool errors, retries) do not apply.
+        if started is None:
+            return False, "Codex session found but the run start is unknown, so its turns cannot be scoped", [], None
+        copied = copy_codex_scrubbed(session, folder / "transcript", started=started)
+        return bool(copied), "Codex session copied from the review's turn onward; no signals extracted for Codex", copied, None
     main = find_transcript(_projects_dir(ctx), run_id)
     if main is None:
         return False, "no Claude Code transcript from the last day mentions this run id", [], None

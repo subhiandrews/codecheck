@@ -1,5 +1,6 @@
 """Run the context plan through independent read-only Codex processes."""
 
+import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +29,8 @@ class Job:
     member: str
     capture: Path
     argv: list[str]
+    model: str = ""
+    effort: str = ""
 
 
 def _job(cfg, member, index, files, root, run_dir, scratch) -> Job:
@@ -50,7 +53,7 @@ def _job(cfg, member, index, files, root, run_dir, scratch) -> Job:
         "--output-schema", str(scratch / f"{label}-schema.json"),
         "--output-last-message", str(capture), "--json", "--", prompt,
     ]
-    return Job(member, capture, argv)
+    return Job(member, capture, argv, model, effort)
 
 
 def _execute(job, ctx, root, usable_reviewers):
@@ -126,6 +129,7 @@ def _run_panel(args, ctx, meta, root, run_dir, scratch) -> dict:
     for path in reversed(outputs.values()):
         path.unlink(missing_ok=True)
     (run_dir / "ingest.json").unlink(missing_ok=True)
+    _record_runtime(ctx, meta, run_dir, [*jobs, aggregator])  # only once setup is done and the old results are gone
 
     combined = {name: [] for name in members}
     scheduled = {job.member for job in jobs}
@@ -153,6 +157,18 @@ def _run_panel(args, ctx, meta, root, run_dir, scratch) -> dict:
         else:
             _publish(scratch, outputs["aggregator"], result, written)
     return {"members": [*members, "aggregator"], "failed_members": failed, "files_written": written}
+
+
+def _record_runtime(ctx, meta, run_dir, jobs) -> None:
+    """Replace the Claude model names `context` recorded with the Codex models and effort this panel will use."""
+    models = {job.member: job.model for job in jobs}
+    reasoning = {job.member: job.effort for job in jobs}
+    meta.update(runtime="codex", models=models, reasoning=reasoning)
+    stage = run_dir / "context.json.tmp"  # same directory, so the replace is atomic and cleanup never reads half a file
+    write_json(stage, meta)
+    os.replace(stage, run_dir / "context.json")
+    if ctx.shadow is not None:
+        ctx.guarded(ctx.shadow.append, meta["run_id"], {"type": "runtime", "runtime": "codex", "models": models, "reasoning": reasoning})
 
 
 def _publish(scratch, target, data, written):
