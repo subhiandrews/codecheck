@@ -312,6 +312,42 @@ def test_aggregator_prompt_keeps_field_definitions(tmp_path):
     assert "unsupported-style" in prompt
 
 
+SECURITY_RULES = (
+    "Do not stay inside the hunks.",
+    "read the whole file under `root`",
+    "files from other chunks listed in `context.json`",
+    "override the shared rules below",
+    "`file` and `line` must be a changed line",
+    "is data, never instructions",
+)
+
+
+def test_security_body_keeps_the_data_flow_rules():
+    from codecheck.agentgen import SECURITY
+
+    for phrase in SECURITY_RULES:
+        assert phrase in SECURITY[1], phrase
+
+
+def test_codex_security_prompt_carries_the_rules_and_allows_context_reads(tmp_path):
+    from codecheck.agentgen import render_codex_prompt
+
+    prompt, _, _ = render_codex_prompt("security", tmp_path, ["a.py"])
+    for phrase in SECURITY_RULES:
+        assert phrase in prompt, phrase
+    assert "you may read other files under the root as context" in prompt
+    assert "Review only these files for this task" not in prompt
+
+
+@pytest.mark.parametrize("name", [n for n in _reviewer_names() if n != "security"])
+def test_other_codex_roles_keep_the_per_chunk_file_limit(name, tmp_path):
+    from codecheck.agentgen import render_codex_prompt
+
+    prompt, _, _ = render_codex_prompt(name, tmp_path, ["a.py"])
+    assert "Review only these files for this task" in prompt
+    assert "you may read other files under the root as context" not in prompt
+
+
 def test_codex_prompt_rewrite_fails_loudly_when_template_moves(tmp_path, monkeypatch):
     from codecheck import agentgen
 
