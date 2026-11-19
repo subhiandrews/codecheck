@@ -10,5 +10,5 @@
 
    Also flag tests that mutate or stub away the very code under test.
 3. Check that the plugin version is bumped when the PR changes what an installed plugin ships. Installed copies only update when the version changes, so a change without a bump never reaches users. A bump is needed when the PR touches `skills/`, `agents/` (including prompt or default-model changes in `src/codecheck/agentgen.py`), `hooks/`, `bin/`, `.claude-plugin/`, `installer/`, or the CLI under `src/codecheck/` in a way that changes its behaviour. Docs, tests, CI and golden-case changes need none.
-   - The version must be higher than the base branch's and identical in `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `package.json` and `pyproject.toml`. Flag a PR that bumps some of these but not all.
+   - The version must be higher than the base branch's and identical in every place it lives: `VERSION`, `pyproject.toml`, `package.json`, `package-lock.json` (twice), `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` and `src/codecheck/__init__.py`. Flag a PR that bumps some of these but not all.
    - Flag a missing bump as a Warning, and say which changed paths need it.

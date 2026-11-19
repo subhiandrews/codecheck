@@ -289,7 +289,8 @@ def test_a_malformed_snippet_gets_its_schema_problems_not_a_crash(tmp_path):
 def test_a_brief_will_not_overwrite_the_case_it_is_built_from(tmp_path):
     src = tmp_path / "source.json"
     src.write_text(json.dumps(SOURCE))
-    for out_path in (str(src), str(tmp_path / "." / "source.json")):
+    (tmp_path / "sub").mkdir()
+    for out_path in (str(src), str(tmp_path / "sub" / ".." / "source.json")):  # the second spelling needs resolve()
         code, out = run_cli(tmp_path, "--brief", str(src), "--out", out_path)
         assert code == 1 and "overwrite" in out["error"], out
     assert json.loads(src.read_text()) == SOURCE
@@ -299,3 +300,24 @@ def test_a_category_that_names_the_source_is_refused_in_the_brief():
     labels = [{**SOURCE["labels"][0], "category": "ledger_reconciler-bug"}, *SOURCE["labels"][1:]]
     with pytest.raises(CodeCheckError, match="category"):
         build_brief({**SOURCE, "labels": labels})
+
+
+def test_a_source_with_no_diff_is_refused_not_passed(tmp_path):
+    for wrong in ({}, BRIEF, CLEAN, {**SOURCE, "diff": "  \n"}):
+        assert any("no diff" in p for p in check_synthetic(CLEAN, wrong, brief=BRIEF)), wrong
+    src = tmp_path / "brief.json"
+    src.write_text(json.dumps(BRIEF))  # the usual slip: the brief given as the source
+    snip = tmp_path / "snip"
+    snip.mkdir()
+    (snip / "case.json").write_text(json.dumps(CLEAN))
+    code, out = run_cli(tmp_path, "--check-synthetic", str(snip), "--source", str(src))
+    assert code == 0 and out["ok"] is False and "no diff" in out["problems"][0]
+
+
+def test_a_long_plain_word_is_found_inside_a_longer_lowercase_token():
+    snippet = clone()
+    snippet["change"]["inventory.go"] += "var mockstrictroundingmodex int\n"
+    assert any("'strictroundingmode'" in p for p in problems(snippet))
+    short = clone()
+    short["change"]["inventory.go"] += "var scoreboard, decoded int\n"  # a short name does not match inside other words
+    assert check_synthetic(short, {**SOURCE, "repo": "acme/core"}, brief=BRIEF) == []
