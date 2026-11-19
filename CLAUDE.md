@@ -49,7 +49,7 @@ scripts/install-git-hooks.sh                     # opt in: git config core.hooks
 - Never force-push; never post to draft PRs; the tool does not review its own PRs.
 - Shadow recording side effects only via `ctx.guarded(...)`: recording must never change a command's behaviour.
 - `ShadowStore.run_ids()` is not chronological; use `ordered_run_ids()` / `runs_for_pr`.
-- `StateStore` locks itself (`state.json.lock`); loop bookkeeping keys live under `loop:<mode>:<ref>`, never the `review:<ref>` keys that `precheck`/`post` own. Security-sensitive config keys (`state_dir`, `run_pr.*`, `shadow.*`, `review.auto_approve`, `review.attribution`, `review.label`, `loop.review_forks`) are rejected in a repo's `.code-check.toml`; user config beats repo config.
+- `StateStore` locks itself (`state.json.lock`); loop bookkeeping keys live under `loop:<mode>:<ref>`, never the `review:<ref>` keys that `precheck`/`post` own. Security-sensitive config keys (`state_dir`, `run_pr.*`, `shadow.*`, `golden.*`, `review.auto_approve`, `review.attribution`, `review.label`, `loop.review_forks`) are rejected in a repo's `.code-check.toml`; user config beats repo config.
 
 - Unattended hand-off rounds (`.claude/skills/handoff-round/`, `handoff-queue`): the queue and merge guard (`shadow/queue.py`, `commands/handoff_queue.py`, `tests/test_handoff_queue.py`) are protected paths that the guard itself refuses to let a round change, and the skill must run them from the installed plugin, not the branch under test. The owner has authorised that skill, and only that skill, to merge with `gh pr merge --admin` after CI is green and `handoff-queue check` says `ok`; every other merge still needs explicit go-ahead. Golden cases written by it carry `labelled_by: "handoff-round"`.
 

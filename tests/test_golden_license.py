@@ -3,6 +3,7 @@ when its repository's license allows it, and every source repository is credited
 """
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -10,9 +11,9 @@ from fakes import FakeRunner
 from test_promote import labelled, review_run, write
 
 from codecheck.cli import build_parser
-from codecheck.config import GoldenConfig, load_config
+from codecheck.config import DEFAULT_LICENSES, GoldenConfig, load_config
 from codecheck.errors import CodeCheckError, ConfigError
-from codecheck.evals.golden import DEFAULT_CASES, DEFAULT_LICENSES, load_cases
+from codecheck.evals.golden import DEFAULT_CASES, load_cases
 from codecheck.providers.github import GitHubProvider
 from codecheck.providers.gitlab import GitLabProvider
 from codecheck.shadow.promote import draft_case, finalize_case
@@ -26,9 +27,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_github_license_is_the_lowercased_spdx_id_or_none():
-    argv = ("gh", "repo", "view", "o/r", "--json", "licenseInfo", "--jq", ".licenseInfo.spdxId")
-    assert GitHubProvider(FakeRunner().on(*argv, stdout="Apache-2.0\n")).repo_license("o/r") == "apache-2.0"
-    for unknown in ("NOASSERTION\n", "null\n", "\n", "not a license!\n"):
+    argv = ("gh", "repo", "view", "o/r", "--json", "licenseInfo", "--jq", ".licenseInfo.key")
+    assert GitHubProvider(FakeRunner().on(*argv, stdout="apache-2.0\n")).repo_license("o/r") == "apache-2.0"
+    for unknown in ("other\n", "NOASSERTION\n", "null\n", "\n", "not a license!\n"):
         assert GitHubProvider(FakeRunner().on(*argv, stdout=unknown)).repo_license("o/r") is None
     assert GitHubProvider(FakeRunner().on(*argv, returncode=1, stderr="boom")).repo_license("o/r") is None
     assert GitHubProvider(FakeRunner()).repo_license("--bad/x") is None
@@ -113,13 +114,47 @@ def test_golden_licenses_default_to_permissive_ones_and_a_repo_cannot_widen_them
 # -- what is committed ------------------------------------------------------------------------------------------
 
 
+SYNTHETIC = {"seed-pipeline"}  # written for this project, not taken from any repository
+
+
 def test_every_committed_real_case_has_an_allowed_license_and_is_credited():
-    credits = (ROOT / "THIRD_PARTY.md").read_text(encoding="utf-8").lower()
+    table = (ROOT / "THIRD_PARTY.md").read_text(encoding="utf-8")
+    credited = {m.lower() for m in re.findall(r"^\| \[([^\]]+)\]\(", table, re.MULTILINE)}
     for case in load_cases(DEFAULT_CASES):
-        if case.get("origin") == "synthetic":
+        if case["case_id"] in SYNTHETIC:
             continue
         assert case.get("repo_license") in DEFAULT_LICENSES, f"{case['case_id']}: license {case.get('repo_license')!r}"
-        assert case["repo"].lower() in credits, f"add {case['repo']} to THIRD_PARTY.md"
+        assert case["repo"].lower() in credited, f"add {case['repo']} to the THIRD_PARTY.md table"
+
+
+def test_the_license_texts_the_credits_depend_on_are_shipped():
+    mit = (ROOT / "licenses" / "MIT-tokio-rs-tokio.txt").read_text(encoding="utf-8")
+    assert "Copyright" in mit and "Permission is hereby granted" in mit
+    assert "Apache License" in (ROOT / "licenses" / "Apache-2.0-google-guava.txt").read_text(encoding="utf-8")
+
+
+def test_a_draft_cannot_widen_the_license_the_run_recorded(tmp_path):
+    draft = draft_with(tmp_path, "mit")  # the draft says mit; pretend the run recorded gpl-3.0
+    with pytest.raises(CodeCheckError, match="differs from the license recorded"):
+        finalize_case(draft, tmp_path / "golden", allow_private=False, recorded_license="gpl-3.0")
+    assert finalize_case(draft, tmp_path / "golden", allow_private=False, recorded_license="MIT").exists()
+
+
+def test_a_synthetic_origin_in_a_draft_does_not_skip_the_gate(tmp_path):
+    ctx, _pr, out, _ids = review_run(tmp_path)
+    case = labelled(draft_case(ctx.shadow, out["run_id"]))
+    draft = write(tmp_path / "draft.json", {**case, "repo_license": "gpl-3.0", "origin": "synthetic"})
+    with pytest.raises(CodeCheckError, match="license"):
+        finalize_case(draft, tmp_path / "golden", allow_private=False)
+
+
+def test_a_bare_string_for_licenses_is_a_config_error(tmp_path):
+    (tmp_path / "r").mkdir()
+    home = tmp_path / "home"
+    (home / ".config/code-check").mkdir(parents=True)
+    (home / ".config/code-check/config.toml").write_text('[golden]\nlicenses = "mit"\n')
+    with pytest.raises(ConfigError, match="golden.licenses"):
+        load_config(tmp_path / "r", home, {})
 
 
 def test_committed_case_files_are_valid_json_objects():

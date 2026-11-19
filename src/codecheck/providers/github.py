@@ -169,10 +169,11 @@ class GitHubProvider:
 
     def repo_license(self, repo: str) -> str | None:
         try:
-            out = self._gh("repo", "view", _repo(repo), "--json", "licenseInfo", "--jq", ".licenseInfo.spdxId").stdout.strip()
+            out = self._gh("repo", "view", _repo(repo), "--json", "licenseInfo", "--jq", ".licenseInfo.key").stdout.strip()
         except ProviderError:
             return None
-        return out.lower() if re.fullmatch(r"[A-Za-z0-9.+-]{1,64}", out) and out not in ("NOASSERTION", "null") else None
+        key = out.lower()
+        return key if re.fullmatch(r"[a-z0-9.+-]{1,64}", key) and key not in ("other", "noassertion", "null") else None
 
     def clone_argv(self, repo: str, dest: str) -> list[str]:
         if dest.startswith("-"):

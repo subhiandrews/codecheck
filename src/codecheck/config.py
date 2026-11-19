@@ -263,6 +263,9 @@ def validate(cfg: Config) -> Config:
     login = cfg.review.login
     if login and not LOGIN_NAME.fullmatch(login):
         raise ConfigError(f"config key review.login is not a valid GitHub login: {login!r}")
+    for lic in cfg.golden.licenses:
+        if not re.fullmatch(r"[a-z0-9.+-]{2,64}", lic):
+            raise ConfigError(f"config key golden.licenses must be a list of license ids such as \"mit\"; got {lic!r}")
     r = cfg.run_pr
     for key in ("review_allowed_tools", "babysit_allowed_tools"):
         for tool in getattr(r, key):

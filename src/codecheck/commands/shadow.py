@@ -73,6 +73,17 @@ def _path(ctx, value: str) -> Path:
     return path if path.is_absolute() else ctx.cwd / path
 
 
+def _recorded_license(ctx, draft: Path) -> str | None:
+    """The license the run recorded for this draft, when the shadow store still has the run."""
+    try:
+        run_id = json.loads(draft.read_text(encoding="utf-8")).get("run_id")
+        run = next((r for r in ctx.shadow.read(check_run_id(run_id)) if r.get("type") == "run"), {}) if ctx.shadow else {}
+    except (OSError, ValueError, AttributeError, CodeCheckError):
+        return None
+    lic = run.get("repo_license")
+    return lic if isinstance(lic, str) and lic else None
+
+
 def _promote(args, ctx) -> dict:
     if args.finalize:
         if args.dest is not None:
@@ -81,7 +92,7 @@ def _promote(args, ctx) -> dict:
             dest = DEFAULT_CASES
         else:  # an installed package has no tests/golden; never invent one inside site-packages
             raise CodeCheckError("no tests/golden directory next to this install; pass --dest")
-        case = finalize_case(_path(ctx, args.finalize), dest, allow_private=args.allow_private, force=args.force,
+        case = finalize_case(_path(ctx, args.finalize), dest, recorded_license=_recorded_license(ctx, _path(ctx, args.finalize)), allow_private=args.allow_private, force=args.force,
                              allowed_licenses=ctx.config.golden.licenses, allow_license=args.allow_license)
         return {"case": str(case), "case_id": json.loads(case.read_text(encoding="utf-8"))["case_id"]}
     if not args.out:

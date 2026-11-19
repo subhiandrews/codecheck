@@ -95,7 +95,7 @@ def draft_case(shadow: ShadowStore, run_id: str) -> dict:
         "misses": [{k: h.get(k) for k in ("path", "line", "author", "body")} for h in humans.values() if not h.get("matches_finding")],
         "signals": _signals(shadow, run_id),
         "label_status": "auto",
-        "repo_private": run.get("repo_private"), "repo_license": run.get("repo_license"),
+        "repo_private": run.get("repo_private"), "repo_license": run.get("repo_license"), "run_id": run_id,
     })
 
 
@@ -121,7 +121,8 @@ def license_problem(case: dict, allowed: Collection[str]) -> str | None:
 
 
 def finalize_case(path: Path, dest_dir: Path, *, allow_private: bool, force: bool = False,
-                  allowed_licenses: Collection[str] = DEFAULT_LICENSES, allow_license: bool = False) -> Path:
+                  allowed_licenses: Collection[str] = DEFAULT_LICENSES, allow_license: bool = False,
+                  recorded_license: str | None = None) -> Path:
     """Check a confirmed draft and write it, scrubbed, as `dest_dir/<repo>-<pr>-<sha8>.json`.
 
     An existing case with different content is only replaced with `force`; identical content is left alone."""
@@ -140,7 +141,10 @@ def finalize_case(path: Path, dest_dir: Path, *, allow_private: bool, force: boo
     if case["repo_private"] is not False and not allow_private:
         reason = "private" if case["repo_private"] else "possibly private (visibility unknown)"
         raise CodeCheckError(f"draft {path.name}: the repository is {reason}; pass --allow-private to promote it anyway")
-    if not allow_license and case.get("origin") != "synthetic":
+    if recorded_license is not None and str(case.get("repo_license")).lower() != recorded_license.lower():
+        raise CodeCheckError(f"draft {path.name}: repo_license {case.get('repo_license')!r} differs from the license recorded "
+                             f"for the run ({recorded_license!r}); regenerate the draft instead of editing it")
+    if not allow_license:
         reason = license_problem(case, allowed_licenses)
         if reason:
             raise CodeCheckError(f"draft {path.name}: {reason}")
