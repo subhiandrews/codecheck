@@ -27,7 +27,10 @@ _HOST_TLDS = {"com", "org", "net", "io", "dev", "internal", "local", "corp", "ex
 _INSTRUCTIONS = (
     "Write an invented project in this language with one small change that has the defect each pattern describes, "
     "as a live snippet: base files, change files, the findings to expect and the reports that must not appear. "
-    "Use a fresh project name, file names and identifiers. Never reuse anything from real code."
+    "Use a fresh project name, file names and identifiers. Never reuse anything from real code. "
+    "Point each expected finding at the line a reviewer would anchor on: the statement or call that is wrong, not a handler "
+    "beside it (a match must land within 2 lines). The severities here come from a larger project, so choose the severity the "
+    "defect has when your snippet stands alone; an unexpected Critical fails the run."
 )
 
 
@@ -175,11 +178,10 @@ def _against_brief(snippet: Mapping, brief: Mapping) -> list[str]:
         used = _language(list(snippet.get("change", {})))
         if used not in (language, "unknown"):
             out.append(f"the brief is for {language}, but the snippet's files are {used}")
-    want, have = Counter(f.get("severity") for f in expected), Counter(e.get("severity") for e in got)
+    # severity is advisory: it was set by the original's context (a lost shutdown was a suggestion there and a
+    # critical when a snippet stood alone), so only the number and the categories must match
     if len(expected) != len(got):
         out.append(f"the brief expects {len(expected)} expected finding(s); the snippet has {len(got)}")
-    elif want != have:
-        out.append(f"the severities differ from the brief: want {dict(want)}, got {dict(have)}")
     for f in expected:
         if f.get("category") and not any(str(f["category"]).lower() in _names(e.get("category")) for e in got):
             out.append(f"no expected finding of the brief's category {f['category']!r} (list it among the snippet's categories)")

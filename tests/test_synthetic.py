@@ -71,6 +71,11 @@ def test_the_language_is_the_panels_detection_for_the_most_common_labelled_file(
     assert build_brief({**SOURCE, "labels": [{**SOURCE["labels"][0], "file": "build.gradle.kts"}]})["language"] == "kotlin"
 
 
+def test_the_instructions_say_where_to_anchor_and_that_severity_is_advisory():
+    text = build_brief(SOURCE)["instructions"].lower()
+    assert "anchor" in text and "within 2 lines" in text and "stands alone" in text
+
+
 def test_a_case_with_no_labelled_findings_has_no_brief():
     with pytest.raises(CodeCheckError, match="no labelled"):
         build_brief({**SOURCE, "labels": [SOURCE["labels"][2]]})
@@ -167,8 +172,8 @@ def test_allow_clears_a_term_a_person_decided_is_generic():
 
 def test_the_snippet_must_expect_what_the_brief_expects():
     assert any("expected" in p for p in problems({**CLEAN, "expected": []}))
-    wrong = {**CLEAN, "expected": [{**CLEAN["expected"][0], "severity": "critical"}]}
-    assert any("severit" in p for p in problems(wrong))
+    # severity is advisory: a standalone snippet can deserve a different one than the original's context gave
+    assert problems({**CLEAN, "expected": [{**CLEAN["expected"][0], "severity": "critical"}]}) == []
     assert any("must_not_report" in p for p in problems({**CLEAN, "must_not_report": []}))
 
 
