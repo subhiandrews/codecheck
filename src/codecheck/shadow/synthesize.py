@@ -147,12 +147,19 @@ def _runs(text: str) -> set[str]:
     return out
 
 
+def _matches(term: str, lowered: str, runs: set[str]) -> bool:
+    if not _NAME_TERM.fullmatch(term):
+        return term in lowered  # a path or host name
+    # a long plain word is distinctive enough to count inside a longer token too (`mockacmeinvoicerouter`)
+    return term.replace("_", "") in runs or (len(term) >= MIN_IDENTIFIER and "_" not in term and term in lowered)
+
+
 def found_terms(terms: Collection[str], text: str) -> list[str]:
     """The terms that appear in the text. A name matches whatever its case style (`reconcile_ledger_entries` finds
     `reconcileLedgerEntries`) and only on identifier boundaries (`core` is not in `score`, but is in `CoreClient`); a
-    path or host name matches as a plain substring."""
+    path or host name, and a long plain word, matches as a plain substring."""
     lowered, runs = text.lower(), _runs(text)
-    return sorted(t for t in terms if (t.replace("_", "") in runs if _NAME_TERM.fullmatch(t) else t in lowered))
+    return sorted(t for t in terms if _matches(t, lowered, runs))
 
 
 def _long_lines(texts: list[str]) -> set[str]:
@@ -186,6 +193,8 @@ def check_synthetic(snippet: Mapping, source: Mapping, *, brief: Mapping | None 
     schema = snippet_problems(dict(snippet))
     if schema:
         return schema
+    if not str(source.get("diff") or "").strip():
+        return ["the source case has no diff: nothing to compare the snippet against (is --source the right file?)"]
     problems = []
     if snippet.get("calibrated") is True:
         problems.append("calibrated must be absent or false: run `eval --live --only <name>` twice before setting it")
