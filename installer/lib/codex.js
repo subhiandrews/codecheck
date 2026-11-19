@@ -34,7 +34,12 @@ function readReceipt(paths) {
   const info = stat(paths.receipt);
   if (!info) return null;
   if (!info.isFile()) throw new Error('expected a regular Codex install receipt');
-  const receipt = JSON.parse(fs.readFileSync(paths.receipt, 'utf8'));
+  let receipt;
+  try {
+    receipt = JSON.parse(fs.readFileSync(paths.receipt, 'utf8'));
+  } catch {
+    throw new Error(`corrupt Codex install receipt at ${paths.receipt}; remove it and the skills it lists, then reinstall`);
+  }
   if (receipt?.mode !== 'codex' || !Array.isArray(receipt.files)) throw new Error('invalid Codex install receipt');
   return receipt;
 }

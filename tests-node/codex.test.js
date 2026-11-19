@@ -122,3 +122,11 @@ test('the CLI accepts the Codex uninstall target and rejects invalid targets', (
     assert.equal(result.status, flag.endsWith('codex') ? 0 : 1);
   }
 });
+
+test('a corrupt Codex receipt names the file and says how to recover', () => {
+  const { exec, env, receiptPath } = fixture();
+  install({ exec, env, target: 'codex' });
+  fs.writeFileSync(receiptPath, '{not json');
+  assert.throws(() => install({ exec, env, target: 'codex' }), (error) => error.message.includes(receiptPath) && /reinstall/.test(error.message));
+  assert.throws(() => uninstall({ exec, env, target: 'codex' }), (error) => error.message.includes(receiptPath));
+});

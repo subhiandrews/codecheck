@@ -280,3 +280,53 @@ def test_model_selection_and_user_override(tmp_path):
 def test_unmeasured_reasoning_effort_is_rejected(tmp_path, effort):
     with pytest.raises(ConfigError, match="must be one of low, medium, high"):
         load_config(tmp_path, tmp_path, {"CODE_CHECK_CODEX_REASONING__REVIEWERS": effort})
+
+
+def _reviewer_names():
+    from codecheck.agentgen import _reviewer_specs
+
+    return [spec[0] for spec in _reviewer_specs()]
+
+
+@pytest.mark.parametrize("name", _reviewer_names())
+def test_codex_prompts_keep_no_claude_write_steps(name, tmp_path):
+    from codecheck.agentgen import render_codex_prompt
+
+    prompt, _, _ = render_codex_prompt(name, tmp_path, ["a.py"])
+    assert "Write `RUN_DIR" not in prompt
+    assert "with the Write tool" not in prompt
+    assert "`done:" not in prompt
+    assert "Do not write any file" in prompt
+
+
+def test_aggregator_prompt_keeps_field_definitions(tmp_path):
+    from codecheck.agentgen import render_codex_prompt
+
+    prompt, _, _ = render_codex_prompt("aggregator", tmp_path, [])
+    assert "NEW-file line number" in prompt
+    assert "unsupported-style" in prompt
+
+
+def test_codex_prompt_rewrite_fails_loudly_when_template_moves(tmp_path, monkeypatch):
+    from codecheck import agentgen
+
+    monkeypatch.setattr(agentgen, "COMMON", agentgen.COMMON.replace("\n5. Write", "\n5. Save"))
+    with pytest.raises(ValueError, match="no longer matches"):
+        agentgen.render_codex_prompt("skeptic", tmp_path, ["a.py"])
+
+
+def test_every_skill_rewrite_rule_still_matches():
+    import re
+
+    from codecheck.skillgen import INSTALL_BIN, SUBSTITUTIONS
+
+    # (skill, pattern prefix) pairs that legitimately match nothing in that skill
+    shared_rule_unused = {("review-pr", " If any subagent's final")}
+    unmatched = set()
+    for name, rules in SUBSTITUTIONS.items():
+        text = Path(f"skills/{name}/SKILL.md").read_text(encoding="utf-8").replace("${CLAUDE_PLUGIN_ROOT}/bin/code-check", INSTALL_BIN)
+        for pattern, replacement in rules:
+            text, count = re.subn(pattern, replacement, text, flags=re.MULTILINE)
+            if not count:
+                unmatched.add((name, pattern[:len(" If any subagent's final")]))
+    assert unmatched == shared_rule_unused
