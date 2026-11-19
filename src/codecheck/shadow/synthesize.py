@@ -11,19 +11,16 @@ import re
 from collections import Counter
 from collections.abc import Collection, Mapping
 
+from codecheck.core.panel import detect_language
 from codecheck.errors import CodeCheckError
+from codecheck.evals.snippet import snippet_problems
 
 BRIEF_VERSION = 1
 MIN_LINE = 30  # a whole line this long that appears in both is a copy, not a coincidence
-MIN_IDENTIFIER = 12  # a plain word this long is distinctive enough to count
-_LANGUAGES = {
-    ".py": "python", ".go": "go", ".rs": "rust", ".js": "javascript", ".mjs": "javascript", ".cjs": "javascript",
-    ".ts": "typescript", ".tsx": "typescript", ".java": "java", ".kt": "kotlin", ".rb": "ruby", ".php": "php",
-    ".c": "c", ".h": "c", ".cc": "cpp", ".cpp": "cpp", ".hpp": "cpp", ".cs": "csharp", ".swift": "swift",
-    ".sh": "shell", ".sql": "sql",
-}
+MIN_IDENTIFIER = 12  # a plain word this long, in code, is distinctive enough to count
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _CAMEL = re.compile(r"[a-z][A-Z]|[A-Z]{2,}[a-z]")
+_BACKTICKED = re.compile(r"`([^`\n]+)`")
 _PATH = re.compile(r"[\w.-]+(?:/[\w.-]+)+")
 _HOST = re.compile(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 _HOST_TLDS = {"com", "org", "net", "io", "dev", "internal", "local", "corp", "example", "test", "lan", "intranet"}
@@ -35,8 +32,7 @@ _INSTRUCTIONS = (
 
 
 def _language(paths: list[str]) -> str:
-    counts = Counter(_LANGUAGES.get("." + p.rsplit(".", 1)[-1].lower()) for p in paths if "." in p.rsplit("/", 1)[-1])
-    counts.pop(None, None)
+    counts = Counter(lang for p in paths if (lang := detect_language(p)))
     return counts.most_common(1)[0][0] if counts else "unknown"
 
 
@@ -68,38 +64,58 @@ def _strings(value) -> list[str]:
     return []
 
 
-def _distinctive(token: str) -> bool:
+def _distinctive(token: str, *, long_words: bool = True) -> bool:
+    """A compound identifier, or (in code only) a long plain word. Python dunders are language, not project."""
     if token.startswith("__") and token.endswith("__"):
-        return False  # python dunders are language, not project
-    return "_" in token.strip("_") or bool(_CAMEL.search(token)) or len(token) >= MIN_IDENTIFIER
+        return False
+    return "_" in token.strip("_") or bool(_CAMEL.search(token)) or (long_words and len(token) >= MIN_IDENTIFIER)
 
 
-def _host(token: str) -> bool:
+def _is_host(token: str) -> bool:
+    """A name with a real top-level domain: three or more labels, or two under com, org or net. `os.path.join` and
+    `cfg.dev` are attribute chains, not hosts."""
     parts = token.lower().split(".")
-    return len(parts) >= 3 or parts[-1] in _HOST_TLDS
+    if parts[-1] not in _HOST_TLDS:
+        return False
+    return len(parts) >= 3 or parts[-1] in {"com", "org", "net"}
+
+
+def _is_path(token: str) -> bool:
+    """`a/b.py` and `a/b/c` are paths; `and/or` and `read/write` are prose."""
+    return token.count("/") >= 2 or "." in token.rsplit("/", 1)[-1]
 
 
 def _normal(line: str) -> str:
     return " ".join(line.lstrip("+- ").split()).lower()
 
 
-def _source_text(case: Mapping) -> str:
-    texts = [str(case.get("diff") or ""), str(case.get("repo") or "")]
-    texts += _strings(case.get("reviewer_outputs")) + _strings(case.get("aggregator")) + _strings(case.get("expected_posted"))
-    texts += [str(lab.get("file") or "") for lab in case.get("labels") or [] if isinstance(lab, dict)]
-    return "\n".join(texts)
+def _code_terms(text: str, *, long_words: bool = True) -> set[str]:
+    return {t.lower() for t in _IDENT.findall(text) if _distinctive(t, long_words=long_words)}
+
+
+def _shape_terms(text: str) -> set[str]:
+    out = {p.lower() for p in _PATH.findall(text) if _is_path(p)}
+    return out | {h.lower() for h in _HOST.findall(text) if _is_host(h)}
 
 
 def leak_terms(case: Mapping) -> set[str]:
-    """Lowercase terms that would identify the source: compound identifiers, long words, paths, host names, owner."""
-    text = _source_text(case)
-    terms = {t.lower() for t in _IDENT.findall(text) if _distinctive(t)}
-    terms |= {p.lower() for p in _PATH.findall(text)}
-    terms |= {h.lower() for h in _HOST.findall(text) if _host(h)}
+    """Lowercase terms that would identify the source. From the diff (its code): compound identifiers and long words.
+    From reviewer text, messages and comment bodies (prose): compound identifiers and whatever they quote in
+    backticks, since a plain long English word there says nothing about the project. From both: paths and host
+    names. Plus the repository."""
+    code = str(case.get("diff") or "")
+    prose = "\n".join(
+        _strings(case.get("reviewer_outputs")) + _strings(case.get("aggregator")) + _strings(case.get("expected_posted"))
+        + [str(lab.get(k) or "") for lab in case.get("labels") or [] if isinstance(lab, dict) for k in ("file", "message")]
+        + _strings(case.get("misses")))
+    # prose: compound identifiers (a reviewer or a person naming code), but not a plain long English word
+    terms = _code_terms(code) | _shape_terms(code) | _shape_terms(prose) | _code_terms(prose, long_words=False)
+    for quoted in _BACKTICKED.findall(prose):
+        terms |= _code_terms(quoted)  # what a message quotes in backticks is code, long plain words included
     repo = str(case.get("repo") or "")
     if "/" in repo:
-        owner = repo.split("/", 1)[0].lower()
-        terms |= {repo.lower()} | ({owner} if len(owner) >= 4 else set())
+        owner, name = (part.lower() for part in repo.split("/", 1))
+        terms |= {repo.lower()} | {part for part in (owner, name) if len(part) >= 4}
     return {t for t in terms if len(t) >= 4}
 
 
@@ -109,37 +125,48 @@ def _long_lines(texts: list[str]) -> set[str]:
 
 def check_synthetic(snippet: Mapping, source: Mapping, *, brief: Mapping | None = None, allow: Collection[str] = ()) -> list[str]:
     """Why this snippet may not stand in for the source, or [] when it may."""
-    from codecheck.evals.live import (
-        _problems as snippet_problems,  # lazy: evals.live imports the commands package
-    )
-
     schema = snippet_problems(dict(snippet))
     if schema:
         return schema
     problems = []
     if snippet.get("calibrated") is True:
         problems.append("calibrated must be absent or false: run `eval --live --only <name>` twice before setting it")
-    files = {**snippet.get("base", {}), **snippet.get("change", {})}
-    body = "\n".join([str(snippet.get("name", "")), *files, *files.values()])
+    # base and change are scanned apart: a change that rewrites a base file must not hide what the base held
+    contents = [*snippet.get("base", {}).values(), *snippet.get("change", {}).values()]
+    paths = [*snippet.get("base", {}), *snippet.get("change", {})]
+    body = "\n".join([str(snippet.get("name", "")), *paths, *contents])
     lowered, allowed = body.lower(), {a.strip().lower() for a in allow}
     problems += [f"shares {t!r} with the source (use another name, or --allow it if it is generic)"
                  for t in sorted(leak_terms(source) - allowed) if t in lowered]
-    copied = _long_lines(list(files.values())) & _long_lines([str(source.get("diff") or "")])
+    copied = _long_lines(contents) & _long_lines([str(source.get("diff") or "")])
     problems += [f"copies a line from the source: {line[:60]!r}" for line in sorted(copied)]
     if brief is not None:
         problems += _against_brief(snippet, brief)
     return problems
 
 
+def _names(category) -> set[str]:
+    return {category.lower()} if isinstance(category, str) else {c.lower() for c in category or [] if isinstance(c, str)}
+
+
 def _against_brief(snippet: Mapping, brief: Mapping) -> list[str]:
     findings = [f for f in brief.get("findings") or [] if isinstance(f, dict)]
-    want = Counter(f.get("severity") for f in findings if f.get("label") == "expected")
-    got = Counter(e.get("severity") for e in snippet.get("expected") or [] if isinstance(e, dict))
+    expected = [f for f in findings if f.get("label") == "expected"]
+    got = [e for e in snippet.get("expected") or [] if isinstance(e, dict)]
     out = []
-    if sum(want.values()) != sum(got.values()):
-        out.append(f"the brief expects {sum(want.values())} expected finding(s); the snippet has {sum(got.values())}")
-    elif want != got:
-        out.append(f"the severities differ from the brief: want {dict(want)}, got {dict(got)}")
+    language = brief.get("language")
+    if language and language != "unknown":
+        used = _language(list(snippet.get("change", {})))
+        if used not in (language, "unknown"):
+            out.append(f"the brief is for {language}, but the snippet's files are {used}")
+    want, have = Counter(f.get("severity") for f in expected), Counter(e.get("severity") for e in got)
+    if len(expected) != len(got):
+        out.append(f"the brief expects {len(expected)} expected finding(s); the snippet has {len(got)}")
+    elif want != have:
+        out.append(f"the severities differ from the brief: want {dict(want)}, got {dict(have)}")
+    for f in expected:
+        if f.get("category") and not any(str(f["category"]).lower() in _names(e.get("category")) for e in got):
+            out.append(f"no expected finding of the brief's category {f['category']!r} (list it among the snippet's categories)")
     wrong = sum(1 for f in findings if f.get("label") == "not_expected")
     if len(snippet.get("must_not_report") or []) < wrong:
         out.append(f"the brief has {wrong} finding(s) the reviewer must not report; must_not_report has "

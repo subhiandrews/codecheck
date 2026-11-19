@@ -35,7 +35,7 @@ def add_arguments(p) -> None:
     mode.add_argument("--check-synthetic", help="check a hand-written snippet directory against its source case")
     mode.add_argument("--run", help="draft a golden case from this hand-off run")
     mode.add_argument("--finalize", help="check a confirmed draft and write it into the golden set")
-    pr.add_argument("--out", help="where to write the draft (with --run)")
+    pr.add_argument("--out", help="where to write the draft (with --run) or the brief (with --brief)")
     pr.add_argument("--allow-private", action="store_true", help="promote a case from a private or unknown repository")
     pr.add_argument("--allow-license", action="store_true", help="promote a case whose repository license is not on the allowed list")
     pr.add_argument("--source", help="with --check-synthetic, the private case the snippet was written from")
@@ -100,6 +100,12 @@ def _recorded_license(ctx, draft: Path, *, allow_license: bool) -> str | None:
     return lic if isinstance(lic, str) else ""
 
 def _synthetic(args, ctx) -> dict:
+    stray = [flag for flag, given in (
+        ("--source", args.source and not args.check_synthetic), ("--against", args.against and not args.check_synthetic),
+        ("--allow", args.allow and not args.check_synthetic), ("--out", args.out and args.check_synthetic)) if given]
+    if stray:
+        raise CodeCheckError(f"{', '.join(stray)} does not apply to this mode: --source, --against and --allow go with "
+                             "--check-synthetic, and --out goes with --brief")
     if args.brief:
         if not args.out:
             raise CodeCheckError("promote --brief needs --out <brief path>")
