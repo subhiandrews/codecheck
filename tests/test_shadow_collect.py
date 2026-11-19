@@ -66,7 +66,7 @@ def test_export_golden_labels_and_misses_and_is_idempotent(tmp_path):
     assert export_golden(shadow, out) == 1
     (row,) = [json.loads(line) for line in out.read_text().splitlines()]
     labels = {f["id"]: f["label"] for f in row["findings"]}
-    assert labels == {"a" * 12: "confirmed", "b" * 12: "disputed", "c" * 12: "confirmed", "d" * 12: "no_signal"}
+    assert labels == {"a" * 12: "confirmed", "b" * 12: "replied", "c" * 12: "confirmed", "d" * 12: "no_signal"}
     assert [(m["path"], m["author"]) for m in row["misses"]] == [("b.py", "alice")]
     assert row["pr"] == "o/r#7" and row["label_status"] == "auto" and row["diff"].startswith("diff --git")
 

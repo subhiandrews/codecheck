@@ -100,8 +100,20 @@ def test_draft_labels_from_human_feedback(tmp_path):
 
     ctx, _pr, out, ids = review_run(tmp_path, threads=threads)
     case = draft_case(ctx.shadow, out["run_id"])
-    assert {lab["id"]: lab["label"] for lab in case["labels"]} == {ids[2]: "expected", ids[500]: "not_expected"}
+    # a reply alone ("this is wrong", or "thanks, fixed") is not a verdict: the finding stays unlabelled
+    assert {lab["id"]: lab["label"] for lab in case["labels"]} == {ids[2]: "expected", ids[500]: "unlabelled"}
     assert case["misses"] == [{"path": "app.py", "line": 120, "author": "bob", "body": "you missed the cache"}]
+
+
+def test_draft_uses_a_recorded_verdict_on_a_replied_thread(tmp_path):
+    def threads(ids):
+        return [own("T1", ids[2], replies=("thanks, fixed in abc123",)), own("T2", ids[500], replies=("this is wrong",))]
+
+    ctx, _pr, out, ids = review_run(tmp_path, threads=threads)
+    ctx.shadow.append(out["run_id"], {"type": "verdict", "thread_id": "T1", "verdict": "valid"})
+    ctx.shadow.append(out["run_id"], {"type": "verdict", "thread_id": "T2", "verdict": "incorrect"})
+    case = draft_case(ctx.shadow, out["run_id"])
+    assert {lab["id"]: lab["label"] for lab in case["labels"]} == {ids[2]: "expected", ids[500]: "not_expected"}
 
 
 def test_draft_counts_a_matching_human_comment_as_expected(tmp_path):

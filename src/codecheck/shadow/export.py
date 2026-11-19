@@ -9,12 +9,20 @@ from codecheck.shadow.store import ShadowStore
 
 
 def _label(outcome: dict | None) -> str:
+    """A reply is a signal, not a verdict: `replied` stays neutral (a golden draft leaves it unlabelled) until a
+    recorded verdict (`valid` or `incorrect`; any other verdict decides nothing) or a resolved or outdated thread says
+    which way it went. A verdict beats a resolve."""
     if outcome is None:
         return "unreviewed"
+    verdict = outcome.get("verdict")  # the most specific signal: a reviewer may Resolve a thread after accepting pushback
+    if verdict == "valid":
+        return "confirmed"
+    if verdict == "incorrect":
+        return "disputed"
     if outcome.get("resolved") or outcome.get("outdated"):
         return "confirmed"
     if outcome.get("replies"):
-        return "disputed"
+        return "replied"
     return "no_signal"
 
 
@@ -40,10 +48,16 @@ def run_feedback(shadow: ShadowStore) -> dict[str, tuple[dict[str, dict], dict[s
         winners[kind] = _latest_by_thread(
             [(i, r) for i, (_, recs) in enumerate(runs) for r in recs if r.get("type") == kind]
         )
+    # a thread's newest verdict, whichever run it was recorded against: the outcome counts in the newest run that
+    # collected the thread, which need not be the run the verdict was recorded for
+    verdicts = {
+        tid: r.get("verdict") for tid, (_, r) in _latest_by_thread(
+            [(i, r) for i, (_, recs) in enumerate(runs) for r in recs if r.get("type") == "verdict"]).items()
+    }
     out = {}
     for rid, recs in runs:
         outcomes = {
-            r["finding_id"]: r for r in recs
+            r["finding_id"]: {**r, "verdict": verdicts.get(r.get("thread_id"))} for r in recs
             if r.get("type") == "outcome" and isinstance(r.get("finding_id"), str)
             and winners["outcome"].get(r.get("thread_id"), (None, None))[1] is r
         }
@@ -56,9 +70,9 @@ def run_feedback(shadow: ShadowStore) -> dict[str, tuple[dict[str, dict], dict[s
 
 
 def finding_label(fid: str, outcomes: dict[str, dict], humans: dict[str, dict]) -> str:
-    """confirmed, disputed, no_signal or unreviewed; a human comment that matched the finding confirms it."""
+    """confirmed, disputed, replied, no_signal or unreviewed; a human comment that matched the finding confirms it."""
     label = _label(outcomes.get(fid))
-    if label in ("unreviewed", "no_signal") and any(h.get("matches_finding") == fid for h in humans.values()):
+    if label in ("unreviewed", "no_signal", "replied") and any(h.get("matches_finding") == fid for h in humans.values()):
         label = "confirmed"
     return label
 
