@@ -799,3 +799,60 @@ def test_comparison_body_is_collapsed_and_capped_like_general_comments():
            "body": "x  y\n" + "z" * 400, "matches_finding": None}
     (c,) = build_comparison([rec], [])["human_comments"]
     assert c["body"].startswith("x y z") and len(c["body"]) == 300
+
+
+def test_comparison_keeps_threads_on_unreviewed_paths_out_of_misses():
+    from codecheck.shadow.handoff import build_comparison
+    recs = [{"type": "human_comment", "thread_id": t, "path": p, "line": 5, "author": "bob", "body": "hm", "matches_finding": None}
+            for t, p in (("IN", "src/a.rs"), ("OUT", "tests/old.rs"))]
+    cmp = build_comparison(recs, [], reviewed={"src/a.rs"})
+    by_id = {c["thread_id"]: c for c in cmp["human_comments"]}
+    assert by_id["IN"]["in_review"] is True and by_id["OUT"]["in_review"] is False
+    assert cmp["misses"] == ["IN"]
+    assert "in_review" not in build_comparison(recs, [])["human_comments"][0]  # no reviewed set, no claim
+    assert build_comparison(recs, [])["misses"] == ["IN", "OUT"]
+
+
+def test_markdown_says_a_thread_was_outside_the_reviewed_diff():
+    from codecheck.shadow.handoff import render_markdown
+    cmp = {"human_comments": [{"thread_id": "T9", "path": "old.rs", "line": 3, "author": "bob", "matched_finding": None,
+                               "human_severity": None, "finding_severity": None, "severity_agrees": None,
+                               "body": "move this", "in_review": False}],
+           "unraised_findings": [], "misses": [], "general_comments": []}
+    text = render_markdown({"run_id": "r", "skill": "review-pr", "mode": "pr", "comparison": cmp, "reviewers": {}, "findings": []})
+    assert "T9 by bob at old.rs:3: not in the reviewed diff: move this" in text
+    assert "missed by us" not in text
+
+
+def test_reviewed_paths_come_from_the_run_chunks():
+    from codecheck.commands.handoff import _reviewed_paths
+    assert _reviewed_paths({"chunks": [["a.rs", "b.rs"], ["c.rs"]]}) == {"a.rs", "b.rs", "c.rs"}
+    assert _reviewed_paths({}) is None
+    assert _reviewed_paths({"chunks": []}) is None
+
+
+def test_comparison_treats_a_thread_with_no_path_as_reviewed():
+    from codecheck.shadow.handoff import build_comparison
+    rec = {"type": "human_comment", "thread_id": "T", "path": None, "line": 1, "author": "bob", "body": "hm", "matches_finding": None}
+    cmp = build_comparison([rec], [], reviewed={"a.py"})
+    assert cmp["human_comments"][0]["in_review"] is True and cmp["misses"] == ["T"]
+
+
+def test_handoff_posted_run_keeps_unreviewed_threads_out_of_misses(tmp_path):
+    ctx, provider, pr, out = _pr_handoff_run(tmp_path)
+    provider.threads[pr.ref] = [human("T2", 300, "rename this"), human("T3", 5, "moved away", path="gone.py")]
+    call(ctx, "handoff", "--run", out["run_id"])
+    folder, data = handoff_files(ctx, out["run_id"])
+    cmp = data["comparison"]
+    assert cmp["misses"] == ["T2"]
+    assert {h["thread_id"]: h["in_review"] for h in cmp["human_comments"]} == {"T2": True, "T3": False}
+    assert "T3 by bob at gone.py:5: not in the reviewed diff: moved away" in (folder / "handoff.md").read_text()
+
+
+def test_handoff_unposted_run_keeps_unreviewed_threads_out_of_misses(tmp_path):
+    ctx, provider, pr, out = _unposted_run(tmp_path)
+    provider.threads[pr.ref] = [human("T2", 300, "rename this"), human("T3", 5, "moved away", path="gone.py")]
+    call(ctx, "handoff", "--run", out["run_id"])
+    _folder, data = handoff_files(ctx, out["run_id"])
+    assert data["comparison"]["misses"] == ["T2"]
+    assert {h["thread_id"]: h["in_review"] for h in data["comparison"]["human_comments"]} == {"T2": True, "T3": False}
