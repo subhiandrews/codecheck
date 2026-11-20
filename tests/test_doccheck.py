@@ -53,7 +53,8 @@ def test_context_lines_keep_a_docstring_open_but_are_not_counted():
 def test_doc_paths():
     for p in ("README.md", "docs/a.rst", "CHANGELOG", "guide.rst", "a/b/NOTES.adoc", "docs/decisions/0001-x.md"):
         assert is_doc_path(p), p
-    for p in ("src/a.py", "tests/readme_test.py", "data.json", "requirements.txt"):
+    for p in ("src/a.py", "tests/readme_test.py", "data.json", "requirements.txt", "skills/x/SKILL.md", "agents/docs.md",
+              ".claude/agents/a.md", "pkg/agents/b.md"):
         assert not is_doc_path(p), p
 
 

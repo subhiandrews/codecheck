@@ -12,6 +12,7 @@ from pathlib import PurePosixPath
 from codecheck.core.diffmap import DiffLine, FileDiff
 
 DOC_SUFFIXES = (".md", ".mdx", ".rst", ".adoc")
+PROMPT_DIRS = ("/agents/", "/.claude/")
 DOC_STEMS = ("README", "CHANGELOG", "CHANGES", "HISTORY", "CONTRIBUTING", "NOTES", "AUTHORS")
 _HASH = {"python", "ruby", "shell"}
 _SLASH = {"javascript", "typescript", "java", "csharp", "cpp", "c", "go", "rust", "php", "swift", "kotlin"}
@@ -24,6 +25,8 @@ Scan = dict[str, list[list[tuple[DiffLine, bool | None]]]]  # path -> runs of (l
 
 def is_doc_path(path: str) -> bool:
     p = PurePosixPath(path)
+    if p.name == "SKILL.md" or any(d in f"/{path}" for d in PROMPT_DIRS):  # agent and skill prompts are not prose docs
+        return False
     return p.suffix.lower() in DOC_SUFFIXES or (not p.suffix and p.name.upper() in DOC_STEMS)
 
 

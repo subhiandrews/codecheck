@@ -22,7 +22,8 @@ def _new(path, lines):
 
 def go(*diffs, cfg=CFG):
     parsed = parse_diff("".join(diffs))
-    langs = {p: ("python" if p.endswith(".py") else "sql" if p.endswith(".sql") else None) for p in parsed}
+    kinds = {".py": "python", ".sql": "sql", ".js": "javascript", ".java": "java"}
+    langs = {p: kinds.get(p[p.rfind("."):]) for p in parsed}
     return route(parsed, langs, cfg)
 
 
@@ -97,3 +98,26 @@ def test_common_manifests_pipelines_and_interfaces_keep_the_architect():
         r = go(_mod(path, ["x"], ["y"]))
         assert r.architect, path
     assert not go(_mod("src/a.py", ["x"], ["y"])).architect
+
+
+def test_one_line_loop_bodies_score_in_brace_and_colon_languages():
+    assert go(_new("a.js", ["for (const u of users) { db.query(u); }"])).performance
+    assert go(_new("A.java", ["for (User u : users) { repo.findAll(u); }"])).performance
+    assert go(_new("a.py", ["for u in users: db.execute('SELECT 1', u)"])).performance
+    assert not go(_new("a.js", ["for (const u of users) { total += u.n; }"])).performance
+
+
+def test_nested_brace_loops_and_tab_indents_are_seen():
+    js = ["for (const u of users) {", "  for (const o of orders) {", "    db.query(u, o);", "  }", "}"]
+    assert go(_new("a.js", js)).performance
+    tabs = ["for u in users:", "\tfor o in orders:", "\t\tdb.execute('SELECT 1')"]
+    assert go(_new("a.py", tabs)).performance
+    mixed = ["for u in users:", "    for o in orders:", "\t\tdb.execute('SELECT 1')"]
+    assert go(_new("b.py", mixed)).performance
+
+
+def test_long_bracket_runs_do_not_blow_up():
+    import time
+    start = time.perf_counter()
+    go(_new("a.js", ["x = " + "[a for " * 20000]))
+    assert time.perf_counter() - start < 2

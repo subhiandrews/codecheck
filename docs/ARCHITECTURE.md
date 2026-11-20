@@ -155,7 +155,7 @@ It runs when asked or when routing finds a reason in the diff (see Reviewer rout
 
 - **Architect:** dropped for a clearly small change: at most `review.routing.small_max_lines` changed lines (default 40) in at most `small_max_files` files (3), with no added, deleted or renamed file and no manifest, pipeline, migration or interface file (`pyproject.toml`, `package.json`, `.proto`, `.github/workflows/`, `__init__.py` and similar). The pragmatist and skeptic always run.
 - **Performance:** added when the added lines score at least `performance_min_score` (3). A nested loop scores 3, a query or other I/O inside a loop 3, a sort, linear search or string build inside a loop 2, an unbounded read or cache 2, a SQL file 2, a lone loop 1 (at most 2 in all), a heavy collection type 1 (at most 2). Comments never score. It is a regex-level guess about what deserves the reviewer's time, not a finding.
-- **Docs:** added when a documentation file changed, or when at least `docs_min_comment_lines` (3) comment lines were added and comments exceed `max_comment_percent` (3%) of the added lines.
+- **Docs:** added when a documentation file changed (agent and skill prompts, `SKILL.md` and files under `agents/` or `.claude/`, are not documentation), or when at least `docs_min_comment_lines` (3) comment lines were added and comments exceed `max_comment_percent` (3%) of the added lines.
 
 Flags and configuration always win: `--security`, `--performance`, `review.security` and `review.performance` force a reviewer on, and routing never removes one. `review.routing.mode = "off"` restores the fixed panel (architect, pragmatist, skeptic).
 

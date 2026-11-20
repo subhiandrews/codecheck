@@ -27,7 +27,8 @@ STRUCTURAL_DIRS = (".github/workflows/", ".circleci/", "/migrations/", "/db/migr
 _STRUCTURAL_NAME = re.compile(r"^(?:requirements.*\.txt|Dockerfile.*|.*\.Dockerfile|.*\.d\.ts|openapi.*|swagger.*)$", re.IGNORECASE)
 
 _LOOP_HEAD = re.compile(r"^\s*(?:async\s+)?(?:for|foreach|while)\b|^\s*loop\s*\{")
-_LOOP_CALL = re.compile(r"\.(?:forEach|each|each_with_index)\b|\[[^\]]*\bfor\b[^\]]*\bin\b")
+_LOOP_CALL = re.compile(r"\.(?:forEach|each|each_with_index)\b|\[[^\]]{0,200}\bfor\b[^\]]{0,200}\bin\b")
+_INLINE_BODY = re.compile(r"\{(.*)$|:\s*(\S.*)$")  # the body of a one-line loop: `for (...) { q(); }` or `for x in y: q()`
 _QUERY = re.compile(r"\b(?:SELECT|INSERT|UPDATE|DELETE)\b|\.(?:execute|query|fetchone|fetchall|findAll|findOne|save)\(|\b(?:requests|http|fetch|subprocess)\b|\bopen\(|readFile")
 _SLOW_IN_LOOP = re.compile(r"\bsorted\(|\.sort\(|Collections\.sort|\.index\(|\.indexOf\(|\.includes\(|\.contains\(|\+=\s*f?[\"']")
 _UNBOUNDED = re.compile(r"\.read\(\)|\.readlines\(\)|read_text\(|readFile(?:Sync)?\(|\.fetchall\(|\.objects\.all\(\)|read_to_string|ReadAll")
@@ -77,7 +78,8 @@ def _performance_signals(diffs: Mapping[str, FileDiff], languages: Mapping[str, 
                 if flag is None or flag:  # blank or comment: never a signal, never closes a loop
                     continue
                 text = ln.text
-                indent = len(text) - len(text.lstrip())
+                expanded = text.expandtabs(4)
+                indent = len(expanded) - len(expanded.lstrip())
                 while stack and indent <= stack[-1]:
                     stack.pop()
                 in_loop = bool(stack)
@@ -91,6 +93,11 @@ def _performance_signals(diffs: Mapping[str, FileDiff], languages: Mapping[str, 
                     if _DDL.match(text) and ddl < 2:
                         ddl += 1
                         signals["schema change"] += 1
+                body = (m.group(1) or m.group(2) or "") if head and (m := _INLINE_BODY.search(text)) else ""
+                if body and _QUERY.search(body):
+                    signals["query or I/O in a loop"] += 3
+                if body and _SLOW_IN_LOOP.search(body):
+                    signals["linear scan, sort or string build in a loop"] += 2
                 if head and in_loop:
                     signals["nested loop"] += 3
                 elif (head or _LOOP_CALL.search(text)) and signals["loop"] < 2:
