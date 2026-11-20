@@ -17,7 +17,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from datetime import date
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 LIMIT = 100
 DEFAULT_DIR = Path(__file__).resolve().parent.parent / "docs" / "decisions"
@@ -73,8 +73,12 @@ def _check_record(name: str, text: str, evidence_exists: Callable[[str], bool]) 
             seen[key] = line.split(":", 1)[1].strip()
     out.extend(f"{name}: missing {f}:" for f in FIELDS if not seen.get(f))
     evidence = seen.get("Evidence")
-    if evidence and not evidence_exists(evidence.split("#", 1)[0]):
-        out.append(f"{name}: Evidence {evidence} does not exist")
+    if evidence:
+        target = evidence.split("#", 1)[0]
+        if PurePosixPath(target).is_absolute() or ".." in PurePosixPath(target).parts:
+            out.append(f"{name}: Evidence {evidence} must be a path inside the repository, without '..'")
+        elif not evidence_exists(target):
+            out.append(f"{name}: Evidence {evidence} does not exist")
     count = words(text)
     if count > LIMIT:
         out.append(f"{name}: {count} words, limit {LIMIT} ({count - LIMIT} over)")
@@ -114,7 +118,7 @@ def _problems(records: dict[str, str], index: str | None, evidence_exists: Calla
         elif new <= old:
             out.append(f"{old:04d} is superseded by {new:04d}, which is not a later record")
     for name in records:
-        if index is None or name not in index:
+        if index is None or f"]({name})" not in index:
             out.append(f"{name}: not listed in README.md")
     return out
 
@@ -164,7 +168,7 @@ def _new_locked(args: argparse.Namespace, d: Path) -> int:
         if old_path is None:
             print(f"decisions: no record {args.supersedes} to supersede", file=sys.stderr)
             return 1
-        old_lines = old_path.read_text().splitlines()
+        old_lines = old_path.read_text(encoding="utf-8").splitlines()
         m = STATUS_RE.match(old_lines[1]) if len(old_lines) > 1 else None
         if not m or not m.group(1):
             print(f"decisions: {old_path.name} is not an accepted record", file=sys.stderr)
@@ -175,10 +179,10 @@ def _new_locked(args: argparse.Namespace, d: Path) -> int:
     target.write_text(text, encoding="utf-8")
     if old_path is not None:
         old_lines[1] = f"Status: superseded by {num:04d} (accepted {m.group(1)})"
-        old_path.write_text("\n".join(old_lines) + "\n")
+        old_path.write_text("\n".join(old_lines) + "\n", encoding="utf-8")
     index = d / "README.md"
     if index.is_file():
-        with index.open("a") as fh:
+        with index.open("a", encoding="utf-8") as fh:
             fh.write(f"- [{target.name}]({target.name}): {args.title}\n")
     print(f"{target} ({count}/{LIMIT} words)")
     return 0

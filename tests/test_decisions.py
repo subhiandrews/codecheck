@@ -102,6 +102,18 @@ def test_the_index_must_list_every_record(tmp_path):
     assert any("0001-a.md" in p and "README" in p for p in decisions.problems(d))
 
 
+def test_the_index_needs_a_link_to_the_record_not_just_its_name_in_prose(tmp_path):
+    d = make_dir(tmp_path, {"0001-a.md": record()})
+    (d / "README.md").write_text("# Decisions\n\nWe dropped 0001-a.md last week.\n")
+    assert any("0001-a.md" in p and "README" in p for p in decisions.problems(d))
+
+
+@pytest.mark.parametrize("evidence", ["/etc/hosts", "../outside.md", "docs/../../outside.md"])
+def test_evidence_must_stay_inside_the_repository(tmp_path, evidence):
+    out = decisions.problems(make_dir(tmp_path, {"0001-a.md": record(evidence=evidence)}))
+    assert any("inside the repository" in p for p in out)
+
+
 def run_new(d, **kw):
     argv = ["new", "--dir", str(d), "--title", "New thing", "--date", "2026-11-20", "--decision", "Do it.",
             "--why", "It helps.", "--rejected", "Not doing it."]
