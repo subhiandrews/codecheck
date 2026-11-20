@@ -56,3 +56,22 @@ def test_performance_member_is_opt_in_and_ordered():
 def test_security_member_is_opt_in_and_ordered():
     assert select_panel(["a.py"]).members == ("architect", "pragmatist", "skeptic", "lang-python")
     assert select_panel(["a.py"], security=True).members == ("architect", "pragmatist", "skeptic", "security", "lang-python")
+
+
+def test_architect_can_be_routed_out_but_never_the_other_core_reviewers():
+    panel = select_panel(["a.py"], architect=False)
+    assert panel.core == ("pragmatist", "skeptic")
+    assert panel.members == ("pragmatist", "skeptic", "lang-python")
+
+
+def test_docs_member_is_ordered_after_performance():
+    members = select_panel(["a.py"], security=True, performance=True, docs=True).members
+    assert members == ("architect", "pragmatist", "skeptic", "security", "performance", "docs", "lang-python")
+
+
+def test_full_means_every_reviewer_whatever_routing_said():
+    panel = select_panel(["a.py"], architect=False, full=True)
+    assert panel.members == ("architect", "pragmatist", "skeptic", "security", "performance", "docs", "lang-python")
+    with_deep = select_panel(["a.py"], deep_enabled=True, deep_available=True, full=True)
+    assert with_deep.members[-1] == "deep-reviewer"
+    assert any("deep" in n for n in select_panel(["a.py"], deep_enabled=True, deep_available=False, full=True).notes)

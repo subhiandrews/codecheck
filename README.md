@@ -37,7 +37,7 @@ In Claude Code the skills are `/code-check:<skill>`; in Codex they are `$<skill>
 /code-check:babysit-pr                   # comments and failing CI on all your PRs
 ```
 
-A PR is `123` (current repository), `OWNER/REPO#123` or a URL; on GitLab a merge request is `7`, `group/subgroup/project#7` or a URL. Add `security` or `performance` after the PR to include that optional reviewer.
+A PR is `123` (current repository), `OWNER/REPO#123` or a URL; on GitLab a merge request is `7`, `group/subgroup/project#7` or a URL. Add `security` or `performance` after the PR to include that optional reviewer, or `full` to use every reviewer and skip routing.
 
 ## Skills
 
@@ -57,13 +57,14 @@ Reviewers run in parallel per chunk of the diff and write findings files. The CL
 | Agent | Role | Default model |
 |---|---|---|
 | `code-check:lang-<name>` | One per language in the diff: c, cpp, csharp, go, java, javascript, kotlin, php, python, ruby, rust, shell, sql, swift, typescript | Haiku |
-| `architect`, `pragmatist`, `skeptic` | Design, simplicity and adversarial review | Sonnet |
+| `architect`, `pragmatist`, `skeptic` | Design, simplicity and adversarial review; the architect is skipped for a clearly small change | Sonnet |
 | `security` (opt-in) | Secrets, PII, injection, auth, crypto, risky dependencies | Opus |
-| `performance` (opt-in) | Complexity, N+1, unbounded growth, blocking calls | Sonnet |
+| `performance` (routed) | Complexity, N+1, unbounded growth, blocking calls | Sonnet |
+| `docs` (routed) | Skeptical of comments (3% cap per PR) and new or verbose documentation | Sonnet |
 | `deep-reviewer` (optional slot) | Your own knowledge sources via MCP; off by default | Sonnet |
 | `aggregator` | Merges duplicates, verifies, drops noise | Opus |
 
-Opt in with `--security` / `--performance` on `context` and `run-pr`, the `security` / `performance` skill argument, or `review.security` / `review.performance`. Codex uses its own model table (`[codex_models]`).
+`context` routes `architect`, `performance` and `docs` from the diff, in code, and records why in `panel.routing`; `review.routing` tunes it. Force a reviewer with `--security` / `--performance` on `context` and `run-pr`, the `security` / `performance` skill argument, or `review.security` / `review.performance`. `--full`, the `full` skill argument or `review.full` runs every reviewer, security and performance included, with no routing. Codex uses its own model table (`[codex_models]`).
 
 ## CLI
 
@@ -71,7 +72,7 @@ Every subcommand prints exactly one JSON document, errors included. Run `code-ch
 
 | Group | Commands |
 |---|---|
-| Review | `precheck`, `sync`, `context [--mode local\|pr] [--pr] [--security] [--performance]`, `panel run` (Codex), `ingest`, `post`, `cleanup` |
+| Review | `precheck`, `sync`, `context [--mode local\|pr] [--pr] [--full] [--security] [--performance]`, `panel run` (Codex), `ingest`, `post`, `cleanup` |
 | Address comments | `status`, `workspace`, `threads`, `commit`, `push`, `reply`, `resolve`, `request-review`, `checks`, `check-log`, `attempt` |
 | Unattended | `list-work`, `mark-done`, `run-pr --mode review\|babysit --pr REF`, `loop --mode review\|babysit` |
 | Setup | `doctor`, `gen-agents --out agents`, `gen-skills --out codex/skills` |
@@ -91,6 +92,7 @@ base_branch = "auto"
 auto_approve = false           # true: approve only with no Critical or Warning findings
 security = false
 performance = false
+full = false
 ignore = ["**/*.lock", "dist/**"]
 
 [address]

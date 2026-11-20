@@ -46,3 +46,5 @@ Records dated before 2026-11-20 were reconstructed from the original design spec
 - [0025-codex-runs-only-on-measured-platforms.md](0025-codex-runs-only-on-measured-platforms.md): Codex runs only on measured platforms
 - [0026-synthetic-cases-keep-the-lesson-and-drop-the-code.md](0026-synthetic-cases-keep-the-lesson-and-drop-the-code.md): Synthetic cases keep the lesson and drop the code
 - [0027-the-leak-check-exempts-only-listed-terms.md](0027-the-leak-check-exempts-only-listed-terms.md): The leak check exempts only listed terms
+- [0028-routing-is-decided-in-code-from-the-diff.md](0028-routing-is-decided-in-code-from-the-diff.md): Routing is decided in code from the diff
+- [0029-the-docs-reviewer-is-skeptical-and-capped-per-pr.md](0029-the-docs-reviewer-is-skeptical-and-capped-per-pr.md): The docs reviewer is skeptical and capped per PR

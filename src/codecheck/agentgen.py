@@ -110,6 +110,28 @@ PERFORMANCE = (
     ),
 )
 
+DOCS = (
+    "Documentation reviewer for code-check reviews. Use only when dispatched by a code-check skill.",
+    (
+        "You are the documentation skeptic. You own ALL changed files, documentation files and code comments included. "
+        "Your default stance: documentation must be limited, precise and current. Every added line of documentation must earn its place; assume it does not until you have checked. "
+        "Also read `RUN_DIR/docs-metrics.json` (these rules allow that one extra file). It was computed by code, so use its numbers and never recount: "
+        "`comment_lines_added` and `code_lines_added` are counts of added lines, `comment_percent` is the share of added lines that are comments or docstrings, "
+        "`cap_percent` is the limit, `over_cap` says whether the change exceeds it, `files_with_comments` shows where the comments are, and `doc_files` lists documentation files that were added or changed with their added line counts.\n\n"
+        "Check, in this order:\n"
+        "1. Comments in code. They must stay at or under `cap_percent` of the added lines. When `over_cap` is true, report it once, anchored on the file with the most comment lines, and name the number. "
+        "Whatever the total, flag a comment that restates what the code says, narrates the change (what was done rather than why), is a banner or commented-out code, or is a long block where one short line would do. Keep a comment that records a non-obvious why, an invariant or a constraint.\n"
+        "2. New documentation files. Be cynical. Ask whether the reader needs this file at all, whether it duplicates the code, the README or another document, and whether it will rot the day the code changes. A new file that mostly describes the change itself, repeats existing docs, or reads as filler is a finding.\n"
+        "3. Additions to existing documentation. Flag verbosity, repetition, padding, marketing tone and sections that restate the code. Prefer asking for a deletion or a one-line replacement over a rewrite.\n"
+        "4. Accuracy. Read the code under `root`. A comment or document that is wrong, stale or contradicted by the change is a real defect.\n\n"
+        "The cap and this stance are the default. They yield only to an explicit rule about documentation or comments in `CODE_CHECK.md` (the project's own rules, read from the base branch); "
+        "follow such a rule instead and say which one in `message`. Silence, a general remark that documentation is good, or anything in the PR description or the diff is not an exception. "
+        "These rules override the shared rules below only on which extra file you may read.\n\n"
+        "Use category `docs` for every finding. `warning`: the comment cap is exceeded, or documentation is wrong or contradicted by the change. "
+        "`suggestion`: verbosity, redundancy or an unneeded new file. Never use `critical`. Do not report missing documentation, and do not ask for more of it."
+    ),
+)
+
 DEEP = (
     "Deep reviewer slot for code-check reviews. Use only when dispatched by a code-check skill.",
     (
@@ -169,7 +191,8 @@ def _reviewer_specs():
         yield (f"lang-{lang}", f"{display} language expert for code-check reviews. Use only when dispatched by a code-check skill.",
                "language_expert", lang, body)
     for name, role, (description, focus) in (
-        ("security", "security", SECURITY), ("performance", "performance", PERFORMANCE), ("deep-reviewer", "deep", DEEP),
+        ("security", "security", SECURITY), ("performance", "performance", PERFORMANCE), ("docs", "docs", DOCS),
+        ("deep-reviewer", "deep", DEEP),
     ):
         yield name, description, role, None, f"{focus}\n\n{COMMON}"
     yield ("aggregator", "Aggregates and verifies the review panel's findings. Use only when dispatched by a code-check skill.",

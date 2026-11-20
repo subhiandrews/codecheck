@@ -456,6 +456,8 @@ def test_security_argument_is_documented_and_wired():
         assert "security" in frontmatter(text)["argument-hint"]
         assert pinned[name] in text
         assert "`--performance`" in lines[0] and "performance" in frontmatter(text)["argument-hint"]
+        assert "`--full`" in lines[0] and "full" in frontmatter(text)["argument-hint"]
+        assert "skips routing" in text and "`panel.routing`" in text
     for name in ("address-comments", "babysit-pr"):
         assert "guidance" in (REPO / f"skills/{name}/SKILL.md").read_text()
 

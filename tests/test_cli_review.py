@@ -14,7 +14,7 @@ from clihelp import (
 from fakes import FakeProvider, FakeRunner
 from gitutil import commit_file, make_origin_and_clone, push_branch, sh
 
-from codecheck.config import ReviewConfig
+from codecheck.config import ReviewConfig, RoutingConfig
 from codecheck.core.render import ATTRIBUTION
 
 pytestmark = pytest.mark.usefixtures("git_env")
@@ -751,3 +751,60 @@ def test_context_performance_flag_adds_member_and_model(tmp_path):
     cfg_ctx = make_ctx(tmp_path, clone, review=ReviewConfig(performance=True))
     members, models = run(cfg_ctx)
     assert "performance" in members and models["performance"] == "sonnet"
+
+
+def _routed_clone(tmp_path):
+    """A clone whose origin main already holds app.py, so editing it is a modification, not a new file."""
+    _, clone = make_origin_and_clone(tmp_path)
+    (clone / "app.py").write_text("x = 1\n")
+    sh(clone, "add", "app.py")
+    sh(clone, "commit", "-m", "add app")
+    sh(clone, "push", "origin", "HEAD:main")
+    sh(clone, "checkout", "-b", "feat")
+    return clone
+
+
+def _context(ctx, *extra):
+    _, out = call(ctx, "context", "--mode", "local", *extra)
+    return out, json.loads((Path(out["run_dir"]) / "context.json").read_text())
+
+
+def test_context_routes_the_architect_out_of_a_small_change(tmp_path):
+    clone = _routed_clone(tmp_path)
+    (clone / "app.py").write_text("x = 2\n")
+    out, _ = _context(make_ctx(tmp_path, clone))
+    assert out["panel"]["members"] == ["pragmatist", "skeptic", "lang-python"]
+    assert any(r.startswith("architect: skipped") for r in out["panel"]["routing"]) and out["panel"]["full"] is False
+    assert not (Path(out["run_dir"]) / "docs-metrics.json").exists()
+
+
+def test_context_routing_off_restores_the_fixed_panel(tmp_path):
+    clone = _routed_clone(tmp_path)
+    (clone / "app.py").write_text("x = 2\n")
+    cfg = ReviewConfig(routing=RoutingConfig(mode="off"))
+    out, _ = _context(make_ctx(tmp_path, clone, review=cfg))
+    assert out["panel"]["members"] == ["architect", "pragmatist", "skeptic", "lang-python"]
+
+
+def test_context_routes_performance_and_docs_from_the_diff(tmp_path):
+    clone = _routed_clone(tmp_path)
+    (clone / "app.py").write_text("for u in users:\n    for v in users:\n        db.execute(q, u, v)\n")
+    (clone / "README.md").write_text("hello\nmore words\n")
+    out, meta = _context(make_ctx(tmp_path, clone))
+    assert out["panel"]["members"] == ["pragmatist", "skeptic", "performance", "docs", "lang-python"]
+    assert meta["models"]["docs"] == "sonnet" and meta["models"]["performance"] == "sonnet"
+    metrics = json.loads((Path(out["run_dir"]) / "docs-metrics.json").read_text())
+    assert metrics["cap_percent"] == 3 and metrics["doc_files"][0]["path"] == "README.md"
+    assert "docs-metrics.json" not in out["run_files"]
+
+
+def test_context_full_uses_every_reviewer_without_routing(tmp_path):
+    clone = _routed_clone(tmp_path)
+    (clone / "app.py").write_text("x = 2\n")
+    for ctx, extra in ((make_ctx(tmp_path, clone), ("--full",)),
+                       (make_ctx(tmp_path, clone, review=ReviewConfig(full=True)), ())):
+        out, meta = _context(ctx, *extra)
+        assert out["panel"]["members"] == ["architect", "pragmatist", "skeptic", "security", "performance", "docs", "lang-python"]
+        assert out["panel"]["full"] is True and out["panel"]["routing"] == ["full: every reviewer, routing skipped"]
+        assert meta["models"]["security"] == "opus" and meta["models"]["docs"] == "sonnet"
+        assert (Path(out["run_dir"]) / "docs-metrics.json").is_file()
