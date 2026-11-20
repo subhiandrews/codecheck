@@ -152,6 +152,8 @@ NOT_WARRANTED = {
     "py plain loop over a few values": ("a.py", ["for name in names:", "    print(name)"]),
     "py compile once outside a loop": ("a.py", ["PAT = re.compile(r'^a+$')", "def ok(s):", "    return PAT.match(s)"]),
     "py comment that mentions a loop and sleep": ("a.py", ["# for x in xs: time.sleep(1)  (why we do not loop)", "y = 1"]),
+    "py dict membership on a parameter in a loop": ("a.py", [
+        "def count(words, table):", "    for w in words:", "        if w in table:", "            print(w)"]),
     "py membership outside a loop": ("a.py", ["def f(x, items):", "    return x in items"]),
 }
 
@@ -178,3 +180,18 @@ def test_reads_pile_up_no_score_beyond_one_hint():
     alone = go(_new("a.py", reads))
     assert not alone.performance and "score 2" in alone.reasons[1]  # six reads count once
     assert "score 3" in go(_new("a.py", reads + ["for x in xs:", "    print(x)"])).reasons[1]
+
+
+def test_membership_on_an_unknown_name_is_a_weak_hint_and_a_known_list_a_strong_one():
+    unknown = go(_new("a.py", ["def f(xs, d):", "    for x in xs:", "        if x in d:", "            pass"]))
+    assert "list membership in a loop" in unknown.reasons[1] and not unknown.performance
+    known = go(_new("a.py", ["seen = []", "for x in xs:", "    if x in seen:", "        pass"]))
+    assert known.performance
+
+
+def test_long_membership_lines_stay_cheap():
+    import time
+    line = "    if " + "a and " * 5000 + "b:"
+    start = time.perf_counter()
+    go(_new("a.py", ["for x in xs:", line]))
+    assert time.perf_counter() - start < 5  # generous: a quadratic scan of this line takes minutes

@@ -36,7 +36,8 @@ _AWAIT = re.compile(r"\bawait\b")
 _ASYNC_HEAD = re.compile(r"^\s*(?:export\s+)?(?:pub(?:\([\w:]+\))?\s+)?async\s+(?:def|function|fn)\b|=\s*async\b.*=>")
 _BLOCKING = re.compile(r"\btime\.sleep\(|\bThread\.sleep\(|\bsubprocess\.(?:run|call|check_output|check_call)\(|"
                        r"\brequests\.(?:get|post|put|patch|delete|request)\(|\b\w+Sync\(")
-_MEMBERSHIP = re.compile(r"\b(?:if|elif|while|and|or|not|assert)\b[^#\n]*?\bin\s+([A-Za-z_][\w.]*)\s*(?:[:)]|$|\band\b|\bor\b)")
+_MEMBERSHIP = re.compile(r"\b(?:if|elif|while|and|or|not|assert)\b[^#\n]{0,120}?\bin\s+([A-Za-z_][\w.]*)\s*(?:[:)]|$|\band\b|\bor\b)")
+_LISTY = re.compile(r"^\s*(\w+)\s*(?::[^=]+)?=\s*(?:\[|list\(|tuple\(|sorted\()")
 _HASHED = re.compile(r"^\s*(\w+)\s*(?::[^=]+)?=\s*(?:set\(|frozenset\(|dict\(|defaultdict\(|Counter\(|\{)")
 _UNBOUNDED = re.compile(r"\.read\(\)|\.readlines\(\)|read_text\(|readFile(?:Sync)?\(|\.fetchall\(|\.objects\.all\(\)|read_to_string|ReadAll")
 _GROWTH = re.compile(r"maxsize\s*=\s*None|@(?:functools\.)?cache\b|\b_?cache\s*(?::[^=]+)?=\s*(?:\{\}|dict\(\)|\[\])")
@@ -83,6 +84,7 @@ def _performance_signals(diffs: Mapping[str, FileDiff], languages: Mapping[str, 
             stack: list[int] = []  # indents of the loop headers that enclose the current line
             asyncs: list[int] = []  # the same for async function headers
             hashed: set[str] = set()  # names built as a set or dict in this run: a membership test on them is cheap
+            listy: set[str] = set()  # names built as a list in this run: a membership test on them is linear
             for ln, flag in run:
                 if flag is None or flag:  # blank or comment: never a signal, never closes a loop
                     continue
@@ -101,6 +103,8 @@ def _performance_signals(diffs: Mapping[str, FileDiff], languages: Mapping[str, 
                     asyncs.append(indent)
                 if m := _HASHED.match(text):
                     hashed.add(m.group(1))
+                if m := _LISTY.match(text):
+                    listy.add(m.group(1))
                 if ln.kind != "add":
                     continue
                 if language == "sql":
@@ -124,7 +128,8 @@ def _performance_signals(diffs: Mapping[str, FileDiff], languages: Mapping[str, 
                         signals["sequential await in a loop"] += 2
                     if (language == "python" and (m := _MEMBERSHIP.search(text)) and m.group(1) not in hashed
                             and m.group(1) != "range" and signals["list membership in a loop"] < 4):
-                        signals["list membership in a loop"] += 2
+                        # a name known to be a list scores fully; an unknown one (a parameter, an attribute) may be a set
+                        signals["list membership in a loop"] += 2 if m.group(1) in listy else 1
                     if _QUERY.search(text):
                         signals["query or I/O in a loop"] += 3
                     if _SLOW_IN_LOOP.search(text):
