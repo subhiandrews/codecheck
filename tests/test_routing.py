@@ -116,8 +116,7 @@ def test_nested_brace_loops_and_tab_indents_are_seen():
     assert go(_new("b.py", mixed)).performance
 
 
-def test_long_bracket_runs_do_not_blow_up():
-    import time
-    start = time.perf_counter()
-    go(_new("a.js", ["x = " + "[a for " * 20000]))
-    assert time.perf_counter() - start < 2
+def test_comprehension_match_is_bounded_so_long_lines_cannot_backtrack_far():
+    from codecheck.core.routing import _LOOP_CALL
+    assert _LOOP_CALL.search("y = [x for x in xs]")
+    assert not _LOOP_CALL.search("y = [" + "x" * 500 + " for x in xs]")  # past the 200-character window
