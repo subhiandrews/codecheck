@@ -2,6 +2,11 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.1.2]
+
+### Changed
+- Performance routing: also scores list membership tests and `await` inside a loop, blocking calls in async code, and regex compile or copy per iteration; test files no longer score and one file read counts once, so about 8 in 38 recent commits route the reviewer instead of 20.
+
 ## [1.1.1]
 
 ### Changed
