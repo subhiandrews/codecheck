@@ -2,6 +2,11 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.1.2]
+
+### Changed
+- The performance reviewer is now routed for list membership or `await` in a loop, blocking calls in async code and regex compile per iteration, and no longer for test files.
+
 ## [1.1.1]
 
 ### Changed

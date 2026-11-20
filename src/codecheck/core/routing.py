@@ -26,11 +26,19 @@ STRUCTURAL_SUFFIXES = {".proto", ".graphql", ".gql", ".thrift", ".csproj", ".fsp
 STRUCTURAL_DIRS = (".github/workflows/", ".circleci/", "/migrations/", "/db/migrate/")
 _STRUCTURAL_NAME = re.compile(r"^(?:requirements.*\.txt|Dockerfile.*|.*\.Dockerfile|.*\.d\.ts|openapi.*|swagger.*)$", re.IGNORECASE)
 
+_TEST_PATH = re.compile(r"(?:^|/)(?:tests?|__tests__|spec|specs)/|(?:^|/)test_[^/]*$|_test\.\w+$|\.(?:test|spec)\.\w+$")
 _LOOP_HEAD = re.compile(r"^\s*(?:async\s+)?(?:for|foreach|while)\b|^\s*loop\s*\{")
 _LOOP_CALL = re.compile(r"\.(?:forEach|each|each_with_index)\b|\[[^\]]{0,200}\bfor\b[^\]]{0,200}\bin\b")
 _INLINE_BODY = re.compile(r"\{(.*)$|:\s*(\S.*)$")  # the body of a one-line loop: `for (...) { q(); }` or `for x in y: q()`
 _QUERY = re.compile(r"\b(?:SELECT|INSERT|UPDATE|DELETE)\b|\.(?:execute|query|fetchone|fetchall|findAll|findOne|save)\(|\b(?:requests|http|fetch|subprocess)\b|\bopen\(|readFile")
-_SLOW_IN_LOOP = re.compile(r"\bsorted\(|\.sort\(|Collections\.sort|\.index\(|\.indexOf\(|\.includes\(|\.contains\(|\+=\s*f?[\"']")
+_SLOW_IN_LOOP = re.compile(r"\bsorted\(|\bre\.compile\(|\bPattern\.compile\(|\bnew RegExp\(|\bdeepcopy\(|\.copy\(\)|\.sort\(|Collections\.sort|\.index\(|\.indexOf\(|\.includes\(|\.contains\(|\+=\s*f?[\"']")
+_AWAIT = re.compile(r"\bawait\b")
+_ASYNC_HEAD = re.compile(r"^\s*(?:export\s+)?(?:pub(?:\([\w:]+\))?\s+)?async\s+(?:def|function|fn)\b|=\s*async\b.*=>")
+_BLOCKING = re.compile(r"\btime\.sleep\(|\bThread\.sleep\(|\bsubprocess\.(?:run|call|check_output|check_call)\(|"
+                       r"\brequests\.(?:get|post|put|patch|delete|request)\(|\b\w+Sync\(")
+_MEMBERSHIP = re.compile(r"\b(?:if|elif|while|and|or|not|assert)\b[^#\n]{0,120}?\bin\s+([A-Za-z_][\w.]*)\s*(?:[:)]|$|\band\b|\bor\b)")
+_LISTY = re.compile(r"^\s*(\w+)\s*(?::[^=]+)?=\s*(?:\[|list\(|tuple\(|sorted\()")
+_HASHED = re.compile(r"^\s*(\w+)\s*(?::[^=]+)?=\s*(?:set\(|frozenset\(|dict\(|defaultdict\(|Counter\(|\{)")
 _UNBOUNDED = re.compile(r"\.read\(\)|\.readlines\(\)|read_text\(|readFile(?:Sync)?\(|\.fetchall\(|\.objects\.all\(\)|read_to_string|ReadAll")
 _GROWTH = re.compile(r"maxsize\s*=\s*None|@(?:functools\.)?cache\b|\b_?cache\s*(?::[^=]+)?=\s*(?:\{\}|dict\(\)|\[\])")
 _STRUCTURE = re.compile(r"\b(?:defaultdict|deque|heapq|PriorityQueue|TreeMap|HashMap|ConcurrentHashMap|BTreeMap|DataFrame|ndarray)\b")
@@ -68,12 +76,15 @@ def _performance_signals(diffs: Mapping[str, FileDiff], languages: Mapping[str, 
     signals: Counter = Counter()
     for path, fd in diffs.items():
         language = languages.get(path)
-        if not language or fd.binary or fd.status == "deleted":
+        if not language or fd.binary or fd.status == "deleted" or _TEST_PATH.search(path):  # tests do not earn a review
             continue
         added_sql = False
         ddl = 0
         for run in scans.get(path, ()):
             stack: list[int] = []  # indents of the loop headers that enclose the current line
+            asyncs: list[int] = []  # the same for async function headers
+            hashed: set[str] = set()  # names built as a set or dict in this run: a membership test on them is cheap
+            listy: set[str] = set()  # names built as a list in this run: a membership test on them is linear
             for ln, flag in run:
                 if flag is None or flag:  # blank or comment: never a signal, never closes a loop
                     continue
@@ -82,10 +93,18 @@ def _performance_signals(diffs: Mapping[str, FileDiff], languages: Mapping[str, 
                 indent = len(expanded) - len(expanded.lstrip())
                 while stack and indent <= stack[-1]:
                     stack.pop()
-                in_loop = bool(stack)
+                while asyncs and indent <= asyncs[-1]:
+                    asyncs.pop()
+                in_loop, in_async = bool(stack), bool(asyncs)
                 head = bool(_LOOP_HEAD.match(text))
                 if head:
                     stack.append(indent)
+                if _ASYNC_HEAD.match(text):
+                    asyncs.append(indent)
+                if m := _HASHED.match(text):
+                    hashed.add(m.group(1))
+                if m := _LISTY.match(text):
+                    listy.add(m.group(1))
                 if ln.kind != "add":
                     continue
                 if language == "sql":
@@ -102,12 +121,20 @@ def _performance_signals(diffs: Mapping[str, FileDiff], languages: Mapping[str, 
                     signals["nested loop"] += 3
                 elif (head or _LOOP_CALL.search(text)) and signals["loop"] < 2:
                     signals["loop"] += 1
+                if in_async and _BLOCKING.search(text) and signals["blocking call in async code"] < 6:
+                    signals["blocking call in async code"] += 3
                 if in_loop and not head:
+                    if _AWAIT.search(text) and signals["sequential await in a loop"] < 4:
+                        signals["sequential await in a loop"] += 2
+                    if (language == "python" and (m := _MEMBERSHIP.search(text)) and m.group(1) not in hashed
+                            and m.group(1) != "range" and signals["list membership in a loop"] < 4):
+                        # a name known to be a list scores fully; an unknown one (a parameter, an attribute) may be a set
+                        signals["list membership in a loop"] += 2 if m.group(1) in listy else 1
                     if _QUERY.search(text):
                         signals["query or I/O in a loop"] += 3
                     if _SLOW_IN_LOOP.search(text):
                         signals["linear scan, sort or string build in a loop"] += 2
-                if _UNBOUNDED.search(text):
+                if _UNBOUNDED.search(text) and not signals["unbounded read"]:  # one read is a hint, not a pile of them
                     signals["unbounded read"] += 2
                 if _GROWTH.search(text):
                     signals["unbounded cache"] += 2
