@@ -230,3 +230,31 @@ def test_performance_model_name_is_validated(tmp_path):
 def test_model_for_performance():
     from codecheck.config import ModelsConfig
     assert model_for(ModelsConfig(performance="opus"), "performance") == "opus"
+
+
+def test_routing_full_and_docs_defaults(tmp_path):
+    cfg = load_config(tmp_path / "repo", tmp_path / "home", {})
+    assert cfg.review.full is False and cfg.models.docs == "sonnet"
+    assert cfg.codex_models.docs == "gpt-6.2-sol" and cfg.codex_reasoning.docs == "medium"
+    routing = cfg.review.routing
+    assert (routing.mode, routing.small_max_lines, routing.small_max_files) == ("auto", 40, 3)
+    assert (routing.performance_min_score, routing.max_comment_percent, routing.docs_min_comment_lines) == (3, 3, 3)
+    assert model_for(cfg.models, "docs") == "sonnet"
+
+
+def test_routing_is_settable_from_repo_file_and_env(tmp_path):
+    repo = tmp_path / "repo"
+    write(repo / ".code-check.toml", "[review]\nfull = true\n[review.routing]\nsmall_max_lines = 10\n")
+    cfg = load_config(repo, tmp_path / "home", {"CODE_CHECK_REVIEW__ROUTING__MODE": "off"})
+    assert cfg.review.full is True and cfg.review.routing.small_max_lines == 10 and cfg.review.routing.mode == "off"
+
+
+@pytest.mark.parametrize("text, key", [
+    ('[review.routing]\nmode = "sometimes"\n', "review.routing.mode"),
+    ("[review.routing]\nmax_comment_percent = -1\n", "review.routing.max_comment_percent"),
+])
+def test_routing_values_are_validated(tmp_path, text, key):
+    repo = tmp_path / "repo"
+    write(repo / ".code-check.toml", text)
+    with pytest.raises(ConfigError, match=key):
+        load_config(repo, tmp_path / "home", {})

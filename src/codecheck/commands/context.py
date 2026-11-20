@@ -4,11 +4,13 @@ from codecheck.commands._common import first_line, local_key, safe_repo, write_j
 from codecheck.config import expand_path, model_for
 from codecheck.core.chunk import chunk_files
 from codecheck.core.diffmap import parse_diff
+from codecheck.core.doccheck import measure
 from codecheck.core.existing import collect_existing
 from codecheck.core.guidance import from_base, from_worktree
 from codecheck.core.panel import detect_language, filter_ignored, select_panel
 from codecheck.core.precheck import cap_replies, review_activity
 from codecheck.core.render import render_existing
+from codecheck.core.routing import route
 from codecheck.core.state import ensure_private_dir, local_fingerprint
 from codecheck.errors import CodeCheckError
 from codecheck.runids import new_run_id
@@ -24,6 +26,7 @@ def add_arguments(p) -> None:
     p.add_argument("--pr")
     p.add_argument("--security", action="store_true", help="include the security reviewer")
     p.add_argument("--performance", action="store_true", help="include the performance reviewer")
+    p.add_argument("--full", action="store_true", help="every reviewer, security and performance included; no routing")
     p.add_argument("--with-replies", action="store_true", help="accepted for compatibility; PR mode always writes existing-comments.md")
     p.add_argument("--skill", default=None, help="recorded in shadow data")
 
@@ -124,9 +127,21 @@ def _build(args, ctx, run_id, run_dir) -> dict:
     first_lines = {p: first_line(root, p) for p in reviewable}
     deep_cmd = cfg.deep_reviewer.command.split()
     deep_available = bool(cfg.deep_reviewer.enabled and deep_cmd and shutil.which(deep_cmd[0]))
+    languages_by_path = {f["path"]: f["language"] for f in files}
+    diffs = {p: parsed[p] for p in reviewable}
+    full = args.full or cfg.review.full
+    if full:
+        routing = None
+        doc_metrics = measure(diffs, languages_by_path, cfg.review.routing.max_comment_percent,
+                               cfg.review.routing.docs_min_comment_lines)
+        reasons = ("full: every reviewer, routing skipped",)
+    else:
+        routing = route(diffs, languages_by_path, cfg.review.routing)
+        doc_metrics, reasons = routing.doc_metrics, routing.reasons
     panel = select_panel(reviewable, first_lines, deep_enabled=cfg.deep_reviewer.enabled, deep_available=deep_available,
                          security=args.security or cfg.review.security,
-                         performance=args.performance or cfg.review.performance)
+                         performance=args.performance or cfg.review.performance or bool(routing and routing.performance),
+                         architect=routing.architect if routing else True, docs=bool(routing and routing.docs), full=full)
     languages: dict[str, list[str]] = {}
     for f in files:
         if f["language"]:
@@ -137,12 +152,16 @@ def _build(args, ctx, run_id, run_dir) -> dict:
         models["security"] = model_for(cfg.models, "security")
     if panel.performance:
         models["performance"] = model_for(cfg.models, "performance")
+    if panel.docs:
+        models["doc-skeptic"] = model_for(cfg.models, "docs")
+        write_json(run_dir / "docs-metrics.json", doc_metrics.to_json())  # read by the docs reviewer, not listed in run_files
     if panel.deep:
         models["deep-reviewer"] = model_for(cfg.models, "deep")
     chunks = chunk_files({f["path"]: f["chars"] for f in files}, max_files=cfg.review.max_files,
                          max_chars=cfg.review.max_chunk_chars)
     meta.update(base_ref=sync.base_ref, base_warning=sync.warning, files=files, chunks=chunks, models=models,
-                panel={"members": list(panel.members), "languages": languages, "notes": list(panel.notes)})
+                panel={"members": list(panel.members), "languages": languages, "notes": list(panel.notes),
+                "routing": list(reasons), "full": full})
     write_json(run_dir / "context.json", meta)
     if ctx.shadow is not None:
         ctx.guarded(record_run, ctx.shadow, meta, diff, cfg)

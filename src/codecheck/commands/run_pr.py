@@ -24,6 +24,7 @@ def add_arguments(p) -> None:
                    help="loop bookkeeping: mark this work item processed on success (or after repeated failures)")
     p.add_argument("--security", action="store_true", help="review mode only: also run the security reviewer")
     p.add_argument("--performance", action="store_true", help="review mode only: also run the performance reviewer")
+    p.add_argument("--full", action="store_true", help="review mode only: every reviewer, no routing")
     p.add_argument("--dry-run", action="store_true")
 
 
@@ -46,11 +47,13 @@ def parse_result(stdout: str, returncode: int, stderr: str) -> dict:
 
 
 def run_one(ctx, mode: str, ref, fingerprint: str | None = None, dry_run: bool = False,
-            security: bool = False, performance: bool = False) -> dict:
+            security: bool = False, performance: bool = False, full: bool = False) -> dict:
     if security and mode != "review":
         raise CodeCheckError("--security applies to review mode only")
     if performance and mode != "review":
         raise CodeCheckError("--performance applies to review mode only")
+    if full and mode != "review":
+        raise CodeCheckError("--full applies to review mode only")
     cfg = ctx.config.run_pr
     if ref.repo.startswith("-"):
         raise CodeCheckError(f"unsafe repository name {ref.repo!r}")
@@ -61,6 +64,8 @@ def run_one(ctx, mode: str, ref, fingerprint: str | None = None, dry_run: bool =
         prompt += " Pass the security argument."
     if performance:
         prompt += " Pass the performance argument."
+    if full:
+        prompt += " Pass the full argument."
     # argv values must never be read as options by claude.
     if prompt.lstrip().startswith("-") or any(t.lstrip().startswith("-") or not t.strip() for t in tools):
         raise CodeCheckError("run_pr prompt and allowed tools must not start with '-'")
@@ -111,4 +116,4 @@ def loop_bookkeeping(ctx, mode: str, ref, fingerprint: str, ok: bool) -> dict:
 
 
 def run(args, ctx) -> dict:
-    return run_one(ctx, args.mode, ctx.resolve_ref(args.pr), args.fingerprint, args.dry_run, args.security, args.performance)
+    return run_one(ctx, args.mode, ctx.resolve_ref(args.pr), args.fingerprint, args.dry_run, args.security, args.performance, args.full)

@@ -14,10 +14,23 @@ from codecheck.errors import ConfigError
 
 
 @dataclass(frozen=True, slots=True)
+class RoutingConfig:
+    """Which optional reviewers a change earns. `off` restores the fixed panel; `full` ignores all of it."""
+    mode: str = "auto"  # "auto" or "off"
+    small_max_lines: int = 40  # at most this many changed lines, in at most small_max_files files, skips the architect
+    small_max_files: int = 3
+    performance_min_score: int = 3  # score of the performance signals in the added lines that adds the reviewer
+    max_comment_percent: int = 3  # comments may be at most this share of the added lines
+    docs_min_comment_lines: int = 3  # fewer added comment lines than this never route the docs reviewer by ratio
+
+
+@dataclass(frozen=True, slots=True)
 class ReviewConfig:
     auto_approve: bool = False
     security: bool = False
     performance: bool = False
+    full: bool = False  # true: every reviewer on every review, routing skipped
+    routing: RoutingConfig = field(default_factory=RoutingConfig)
     attribution: bool = True  # one credit line in the review summary; user-only
     label: str = "code-check"  # label added to reviewed PRs, "" disables; user-only
     login: str = ""  # act as this login instead of asking `gh api user` (CI tokens cannot); user-only
@@ -42,6 +55,7 @@ class ModelsConfig:
     deep: str = "sonnet"
     security: str = "opus"
     performance: str = "sonnet"
+    docs: str = "sonnet"
     judge: str = "opus"
     per_language: dict = field(default_factory=dict)
 
@@ -54,6 +68,7 @@ class CodexModelsConfig(ModelsConfig):
     deep: str = "gpt-6.2-sol"
     security: str = "gpt-6.2-astra"
     performance: str = "gpt-6.2-sol"
+    docs: str = "gpt-6.2-sol"
     judge: str = "gpt-6.2-astra"
 
 
@@ -65,6 +80,7 @@ class CodexReasoningConfig(ModelsConfig):
     deep: str = "medium"
     security: str = "high"
     performance: str = "medium"
+    docs: str = "medium"
     judge: str = "high"
 
 
@@ -191,7 +207,7 @@ def _role_value(models: ModelsConfig, role: str, language: str | None) -> str:
         if language and language in models.per_language:
             return models.per_language[language]
         return models.language_experts
-    if role in ("aggregator", "reviewers", "deep", "security", "performance"):
+    if role in ("aggregator", "reviewers", "deep", "security", "performance", "docs"):
         return getattr(models, role)
     raise ConfigError(f"unknown model role {role!r}")
 
@@ -320,6 +336,12 @@ def validate(cfg: Config) -> Config:
         if not isinstance(value, str) or not MODEL_NAME.fullmatch(value):
             raise ConfigError(f"config key models.{key} is not a valid model name: {value!r}")
     validate_codex(cfg)
+    routing = cfg.review.routing
+    if routing.mode not in ("auto", "off"):
+        raise ConfigError("config key review.routing.mode must be \"auto\" or \"off\"")
+    for key in ("small_max_lines", "small_max_files", "performance_min_score", "max_comment_percent", "docs_min_comment_lines"):
+        if getattr(routing, key) < 0:
+            raise ConfigError(f"config key review.routing.{key} must not be negative")
     label = cfg.review.label
     if label and (label.startswith("-") or not LABEL_NAME.fullmatch(label)):
         raise ConfigError(f"config key review.label is not a valid label name: {label!r}")

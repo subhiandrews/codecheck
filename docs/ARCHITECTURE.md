@@ -4,7 +4,7 @@ How code-check is built and why. For install and daily use see the [README](../R
 
 ## Review flow
 
-Findings are **Critical**, **Warning** or **Suggestion** and are posted inline on the changed lines. A panel of reviewers works on each change: up to 15 language experts (only for languages present in the diff), an architecture reviewer, a pragmatic reviewer and a skeptic, with an optional slot for a "deep" reviewer backed by your own knowledge sources, an opt-in security reviewer (see Security review below) and an opt-in performance reviewer (see [Performance review](#performance-review)). An Opus aggregator verifies every Critical and Warning against the code before anything is posted.
+Findings are **Critical**, **Warning** or **Suggestion** and are posted inline on the changed lines. A panel of reviewers works on each change: up to 15 language experts (only for languages present in the diff), an architecture reviewer, a pragmatic reviewer and a skeptic, with an optional slot for a "deep" reviewer backed by your own knowledge sources, an opt-in security reviewer (see Security review below), a performance reviewer and a docs reviewer (see [Reviewer routing and full mode](#reviewer-routing-and-full-mode)). An Opus aggregator verifies every Critical and Warning against the code before anything is posted.
 
 ```
 precheck (no LLM) → fetch latest base → context → reviewer panel (parallel) → ingest → aggregator → post (inline) → shadow record
@@ -30,7 +30,7 @@ flowchart TD
         prag[pragmatist]
         skep[skeptic]
         lang["lang-NAME<br/>one per language in the diff"]
-        opt["opt-in: security,<br/>performance, deep"]
+        opt["routed: performance, docs<br/>opt-in: security, deep"]
     end
 
     panel --> ingest["ingest (CLI)<br/>validate, anchor to diff lines,<br/>dedupe, scrub secrets"]
@@ -122,7 +122,7 @@ To test this on a real GitLab project, [gitlab-testing.md](gitlab-testing.md) ha
 
 The security reviewer is an optional panel member. It is one agent per chunk (not per language) and it owns every changed file. It looks for what deterministic scanners miss: committed secrets and credentials, including custom formats, personal data (PII) in code, logs and fixtures, injection, authentication and access-control mistakes, unsafe deserialization, SSRF and path traversal, weak cryptography, insecure defaults, secrets in CI and configuration files, and risky dependency additions. Findings use the category `security`: a committed secret or PII is Critical, a vulnerability is a Warning (Critical when it is exploitable as written).
 
-It runs only when asked:
+It runs when asked or when routing finds a reason in the diff (see Reviewer routing and full mode):
 
 - `/code-check:review-local security` and `/code-check:review-pr 123 security` (the `security` argument; with no PR, `review-pr` works the queue and configuration decides),
 - `code-check context --security`, and `code-check run-pr --security` (review mode only),
@@ -140,13 +140,32 @@ The performance reviewer is an optional panel member. It is one agent per chunk 
 
 Severity follows the failure, not the pattern. Critical means the code can crash, exhaust memory or hang on realistic input, and the finding must say what grows or blocks and what input triggers it. Warning means correct but wasteful in a way that will matter as data grows. Suggestion means a small gain or one off any hot path. The same quadratic loop is a suggestion over a fixed handful of items and can be Critical over request-supplied data; when the reviewer cannot tell how large the input is it caps the finding at Suggestion. Each finding states the complexity before and after.
 
-It runs only when asked:
+It runs when asked or when routing finds a reason in the diff (see Reviewer routing and full mode):
 
 - `/code-check:review-local performance` and `/code-check:review-pr 123 performance` (the `performance` argument; with no PR, `review-pr` works the queue and configuration decides),
 - `code-check context --performance`, and `code-check run-pr --performance` (review mode only),
 - `review.performance = true` in configuration, which also turns it on for `code-check loop --mode review`.
+- the diff scores at least `review.routing.performance_min_score` (default 3), for example a nested loop or a query inside a loop; `review.routing.mode = "off"` turns this off.
 
 `address-comments` and `babysit-pr` never run it. It uses `models.performance`, default `"sonnet"`; a repository's `.code-check.toml` may set `models.performance` and `review.performance`, and `models.performance` only takes effect after `gen-agents` or the installer re-runs. Setting `review.performance = true` in a repository adds one agent per chunk to every unattended review of it. It is guidance on top of profilers and benchmarks, not a replacement: it reads code and does not measure it.
+
+## Reviewer routing and full mode
+
+`code-check context` decides which optional reviewers a change earns, in code (`core/routing.py`), never in a prompt. Each decision and its reason is written to `panel.routing` in the `context` output and `context.json`.
+
+- **Architect:** dropped for a clearly small change: at most `review.routing.small_max_lines` changed lines (default 40) in at most `small_max_files` files (3), with no added, deleted or renamed file and no manifest, pipeline, migration or interface file (`pyproject.toml`, `package.json`, `.proto`, `.github/workflows/`, `__init__.py` and similar). The pragmatist and skeptic always run.
+- **Performance:** added when the added lines score at least `performance_min_score` (3). A nested loop scores 3, a query or other I/O inside a loop 3, a sort, linear search or string build inside a loop 2, an unbounded read or cache 2, a SQL file 2, a lone loop 1 (at most 2 in all), a heavy collection type 1 (at most 2). Comments never score. It is a regex-level guess about what deserves the reviewer's time, not a finding.
+- **Docs:** added when a documentation file changed (agent and skill prompts, `SKILL.md` and files under `agents/` or `.claude/`, are not documentation), or when at least `docs_min_comment_lines` (3) comment lines were added and comments exceed `max_comment_percent` (3%) of the added lines.
+
+Flags and configuration always win: `--security`, `--performance`, `review.security` and `review.performance` force a reviewer on, and routing never removes one. `review.routing.mode = "off"` restores the fixed panel (architect, pragmatist, skeptic).
+
+**Full mode** puts every reviewer on the panel (architect, pragmatist, skeptic, security, performance, docs, every language expert, and the deep reviewer when available) and skips routing entirely. Ask for it with `/code-check:review-local full` or `/code-check:review-pr 123 full`, `code-check context --full`, `code-check run-pr --full`, or `review.full = true`, which also applies to `code-check loop --mode review`. `models.performance` and `models.security` still choose their models.
+
+## Docs review
+
+The docs reviewer is a skeptic about documentation. Its default stance is that documentation must be limited, precise and current. Before it runs, code (`core/doccheck.py`) measures the change and writes `docs-metrics.json` into the run directory: the added comment and docstring lines against the added code lines, and the documentation files that changed. The comment cap is per PR, `max_comment_percent` (default 3%) of the added lines; the scan is a line scanner, not a parser, so treat the percentage as an estimate.
+
+It flags comments over the cap, comments that restate the code or narrate the change, new documentation files that duplicate existing ones or will not survive the next code change, verbose additions to existing documentation, and documentation the change makes wrong. Findings use the category `docs`: a breach of the cap or an incorrect document is a Warning, verbosity or a needless file a Suggestion. It never asks for more documentation. The only exception is an explicit rule about documentation or comments in the project's `CODE_CHECK.md`, which is read from the base branch so a PR cannot grant itself one. It uses `models.docs`, default `"sonnet"`.
 
 ## CODE_CHECK.md
 

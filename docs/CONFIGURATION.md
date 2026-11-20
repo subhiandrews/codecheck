@@ -19,10 +19,19 @@ max_chunk_chars = 120000
 max_inline_comments = 25       # the rest goes into the review summary
 security = false               # true: always include the security reviewer (see [ARCHITECTURE.md](ARCHITECTURE.md#security-review))
 performance = false            # true: always include the performance reviewer (see [ARCHITECTURE.md](ARCHITECTURE.md#performance-review))
+full = false                   # true: every reviewer on every review, routing skipped (see [ARCHITECTURE.md](ARCHITECTURE.md#reviewer-routing-and-full-mode))
 attribution = true             # one credit line (tool, licence, repo link) in the review summary, never in inline comments
 label = "code-check"           # label added to reviewed PRs; "" disables it
 login = ""                     # act as this login instead of `gh api user`; set it in CI, where the token cannot call /user (e.g. "github-actions[bot]")
 ignore = ["**/*.lock", "dist/**"]   # plain glob patterns, see below
+
+[review.routing]               # which optional reviewers a change earns; `full` and forced flags ignore it
+mode = "auto"                  # "auto" or "off" (off: always architect, pragmatist, skeptic)
+small_max_lines = 40           # at most this many changed lines in at most small_max_files files skips the architect
+small_max_files = 3
+performance_min_score = 3      # score of the loop, query and memory signals in the added lines that adds the performance reviewer
+max_comment_percent = 3        # comments may be at most this share of the added lines (docs reviewer)
+docs_min_comment_lines = 3     # fewer added comment lines than this are never over the cap, so they never route the docs reviewer or raise the cap finding
 
 [loop]
 max_prs_per_iteration = 5
@@ -35,7 +44,8 @@ language_experts = "haiku"
 reviewers = "sonnet"           # architect, pragmatist, skeptic
 deep = "sonnet"
 security = "opus"             # the opt-in security reviewer
-performance = "sonnet"         # the opt-in performance reviewer
+performance = "sonnet"         # the performance reviewer
+docs = "sonnet"                # the docs reviewer
 judge = "opus"                # `eval --calibrate` only: the model that judges findings (developer tooling)
 [models.per_language]          # for example: rust = "sonnet"
 
@@ -83,7 +93,7 @@ Haiku keeps the language-expert fan-out cheap, and the Opus aggregator verifies 
 
 For a Codex review, run `code-check panel run --run <run_id>` after `context`. The CLI starts read-only reviewers and the aggregator, validates their JSON, and runs `ingest` before aggregation. Check `failed_members` in the result. If the aggregator failed, stop before `post` and clean up the run. Other failed members make the review incomplete.
 
-`[codex_models]` and `[codex_reasoning]` use the same keys as `[models]`, including `per_language`. The defaults are GPT-6.2 Astra at high effort for aggregation, security and judging, GPT-6.2 Sol at medium effort for general, deep and performance review, and GPT-6 Luna at high effort for the language experts. Codex model values cannot start with `-`. `codex.max_parallel` defaults to 4 concurrent reviewers and `codex.timeout_seconds` to 300 seconds per process. Codex picks up these settings at run time. `codex.allow_unmeasured_platform` defaults to false and lets users explicitly opt in outside macOS.
+`[codex_models]` and `[codex_reasoning]` use the same keys as `[models]`, including `per_language`. The defaults are GPT-6.2 Astra at high effort for aggregation, security and judging, GPT-6.2 Sol at medium effort for general, deep, performance and docs review, and GPT-6 Luna at high effort for the language experts. Codex model values cannot start with `-`. `codex.max_parallel` defaults to 4 concurrent reviewers and `codex.timeout_seconds` to 300 seconds per process. Codex picks up these settings at run time. `codex.allow_unmeasured_platform` defaults to false and lets users explicitly opt in outside macOS.
 
 Regenerate the Codex skill templates from a checkout with `code-check gen-skills --out codex/skills`. Automatic queues via `loop` and `run-pr` use Claude Code.
 
