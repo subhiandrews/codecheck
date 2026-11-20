@@ -2,6 +2,11 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.1.2]
+
+### Changed
+- Hand-offs: each finding now carries its scrubbed message (capped at 300 characters) and `handoff.md` shows the first 160, so a round can judge a finding without the raw run.
+
 ## [1.1.1]
 
 ### Changed

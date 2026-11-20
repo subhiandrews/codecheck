@@ -155,7 +155,8 @@ def _findings(run_dir: Path, meta: dict, raw) -> list[dict]:
     diff = run_dir / "diff.patch"
     files = parse_diff(diff.read_text(encoding="utf-8")) if diff.exists() else {}
     return [{"id": finding_id(f), "file": f.file, "line": f.line, "severity": f.severity.value, "category": f.category,
-             "reviewers": list(f.reviewers)} for f in finalize_findings(findings, files)]
+             "reviewers": list(f.reviewers), "message": " ".join(f.message.split())[:300]}
+            for f in finalize_findings(findings, files)]
 
 
 def _named(item) -> set[str]:

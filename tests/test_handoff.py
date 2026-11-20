@@ -799,3 +799,38 @@ def test_comparison_body_is_collapsed_and_capped_like_general_comments():
            "body": "x  y\n" + "z" * 400, "matches_finding": None}
     (c,) = build_comparison([rec], [])["human_comments"]
     assert c["body"].startswith("x y z") and len(c["body"]) == 300
+
+
+def test_handoff_findings_carry_their_message(tmp_path):
+    long = {**FINDING, "message": "y is\nunused " + "z" * 400}
+    _, clone = make_origin_and_clone(tmp_path)
+    ctx = make_ctx(tmp_path, clone)
+    enable_handoff(ctx, tmp_path)
+    sh(clone, "checkout", "-b", "feat")
+    commit_file(clone, "app.py", "x = 1\ny = 2\n", "add app")
+    _code, out = call(ctx, "context", "--mode", "local", "--skill", "review-local")
+    finish_review(ctx, out, {"skeptic": [long]}, {"findings": [{**long, "reviewers": ["skeptic"]}], "dropped": []})
+    call(ctx, "ingest", "--run", out["run_id"])
+    call(ctx, "post", "--run", out["run_id"])
+    call(ctx, "handoff", "--run", out["run_id"])
+    folder, data = handoff_files(ctx, out["run_id"])
+    (finding,) = data["findings"]
+    assert finding["message"].startswith("y is unused zzz") and len(finding["message"]) == 300
+    assert "y is unused zzz" in (folder / "handoff.md").read_text()
+
+
+def _findings_md(finding):
+    from codecheck.shadow.handoff import render_markdown
+    text = render_markdown({"run_id": "r", "skill": "review-pr", "mode": "pr", "comparison": None, "reviewers": {}, "findings": [finding]})
+    return text.split("## Findings\n\n")[1].split("\n")[0]
+
+
+def test_markdown_shows_a_finding_message_collapsed_and_capped():
+    f = {"id": "abc", "file": "a.py", "line": 3, "severity": "warning", "category": "bug", "message": "leaks\nthe handle " + "q" * 300}
+    assert _findings_md(f) == "- warning bug at a.py:3 (abc): leaks the handle " + "q" * (160 - len("leaks the handle "))
+
+
+def test_markdown_finding_without_a_message_has_no_suffix():
+    f = {"id": "abc", "file": "a.py", "line": 3, "severity": "warning", "category": "bug"}
+    assert _findings_md(f) == "- warning bug at a.py:3 (abc)"
+    assert _findings_md({**f, "message": "  "}) == "- warning bug at a.py:3 (abc)"
