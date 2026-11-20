@@ -2,6 +2,11 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.1.3]
+
+### Fixed
+- Hand-offs: a human thread on a file the reviewers were never given is marked `in_review: false` and no longer counted as a miss, and `handoff.md` says "not in the reviewed diff" for it.
+
 ## [1.1.2]
 
 ### Changed
