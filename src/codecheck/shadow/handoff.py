@@ -5,7 +5,7 @@
 prompts) and `build_reason` (why they are null), `config_hash`, `models`, `panel`, `blind`), each reviewer's ingest status
 (`reviewers`), the aggregated `findings` (ids and order as `post` gives them, each with its scrubbed message capped at 300 characters, and its `rated_because` capped the same when the aggregator gave one), the aggregator's `dropped` list, the
 `decision`, transcript `signals` (tool calls and errors, retries, permission denials, turns and output tokens per
-transcript file), `ignored_guidance` lines from the transcripts, the human `comparison` (or `comparison_reason`; `general_comments_reason` says why its general comments are missing, null when fine) with `comparison_mode` (`posted`, `unposted` or null), `head_moved`
+transcript file), `ignored_guidance` lines from the transcripts, the human `comparison` (or `comparison_reason`; each human comment carries `in_review`, false when its path was not among the files the reviewers were given, and such a thread is not in `misses`; `general_comments_reason` says why its general comments are missing, null when fine) with `comparison_mode` (`posted`, `unposted` or null), `head_moved`
 and `pr_state` (`open`, `closed`, `merged`; both null for local runs, on the posted path, for drafts and when the PR fetch
 failed; `head_moved` is also null when the run recorded no head SHA), and
 `transcript`, `transcript_reason`, `transcript_files`.
@@ -48,8 +48,12 @@ def _skip_body(body: str) -> bool:
     return not (body or "").strip() or "<!-- code-check:run:" in body
 
 
-def build_comparison(records: Sequence[dict], findings: Sequence[dict], general_comments: Sequence[dict] = ()) -> dict:
-    """`records` are a run's shadow records; the newest `human_comment` per thread wins, as in export."""
+def build_comparison(records: Sequence[dict], findings: Sequence[dict], general_comments: Sequence[dict] = (),
+                     reviewed: set[str] | None = None) -> dict:
+    """`records` are a run's shadow records; the newest `human_comment` per thread wins, as in export.
+
+    `reviewed` is the set of paths the run's reviewers were given. A thread on any other path is marked
+    `in_review: false` and is not a miss, since no reviewer could have seen it; without it no claim is made."""
     latest: dict[str, dict] = {}
     for rec in records:
         if rec.get("type") == "human_comment" and isinstance(rec.get("thread_id"), str):
@@ -69,9 +73,12 @@ def build_comparison(records: Sequence[dict], findings: Sequence[dict], general_
             "matched_finding": fid, "human_severity": human, "finding_severity": ours,
             "severity_agrees": (human == ours) if human and ours else None, "body": " ".join((rec.get("body") or "").split())[:300],
         })
+        outside = reviewed is not None and isinstance(rec.get("path"), str) and rec["path"] not in reviewed
+        if reviewed is not None:
+            comments[-1]["in_review"] = not outside
         if fid:
             matched.add(fid)
-        else:
+        elif not outside:
             misses.append(rec["thread_id"])
     return {"human_comments": comments, "unraised_findings": [fid for fid in severity if fid not in matched],
             "misses": misses, "general_comments": list(general_comments)}
@@ -121,7 +128,8 @@ def render_markdown(h: dict) -> str:
         lines.append(f"- No comparison: {h.get('comparison_reason')}")
     else:
         for c in cmp["human_comments"]:
-            match = f"matched {c['matched_finding']}" if c["matched_finding"] else "missed by us"
+            match = f"matched {c['matched_finding']}" if c["matched_finding"] else (
+                "not in the reviewed diff" if c.get("in_review") is False else "missed by us")
             if not c["matched_finding"] and (c.get("body") or "").strip():  # a miss is only useful with its text
                 match += f": {' '.join(c['body'].split())[:160]}"
             lines.append(f"- {c['thread_id']} by {c['author']} at {c['path']}:{c['line']}: {match}"

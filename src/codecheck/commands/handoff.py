@@ -84,7 +84,7 @@ def build_handoff(ctx, run_id: str) -> dict:
         pr_url = (pr.url or None) if pr is not None else None
         if decision is not None:  # the posted comparison does not need the PR object
             comparison_mode = "posted"
-            comparison, comparison_reason, general_reason = _compare(ctx, ref, run_id)
+            comparison, comparison_reason, general_reason = _compare(ctx, ref, run_id, reviewed=_reviewed_paths(meta))
         elif pr is None:
             comparison_reason = fetch_reason
         elif pr.is_draft:
@@ -92,7 +92,7 @@ def build_handoff(ctx, run_id: str) -> dict:
         else:
             comparison_mode, pr_state = "unposted", pr.state
             head_moved = None if not meta.get("head_sha") else pr.head_sha != meta["head_sha"]
-            comparison, comparison_reason, general_reason = _compare(ctx, ref, run_id, findings=findings)
+            comparison, comparison_reason, general_reason = _compare(ctx, ref, run_id, findings=findings, reviewed=_reviewed_paths(meta))
     handoff = {
         "schema": SCHEMA, "run_id": run_id, "skill": meta.get("skill"), "mode": meta.get("mode"), "repo": meta.get("repo"),
         "pr": meta.get("pr"), "pr_url": pr_url, "head_sha": meta.get("head_sha"), "tool_version": __version__,
@@ -227,7 +227,13 @@ def _transcripts(ctx, run_id: str, folder: Path, started: float | None, runtime:
     return True, None, copied, extract_signals([main, *subs], windows={main: (started, time.time())})
 
 
-def _compare(ctx, ref: PRRef, run_id: str, *, findings: list[dict] | None = None) -> tuple[dict | None, str | None, str | None]:
+def _reviewed_paths(meta: dict) -> set[str] | None:
+    """Every path handed to a reviewer, from the run's chunks; None when the run recorded none."""
+    paths = {p for chunk in meta.get("chunks") or [] if isinstance(chunk, list) for p in chunk if isinstance(p, str)}
+    return paths or None
+
+
+def _compare(ctx, ref: PRRef, run_id: str, *, findings: list[dict] | None = None, reviewed: set[str] | None = None) -> tuple[dict | None, str | None, str | None]:
     """Record human comments the way `shadow collect` does, then compare them with this run's findings.
 
     A posted run's findings are its shadow `finding` records; an unposted run has none, so the caller passes the
@@ -246,7 +252,7 @@ def _compare(ctx, ref: PRRef, run_id: str, *, findings: list[dict] | None = None
     )
     rematched = [{**r, "matches_finding": _near(ours, r.get("path"), r.get("line"))} for r in comments]
     general, general_reason = _general_comments(ctx, ref)
-    return build_comparison(rematched, ours, general), None, general_reason
+    return build_comparison(rematched, ours, general, reviewed), None, general_reason
 
 
 def _general_comments(ctx, ref: PRRef) -> tuple[list[dict], str | None]:
