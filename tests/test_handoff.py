@@ -155,6 +155,8 @@ def test_handoff_pr_mode_compares_human_comments(tmp_path):
     assert t1["finding_severity"] == "warning" and t1["severity_agrees"] is True
     assert t1["author"] == "bob" and (t1["path"], t1["line"]) == ("app.py", 1)
     assert cmp["misses"] == ["T2"] and cmp["unraised_findings"] == [ids[500]]
+    (t2,) = [h for h in cmp["human_comments"] if h["thread_id"] == "T2"]
+    assert t2["body"] == "rename this"  # a miss must say what the human wrote, or nobody can classify it
     assert data["decision"]["event"] == "COMMENT" and data["blind"] is True
     kinds = [r["type"] for r in ctx.shadow.read(out["run_id"])]
     assert kinds.count("human_comment") == 2  # the same records `shadow collect` writes
@@ -779,3 +781,13 @@ def test_handoff_codex_run_without_a_session_says_so(tmp_path):
     call(ctx, "handoff", "--run", out["run_id"])
     _, data = handoff_files(ctx, out["run_id"])
     assert data["transcript"] is False and "Codex session" in data["transcript_reason"]
+
+
+def test_markdown_shows_the_text_of_a_missed_thread():
+    from codecheck.shadow.handoff import render_markdown
+    cmp = {"human_comments": [{"thread_id": "T9", "path": "a.py", "line": 3, "author": "bob", "matched_finding": None,
+                               "human_severity": None, "finding_severity": None, "severity_agrees": None,
+                               "body": "this leaks the handle\non the error path"}],
+           "unraised_findings": [], "misses": ["T9"], "general_comments": []}
+    text = render_markdown({"run_id": "r", "skill": "review-pr", "mode": "pr", "comparison": cmp, "reviewers": {}, "findings": []})
+    assert "T9 by bob at a.py:3: missed by us: this leaks the handle on the error path" in text
