@@ -323,7 +323,7 @@ def test_mode_specific_flags_are_refused_in_the_other_mode(tmp_path):
 def test_readme_documents_the_live_eval():
     from codecheck.evals.match import RECALL_BAR, TOLERANCE
 
-    readme = (REPO / "README.md").read_text()
+    readme = (REPO / "docs" / "MAINTAINING.md").read_text()
     section = readme.split("### Live snippet eval", 1)[1].split("\n## ", 1)[0]
     for text in ("costs real tokens", "not run in CI", "local only", "--if-reachable", "--only", "--snippets",
                  f"within {TOLERANCE}", f"{round(RECALL_BAR * 100)}%", '"calibrated": true', "CODE_CHECK_STATE_DIR",

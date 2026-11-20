@@ -34,6 +34,8 @@ def test_readme_points_to_license_and_contributing_files():
 
 def test_readme_install_commands_use_the_real_repository():
     readme = (ROOT / "README.md").read_text()
-    assert "claude plugin marketplace add subhiandrews/codecheck" in readme
+    arch = (ROOT / "docs" / "ARCHITECTURE.md").read_text()
+    assert "/plugin marketplace add subhiandrews/codecheck" in readme
+    assert "claude plugin marketplace add subhiandrews/codecheck" in arch
     assert "npx github:subhiandrews/codecheck install" in readme
-    assert "marketplace add OWNER/REPO" not in readme
+    assert "marketplace add OWNER/REPO" not in readme + arch
