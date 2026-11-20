@@ -1,5 +1,6 @@
 import importlib.util
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,9 @@ decisions = importlib.util.module_from_spec(_spec)
 sys.modules["decisions"] = decisions
 _spec.loader.exec_module(decisions)
 
+# Variables that point git at a repository; a hook sets them and they would redirect the temporary repo's commands.
+GIT_REPO_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+                 "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX")
 SUPERSEDED = "superseded by {} (accepted 2026-11-12)"
 
 
@@ -71,6 +75,11 @@ def test_the_file_name_must_match_the_number_in_the_title(tmp_path):
 def test_numbers_must_be_contiguous_from_one(tmp_path):
     d = make_dir(tmp_path, {"0001-a.md": record("0001"), "0003-c.md": record("0003")})
     assert any("0002" in p for p in decisions.problems(d))
+
+
+def test_check_reports_markdown_records_without_a_four_digit_prefix(tmp_path):
+    d = make_dir(tmp_path, {"001-short-title.md": record()})
+    assert "001-short-title.md: file name must be NNNN-lowercase-words.md" in decisions.problems(d)
 
 
 def test_a_supersession_must_point_at_a_later_existing_record(tmp_path):
@@ -139,3 +148,52 @@ def test_check_exits_nonzero_only_on_a_problem(tmp_path):
     good = make_dir(tmp_path, {"0001-a.md": record()}, "good")
     assert decisions.main(["check", "--dir", str(bad)]) == 1
     assert decisions.main(["check", "--dir", str(good)]) == 0
+
+
+@pytest.mark.parametrize("invalid", [
+    {"decision": " "}, {"why": "First line\nSecond line"}, {"evidence": "missing.md"},
+])
+def test_new_validates_before_changing_any_files(tmp_path, invalid):
+    d = make_dir(tmp_path, {"0001-a.md": record()})
+    before = {p.name: p.read_bytes() for p in d.iterdir()}
+    assert run_new(d, supersedes="0001", **invalid) == 1
+    assert {p.name: p.read_bytes() for p in d.iterdir()} == before
+
+
+def test_concurrent_creators_get_distinct_record_numbers(tmp_path):
+    d = make_dir(tmp_path, {"0001-a.md": record()})
+
+    def create(i):
+        return run_new(d, title=f"Decision {i}")
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        assert list(pool.map(create, range(8))) == [0] * 8
+    assert len(list(d.glob("0*.md"))) == 9
+    assert decisions.problems(d) == []
+
+
+def test_staged_check_reads_records_index_and_evidence_from_git(tmp_path, monkeypatch, capsys):
+    for var in GIT_REPO_VARS:  # a hook sets these; they would point git at the real repository
+        monkeypatch.delenv(var, raising=False)
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    d = make_dir(docs, {"0001-a.md": record(evidence="evidence.md")})
+    monkeypatch.setattr(decisions, "DEFAULT_DIR", d)
+    evidence = tmp_path / "evidence.md"
+    evidence.write_text("Evidence\n")
+    decisions._git(tmp_path, "init", "-q")
+    decisions._git(tmp_path, "add", "--", "docs")
+    decisions._git(tmp_path, "add", "-N", "--", "evidence.md")
+    assert decisions.main(["check", "--staged"]) == 1
+    assert "Evidence evidence.md does not exist" in capsys.readouterr().err
+
+    decisions._git(tmp_path, "add", "--", "evidence.md")
+    (d / "0001-a.md").write_text(record(status="invalid"))
+    (d / "README.md").unlink()
+    evidence.unlink()
+    assert decisions.main(["check", "--staged"]) == 0
+
+    decisions._git(tmp_path, "add", "--", "docs/decisions/0001-a.md")
+    (d / "0001-a.md").write_text(record())
+    assert decisions.main(["check", "--staged"]) == 1
+    assert "second line must be" in capsys.readouterr().err

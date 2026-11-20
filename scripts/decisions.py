@@ -3,14 +3,19 @@
 A record is one decision in at most 100 words. The word count covers the whole file except the Status line, which is
 fixed-format metadata, so superseding an old record never pushes it over the limit.
 
-    .venv/bin/python scripts/decisions.py check     # validate every record (also run by pytest and pre-commit)
+    .venv/bin/python scripts/decisions.py check          # validate working-tree records
+    .venv/bin/python scripts/decisions.py check --staged # validate the Git index (pre-commit)
     .venv/bin/python scripts/decisions.py new --title T --decision D --why W --rejected R [--evidence PATH] [--supersedes NNNN] [--dry-run]
 
 `new` refuses a record over the limit and writes nothing; `--dry-run` only reports the word count.
 """
 import argparse
+import fcntl
+import os
 import re
+import subprocess
 import sys
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
@@ -37,16 +42,14 @@ def render(num: int, title: str, day: str, decision: str, why: str, rejected: st
 
 
 def _records(d: Path) -> list[Path]:
-    return sorted(p for p in d.glob("[0-9][0-9][0-9][0-9]-*.md"))
+    return sorted(p for p in d.glob("*.md") if p.name != "README.md")
 
 
-def _check_record(path: Path, root: Path) -> tuple[list[str], int | None]:
+def _check_record(name: str, text: str, evidence_exists: Callable[[str], bool]) -> tuple[list[str], int | None]:
     """Problems with one record and the record number it supersedes-by (None when it is accepted)."""
     out: list[str] = []
-    name = path.name
-    text = path.read_text()
     lines = text.splitlines()
-    if not NAME_RE.match(name):
+    if not NAME_RE.fullmatch(name):
         out.append(f"{name}: file name must be NNNN-lowercase-words.md")
     title = TITLE_RE.match(lines[0]) if lines else None
     if not title:
@@ -70,7 +73,7 @@ def _check_record(path: Path, root: Path) -> tuple[list[str], int | None]:
             seen[key] = line.split(":", 1)[1].strip()
     out.extend(f"{name}: missing {f}:" for f in FIELDS if not seen.get(f))
     evidence = seen.get("Evidence")
-    if evidence and not (root / evidence.split("#", 1)[0]).is_file():
+    if evidence and not evidence_exists(evidence.split("#", 1)[0]):
         out.append(f"{name}: Evidence {evidence} does not exist")
     count = words(text)
     if count > LIMIT:
@@ -82,17 +85,23 @@ def problems(d: Path) -> list[str]:
     """Every rule violation in the decisions directory; empty when it is clean."""
     d = Path(d)
     root = d.parent.parent
+    index = d / "README.md"
+    records = {path.name: path.read_text(encoding="utf-8") for path in _records(d)}
+    return _problems(records, index.read_text(encoding="utf-8") if index.is_file() else None,
+                     lambda evidence: (root / evidence).is_file())
+
+
+def _problems(records: dict[str, str], index: str | None, evidence_exists: Callable[[str], bool]) -> list[str]:
     out: list[str] = []
-    files = _records(d)
     nums = []
     superseded: dict[int, int] = {}
-    for path in files:
-        found, by = _check_record(path, root)
+    for name, record in records.items():
+        found, by = _check_record(name, record, evidence_exists)
         out.extend(found)
-        if NAME_RE.match(path.name):
-            nums.append(int(path.name[:4]))
+        if NAME_RE.fullmatch(name):
+            nums.append(int(name[:4]))
             if by is not None:
-                superseded[int(path.name[:4])] = by
+                superseded[int(name[:4])] = by
     for n in sorted(set(nums)):
         if nums.count(n) > 1:
             out.append(f"number {n:04d} is used by more than one record")
@@ -104,10 +113,9 @@ def problems(d: Path) -> list[str]:
             out.append(f"{old:04d} is superseded by {new:04d}, which does not exist")
         elif new <= old:
             out.append(f"{old:04d} is superseded by {new:04d}, which is not a later record")
-    index = (d / "README.md").read_text() if (d / "README.md").is_file() else None
-    for path in files:
-        if index is None or path.name not in index:
-            out.append(f"{path.name}: not listed in README.md")
+    for name in records:
+        if index is None or name not in index:
+            out.append(f"{name}: not listed in README.md")
     return out
 
 
@@ -117,7 +125,18 @@ def _slug(title: str) -> str:
 
 def _new(args: argparse.Namespace) -> int:
     d = Path(args.dir)
-    nums = [int(p.name[:4]) for p in _records(d)]
+    # Lock the directory itself so concurrent writers share an inode and leave no lock file behind.
+    fd = os.open(d, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return _new_locked(args, d)
+    finally:
+        os.close(fd)
+
+
+def _new_locked(args: argparse.Namespace, d: Path) -> int:
+    records = [p for p in _records(d) if NAME_RE.fullmatch(p.name)]
+    nums = [int(p.name[:4]) for p in records]
     num = max(nums, default=0) + 1
     slug = _slug(args.title)
     if not slug:
@@ -126,15 +145,22 @@ def _new(args: argparse.Namespace) -> int:
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", args.date):
         print("decisions: --date must be YYYY-MM-DD", file=sys.stderr)
         return 1
+    for field in ("title", "decision", "why", "rejected", "evidence"):
+        value = getattr(args, field)
+        if value and value.splitlines() != [value]:
+            print(f"decisions: --{field} must fit on one line", file=sys.stderr)
+            return 1
     text = render(num, args.title, args.date, args.decision, args.why, args.rejected, args.evidence)
-    count = words(text)
-    if count > LIMIT:
-        print(f"decisions: this record is {count} words, {count - LIMIT} over the limit of {LIMIT}. "
-              "Cut words from the title, Decision, Why or Rejected; nothing was written.", file=sys.stderr)
+    target = d / f"{num:04d}-{slug}.md"
+    errors, _ = _check_record(target.name, text, lambda evidence: (d.parent.parent / evidence).is_file())
+    if errors:
+        for error in errors:
+            print(f"decisions: {error}", file=sys.stderr)
         return 1
+    count = words(text)
     old_path = None
     if args.supersedes:
-        old_path = next((p for p in _records(d) if p.name.startswith(args.supersedes + "-")), None)
+        old_path = next((p for p in records if p.name.startswith(args.supersedes + "-")), None)
         if old_path is None:
             print(f"decisions: no record {args.supersedes} to supersede", file=sys.stderr)
             return 1
@@ -146,8 +172,7 @@ def _new(args: argparse.Namespace) -> int:
     if args.dry_run:
         print(f"{count}/{LIMIT} words ({LIMIT - count} left)")
         return 0
-    target = d / f"{num:04d}-{slug}.md"
-    target.write_text(text)
+    target.write_text(text, encoding="utf-8")
     if old_path is not None:
         old_lines[1] = f"Status: superseded by {num:04d} (accepted {m.group(1)})"
         old_path.write_text("\n".join(old_lines) + "\n")
@@ -159,12 +184,64 @@ def _new(args: argparse.Namespace) -> int:
     return 0
 
 
+def _git(root: Path, *args: str) -> bytes:
+    return subprocess.run(  # noqa: S603
+        ["/usr/bin/env", "git", *args], cwd=root, check=True, stdout=subprocess.PIPE,
+    ).stdout
+
+
+def _staged_problems(root: Path) -> tuple[list[str], int]:
+    # Intent-to-add entries appear in ls-files with empty blob IDs but are excluded from commits.
+    additions = ("diff", "--cached", "--name-only", "--diff-filter=A", "--no-renames", "-z")
+    intent_to_add = (
+        set(_git(root, *additions, "--ita-visible-in-index").split(b"\0"))
+        - set(_git(root, *additions, "--ita-invisible-in-index").split(b"\0"))
+    )
+    # Git selects the index, including the temporary index used for path-limited commits.
+    entries = {}
+    errors = []
+    directory = Path("docs/decisions")
+    for entry in _git(root, "ls-files", "--stage", "-z").split(b"\0"):
+        if not entry:
+            continue
+        metadata, raw_path = entry.split(b"\t", 1)
+        if raw_path in intent_to_add:
+            continue
+        path = Path(os.fsdecode(raw_path))
+        mode, blob, stage = metadata.split()
+        if stage == b"0" and mode in {b"100644", b"100755"}:
+            entries[path] = blob.decode("ascii")
+        elif path.parent == directory and path.suffix == ".md":
+            errors.append(f"{path}: expected a regular staged file")
+
+    documents = {
+        path.name: _git(root, "cat-file", "blob", blob).decode("utf-8")
+        for path, blob in entries.items()
+        if path.parent == directory and path.suffix == ".md"
+    }
+    index = documents.pop("README.md", None)
+
+    def evidence_exists(evidence: str) -> bool:
+        return Path(os.path.normpath(evidence)) in entries
+
+    errors.extend(_problems(documents, index, evidence_exists))
+    return errors, len(documents)
+
+
 def _check(args: argparse.Namespace) -> int:
-    found = problems(Path(args.dir))
+    d = Path(args.dir)
+    try:
+        if args.staged:
+            found, count = _staged_problems(DEFAULT_DIR.parent.parent)
+        else:
+            found, count = problems(d), len(_records(d))
+    except (OSError, UnicodeError, subprocess.CalledProcessError) as error:
+        print(f"decisions: {error}", file=sys.stderr)
+        return 1
     for p in found:
         print(p, file=sys.stderr)
     if not found:
-        print(f"decisions: {len(_records(Path(args.dir)))} records ok")
+        print(f"decisions: {count} records ok")
     return 1 if found else 0
 
 
@@ -172,7 +249,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="decisions.py", description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
     check = sub.add_parser("check", help="validate every record")
-    check.add_argument("--dir", default=str(DEFAULT_DIR))
+    source = check.add_mutually_exclusive_group()
+    source.add_argument("--dir", default=str(DEFAULT_DIR))
+    source.add_argument("--staged", action="store_true", help="validate the repository’s Git index")
     check.set_defaults(fn=_check)
     new = sub.add_parser("new", help="create the next record (refuses more than 100 words)")
     new.add_argument("--dir", default=str(DEFAULT_DIR))

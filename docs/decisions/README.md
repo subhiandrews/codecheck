@@ -12,7 +12,8 @@ Why code-check is the way it is, as a timeline. `docs/ARCHITECTURE.md` and the c
 ```bash
 .venv/bin/python scripts/decisions.py new --title "Short title" --decision "What we chose." --why "The reason." --rejected "What we did not."
 .venv/bin/python scripts/decisions.py new ... --dry-run      # only report the word count
-.venv/bin/python scripts/decisions.py check                  # validate all records (pytest and pre-commit run it)
+.venv/bin/python scripts/decisions.py check                  # validate working-tree records
+.venv/bin/python scripts/decisions.py check --staged         # validate the Git index (pre-commit)
 ```
 
 Records dated before 2026-11-20 were reconstructed from the original design specs, checked against the code, and carry the spec's date.

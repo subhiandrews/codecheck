@@ -19,7 +19,7 @@ fi
 
 P="$ROOT/.venv/bin/python"
 if [ -x "$P" ]; then
-  "$P" "$ROOT/scripts/decisions.py" check >&2 || { echo 'decision records invalid: see above (max 100 words each)' >&2; exit 1; }
+  "$P" "$ROOT/scripts/decisions.py" check --staged >&2 || { echo 'decision records invalid: see above (max 100 words each)' >&2; exit 1; }
 fi
 
 exec "$ROOT/scripts/gates.sh"
