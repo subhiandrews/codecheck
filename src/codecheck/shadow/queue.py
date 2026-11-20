@@ -193,7 +193,7 @@ _ALLOWED_FILES = {"README.md"}
 # everything it relies on, and the code that decides what an unattended run may do. Compared case-folded, so a path
 # that only differs in case cannot slip past on a case-insensitive checkout.
 _PROTECTED = (".github/", ".githooks/", ".claude/", "scripts/", "hooks/", "bin/", "installer/",
-              "docs/superpowers/", "src/codecheck/providers/")
+              "docs/decisions/", "docs/spikes/", "src/codecheck/providers/")
 _PROTECTED_FILES = {
     "CLAUDE.md", "LICENSE",
     "src/codecheck/shadow/queue.py", "src/codecheck/commands/handoff_queue.py", "tests/test_handoff_queue.py",

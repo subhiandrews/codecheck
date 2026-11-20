@@ -160,7 +160,7 @@ CODEX_EFFORTS = ("low", "medium", "high")
 LABEL_NAME = re.compile(r"[A-Za-z0-9._ :-]{1,50}")
 # A GitHub login, optionally a bot: octocat, github-actions[bot]. Never starts with '-'.
 LOGIN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}(\[bot\])?")
-# Values accepted by `claude --permission-mode` (Task 1 spike).
+# Values accepted by `claude --permission-mode` (headless spike, docs/spikes/).
 PERMISSION_MODES = ("acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off"}

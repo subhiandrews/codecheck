@@ -1,6 +1,6 @@
 # Architecture and design
 
-How code-check is built and why. For install and daily use see the [README](../README.md); for every setting see [CONFIGURATION.md](CONFIGURATION.md); for the maintainer tooling (shadow mode, golden cases, evals, hand-off rounds) see [MAINTAINING.md](MAINTAINING.md). The authoritative design is `docs/superpowers/specs/2026-11-12-code-check-design.md`.
+How code-check is built and why. For install and daily use see the [README](../README.md); for every setting see [CONFIGURATION.md](CONFIGURATION.md); for the maintainer tooling (shadow mode, golden cases, evals, hand-off rounds) see [MAINTAINING.md](MAINTAINING.md). Why each choice was made is recorded in [decisions/](decisions/README.md).
 
 ## Review flow
 

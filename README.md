@@ -123,6 +123,7 @@ A `CODE_CHECK.md` at the repository root tells the reviewers, in plain prose, wh
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every setting, defaults, repository restrictions, Codex models |
 | [docs/INSTALL-CODEX.md](docs/INSTALL-CODEX.md) | Codex install, first run, measured sandbox limits |
 | [docs/gitlab-testing.md](docs/gitlab-testing.md) | GitLab test plan and what is unverified |
+| [docs/decisions/](docs/decisions/README.md) | Why each choice was made: short, append-only decision records |
 | [docs/MAINTAINING.md](docs/MAINTAINING.md) | Shadow mode, hand-offs, golden cases, evals, commit gates, extending |
 | [docs/Evals.md](docs/Evals.md) | How the evals fit together |
 

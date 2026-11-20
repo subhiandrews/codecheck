@@ -5,7 +5,7 @@ description: Maintainer-only. Analyze ONE pending code-check hand-off, improve c
 
 # handoff-round
 
-One invocation handles **one** hand-off and then stops. Your loop calls it again. Do the stages in order and do not skip one. Past rounds are in `docs/superpowers/specs/` and `docs/superpowers/plans/` (the 2026-11-13 handoff files): read the most recent spec once for the style of evidence and the non-goals.
+One invocation handles **one** hand-off and then stops. Your loop calls it again. Do the stages in order and do not skip one. Past rounds are in `docs/decisions/` (hand-off and eval records 0007 to 0010, 0020 to 0023): read a few once for the style of evidence and the non-goals.
 
 ## Trust rules (read first)
 
