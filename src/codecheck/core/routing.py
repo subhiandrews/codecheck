@@ -13,15 +13,18 @@ from pathlib import PurePosixPath
 
 from codecheck.config import RoutingConfig
 from codecheck.core.diffmap import FileDiff
-from codecheck.core.doccheck import DocMetrics, comment_flags, measure, runs, starts_mid
+from codecheck.core.doccheck import DocMetrics, Scan, measure, scan
 
 STRUCTURAL_NAMES = {
-    "pyproject.toml", "setup.py", "setup.cfg", "package.json", "tsconfig.json", "Cargo.toml", "go.mod", "pom.xml",
-    "build.gradle", "build.gradle.kts", "Gemfile", "composer.json", "Dockerfile", "Makefile", "CMakeLists.txt",
-    "__init__.py", ".gitlab-ci.yml",
+    "pyproject.toml", "setup.py", "setup.cfg", "Pipfile", "package.json", "tsconfig.json", "Cargo.toml", "go.mod", "go.sum",
+    "pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "build.sbt", "Package.swift",
+    "Gemfile", "composer.json", "Makefile", "makefile", "GNUmakefile", "CMakeLists.txt", "BUILD", "BUILD.bazel", "WORKSPACE",
+    "MODULE.bazel", "Jenkinsfile", ".gitlab-ci.yml", ".travis.yml", "azure-pipelines.yml", "bitbucket-pipelines.yml",
+    "__init__.py", "lib.rs", "mod.rs", "index.ts",
 }
-STRUCTURAL_SUFFIXES = {".proto", ".graphql", ".gql", ".thrift"}
-STRUCTURAL_DIRS = (".github/workflows/", "/migrations/")
+STRUCTURAL_SUFFIXES = {".proto", ".graphql", ".gql", ".thrift", ".csproj", ".fsproj", ".vbproj", ".sln", ".h", ".hpp"}
+STRUCTURAL_DIRS = (".github/workflows/", ".circleci/", "/migrations/", "/db/migrate/")
+_STRUCTURAL_NAME = re.compile(r"^(?:requirements.*\.txt|Dockerfile.*|.*\.Dockerfile|.*\.d\.ts|openapi.*|swagger.*)$", re.IGNORECASE)
 
 _LOOP_HEAD = re.compile(r"^\s*(?:async\s+)?(?:for|foreach|while)\b|^\s*loop\s*\{")
 _LOOP_CALL = re.compile(r"\.(?:forEach|each|each_with_index)\b|\[[^\]]*\bfor\b[^\]]*\bin\b")
@@ -44,7 +47,7 @@ class Routing:
 
 def _structural(path: str) -> bool:
     p = PurePosixPath(path)
-    return (p.name in STRUCTURAL_NAMES or p.suffix in STRUCTURAL_SUFFIXES or p.name.lower().startswith(("openapi", "swagger"))
+    return (p.name in STRUCTURAL_NAMES or p.suffix in STRUCTURAL_SUFFIXES or bool(_STRUCTURAL_NAME.match(p.name))
             or any(d in f"/{path}" for d in STRUCTURAL_DIRS))
 
 
@@ -60,7 +63,7 @@ def _architect(diffs: Mapping[str, FileDiff], cfg: RoutingConfig) -> tuple[bool,
     return False, f"architect: skipped, small change ({changed} lines in {files} files)"
 
 
-def _performance_signals(diffs: Mapping[str, FileDiff], languages: Mapping[str, str | None]) -> Counter:
+def _performance_signals(diffs: Mapping[str, FileDiff], languages: Mapping[str, str | None], scans: Scan) -> Counter:
     signals: Counter = Counter()
     for path, fd in diffs.items():
         language = languages.get(path)
@@ -68,9 +71,9 @@ def _performance_signals(diffs: Mapping[str, FileDiff], languages: Mapping[str, 
             continue
         added_sql = False
         ddl = 0
-        for run in runs(fd):
+        for run in scans.get(path, ()):
             stack: list[int] = []  # indents of the loop headers that enclose the current line
-            for ln, flag in zip(run, comment_flags(language, [x.text for x in run], mid=starts_mid(run)), strict=True):
+            for ln, flag in run:
                 if flag is None or flag:  # blank or comment: never a signal, never closes a loop
                     continue
                 text = ln.text
@@ -109,11 +112,12 @@ def _performance_signals(diffs: Mapping[str, FileDiff], languages: Mapping[str, 
 
 
 def route(diffs: Mapping[str, FileDiff], languages: Mapping[str, str | None], cfg: RoutingConfig) -> Routing:
-    metrics = measure(diffs, languages, cfg.max_comment_percent)
+    scans = scan(diffs, languages)
+    metrics = measure(diffs, languages, cfg.max_comment_percent, cfg.docs_min_comment_lines, scans)
     if cfg.mode == "off":
         return Routing(True, False, False, ("routing is off: fixed panel",), metrics)
     architect, why_architect = _architect(diffs, cfg)
-    signals = _performance_signals(diffs, languages)
+    signals = _performance_signals(diffs, languages, scans)
     score = sum(signals.values())
     performance = score >= cfg.performance_min_score
     named = ", ".join(sorted(signals, key=lambda k: -signals[k])) or "no signals"
@@ -121,7 +125,7 @@ def route(diffs: Mapping[str, FileDiff], languages: Mapping[str, str | None], cf
                        else f"performance: not needed, score {score} below {cfg.performance_min_score} ({named})")
     if metrics.doc_files:
         docs, why_docs = True, f"docs: added, {len(metrics.doc_files)} documentation file(s) changed"
-    elif metrics.comment_lines >= cfg.docs_min_comment_lines and metrics.over_cap:
+    elif metrics.over_cap:
         docs = True
         why_docs = f"docs: added, comments are {metrics.percent}% of added lines (cap {cfg.max_comment_percent}%)"
     else:

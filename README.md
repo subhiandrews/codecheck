@@ -60,7 +60,7 @@ Reviewers run in parallel per chunk of the diff and write findings files. The CL
 | `architect`, `pragmatist`, `skeptic` | Design, simplicity and adversarial review; the architect is skipped for a clearly small change | Sonnet |
 | `security` (opt-in) | Secrets, PII, injection, auth, crypto, risky dependencies | Opus |
 | `performance` (routed) | Complexity, N+1, unbounded growth, blocking calls | Sonnet |
-| `docs` (routed) | Skeptical of comments (3% cap per PR) and new or verbose documentation | Sonnet |
+| `doc-skeptic` (routed) | Skeptical of comments (3% cap per PR) and new or verbose documentation | Sonnet |
 | `deep-reviewer` (optional slot) | Your own knowledge sources via MCP; off by default | Sonnet |
 | `aggregator` | Merges duplicates, verifies, drops noise | Opus |
 

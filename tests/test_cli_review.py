@@ -791,8 +791,8 @@ def test_context_routes_performance_and_docs_from_the_diff(tmp_path):
     (clone / "app.py").write_text("for u in users:\n    for v in users:\n        db.execute(q, u, v)\n")
     (clone / "README.md").write_text("hello\nmore words\n")
     out, meta = _context(make_ctx(tmp_path, clone))
-    assert out["panel"]["members"] == ["pragmatist", "skeptic", "performance", "docs", "lang-python"]
-    assert meta["models"]["docs"] == "sonnet" and meta["models"]["performance"] == "sonnet"
+    assert out["panel"]["members"] == ["pragmatist", "skeptic", "performance", "doc-skeptic", "lang-python"]
+    assert meta["models"]["doc-skeptic"] == "sonnet" and meta["models"]["performance"] == "sonnet"
     metrics = json.loads((Path(out["run_dir"]) / "docs-metrics.json").read_text())
     assert metrics["cap_percent"] == 3 and metrics["doc_files"][0]["path"] == "README.md"
     assert "docs-metrics.json" not in out["run_files"]
@@ -804,7 +804,7 @@ def test_context_full_uses_every_reviewer_without_routing(tmp_path):
     for ctx, extra in ((make_ctx(tmp_path, clone), ("--full",)),
                        (make_ctx(tmp_path, clone, review=ReviewConfig(full=True)), ())):
         out, meta = _context(ctx, *extra)
-        assert out["panel"]["members"] == ["architect", "pragmatist", "skeptic", "security", "performance", "docs", "lang-python"]
+        assert out["panel"]["members"] == ["architect", "pragmatist", "skeptic", "security", "performance", "doc-skeptic", "lang-python"]
         assert out["panel"]["full"] is True and out["panel"]["routing"] == ["full: every reviewer, routing skipped"]
-        assert meta["models"]["security"] == "opus" and meta["models"]["docs"] == "sonnet"
+        assert meta["models"]["security"] == "opus" and meta["models"]["doc-skeptic"] == "sonnet"
         assert (Path(out["run_dir"]) / "docs-metrics.json").is_file()

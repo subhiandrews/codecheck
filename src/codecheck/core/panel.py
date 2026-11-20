@@ -72,7 +72,7 @@ class Panel:
             *self.core,
             *(("security",) if self.security else ()),
             *(("performance",) if self.performance else ()),
-            *(("docs",) if self.docs else ()),
+            *(("doc-skeptic",) if self.docs else ()),
             *(f"lang-{lang}" for lang in self.languages),
             *(("deep-reviewer",) if self.deep else ()),
         )

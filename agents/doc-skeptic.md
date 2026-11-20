@@ -1,5 +1,5 @@
 ---
-name: docs
+name: doc-skeptic
 description: Documentation reviewer for code-check reviews. Use only when dispatched by a code-check skill.
 tools: Read, Grep, Glob, Write
 model: sonnet

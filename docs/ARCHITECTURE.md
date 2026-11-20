@@ -122,7 +122,7 @@ To test this on a real GitLab project, [gitlab-testing.md](gitlab-testing.md) ha
 
 The security reviewer is an optional panel member. It is one agent per chunk (not per language) and it owns every changed file. It looks for what deterministic scanners miss: committed secrets and credentials, including custom formats, personal data (PII) in code, logs and fixtures, injection, authentication and access-control mistakes, unsafe deserialization, SSRF and path traversal, weak cryptography, insecure defaults, secrets in CI and configuration files, and risky dependency additions. Findings use the category `security`: a committed secret or PII is Critical, a vulnerability is a Warning (Critical when it is exploitable as written).
 
-It runs only when asked:
+It runs when asked or when routing finds a reason in the diff (see Reviewer routing and full mode):
 
 - `/code-check:review-local security` and `/code-check:review-pr 123 security` (the `security` argument; with no PR, `review-pr` works the queue and configuration decides),
 - `code-check context --security`, and `code-check run-pr --security` (review mode only),
@@ -140,11 +140,12 @@ The performance reviewer is an optional panel member. It is one agent per chunk 
 
 Severity follows the failure, not the pattern. Critical means the code can crash, exhaust memory or hang on realistic input, and the finding must say what grows or blocks and what input triggers it. Warning means correct but wasteful in a way that will matter as data grows. Suggestion means a small gain or one off any hot path. The same quadratic loop is a suggestion over a fixed handful of items and can be Critical over request-supplied data; when the reviewer cannot tell how large the input is it caps the finding at Suggestion. Each finding states the complexity before and after.
 
-It runs only when asked:
+It runs when asked or when routing finds a reason in the diff (see Reviewer routing and full mode):
 
 - `/code-check:review-local performance` and `/code-check:review-pr 123 performance` (the `performance` argument; with no PR, `review-pr` works the queue and configuration decides),
 - `code-check context --performance`, and `code-check run-pr --performance` (review mode only),
 - `review.performance = true` in configuration, which also turns it on for `code-check loop --mode review`.
+- the diff scores at least `review.routing.performance_min_score` (default 3), for example a nested loop or a query inside a loop; `review.routing.mode = "off"` turns this off.
 
 `address-comments` and `babysit-pr` never run it. It uses `models.performance`, default `"sonnet"`; a repository's `.code-check.toml` may set `models.performance` and `review.performance`, and `models.performance` only takes effect after `gen-agents` or the installer re-runs. Setting `review.performance = true` in a repository adds one agent per chunk to every unattended review of it. It is guidance on top of profilers and benchmarks, not a replacement: it reads code and does not measure it.
 

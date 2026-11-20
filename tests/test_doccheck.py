@@ -68,3 +68,23 @@ def test_a_run_that_starts_inside_a_docstring_closes_it():
     assert comment_flags("python", lines, mid=True) == [True, False, False]
     assert comment_flags("python", lines) == [True, True, True]  # a file that opens with it opens a docstring
     assert comment_flags("c", ["*/", "int x;"], mid=True) == [True, False]
+
+
+def test_python_string_assigned_in_code_is_code_not_a_docstring():
+    lines = ['QUERY = """', "SELECT 1", '"""', "def f():", "    return run(QUERY)"]
+    assert comment_flags("python", lines) == [False, False, False, False, False]
+    assert comment_flags("python", ['x = dedent("""', "a", '""")', "y = 1"]) == [False, False, False, False]
+
+
+def test_a_run_below_a_multiline_docstring_closes_it():
+    lines = ["    More text.", '    """', "    x = 1", "    y = 2"]
+    assert comment_flags("python", lines, mid=True) == [True, True, False, False]
+    assert comment_flags("python", ['"""one"""', "x = 1"], mid=True) == [True, False]  # balanced: nothing is open
+
+
+def test_over_cap_needs_the_minimum_number_of_comment_lines():
+    body = "".join(f"+{ln}\n" for ln in ["# why", "x = 1"] + ["y = 2"] * 8)
+    diffs = _diff("a.py", body)
+    assert measure(diffs, {"a.py": "python"}, 3).over_cap
+    m = measure(diffs, {"a.py": "python"}, 3, 3)
+    assert not m.over_cap and m.to_json()["over_cap"] is False

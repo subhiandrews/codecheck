@@ -132,7 +132,8 @@ def _build(args, ctx, run_id, run_dir) -> dict:
     full = args.full or cfg.review.full
     if full:
         routing = None
-        doc_metrics = measure(diffs, languages_by_path, cfg.review.routing.max_comment_percent)
+        doc_metrics = measure(diffs, languages_by_path, cfg.review.routing.max_comment_percent,
+                               cfg.review.routing.docs_min_comment_lines)
         reasons = ("full: every reviewer, routing skipped",)
     else:
         routing = route(diffs, languages_by_path, cfg.review.routing)
@@ -152,7 +153,7 @@ def _build(args, ctx, run_id, run_dir) -> dict:
     if panel.performance:
         models["performance"] = model_for(cfg.models, "performance")
     if panel.docs:
-        models["docs"] = model_for(cfg.models, "docs")
+        models["doc-skeptic"] = model_for(cfg.models, "docs")
         write_json(run_dir / "docs-metrics.json", doc_metrics.to_json())  # read by the docs reviewer, not listed in run_files
     if panel.deep:
         models["deep-reviewer"] = model_for(cfg.models, "deep")

@@ -31,7 +31,7 @@ small_max_lines = 40           # at most this many changed lines in at most smal
 small_max_files = 3
 performance_min_score = 3      # score of the loop, query and memory signals in the added lines that adds the performance reviewer
 max_comment_percent = 3        # comments may be at most this share of the added lines (docs reviewer)
-docs_min_comment_lines = 3     # fewer added comment lines than this never route the docs reviewer by ratio
+docs_min_comment_lines = 3     # fewer added comment lines than this are never over the cap, so they never route the docs reviewer or raise the cap finding
 
 [loop]
 max_prs_per_iteration = 5

@@ -17,7 +17,7 @@ def test_one_expert_per_language_and_all_files_present():
     files = render_all(ModelsConfig())
     assert len(files) == 23
     assert {f"lang-{lang}.md" for lang in LANGUAGES} <= set(files)
-    assert {"architect.md", "pragmatist.md", "skeptic.md", "aggregator.md", "deep-reviewer.md", "security.md", "performance.md", "docs.md"} <= set(files)
+    assert {"architect.md", "pragmatist.md", "skeptic.md", "aggregator.md", "deep-reviewer.md", "security.md", "performance.md", "doc-skeptic.md"} <= set(files)
 
 
 def test_default_models_and_tools():
@@ -185,9 +185,9 @@ def test_performance_agent_uses_its_model_and_calibrated_severities():
 
 def test_docs_agent_is_skeptical_capped_and_defers_only_to_explicit_project_rules():
     files = render_all(ModelsConfig())
-    assert "docs.md" in files and frontmatter(files["docs.md"])["model"] == "sonnet"
-    assert frontmatter(render_all(ModelsConfig(docs="opus"))["docs.md"])["model"] == "opus"
-    body = files["docs.md"]
+    assert "doc-skeptic.md" in files and frontmatter(files["doc-skeptic.md"])["model"] == "sonnet"
+    assert frontmatter(render_all(ModelsConfig(docs="opus"))["doc-skeptic.md"])["model"] == "opus"
+    body = files["doc-skeptic.md"]
     assert "documentation skeptic" in body and "category `docs`" in body
     assert "limited, precise and current" in body and "Be cynical" in body
     assert "RUN_DIR/docs-metrics.json" in body and "never recount" in body and "`cap_percent`" in body

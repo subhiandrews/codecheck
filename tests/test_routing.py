@@ -88,3 +88,12 @@ def test_text_files_alone_do_not_route_docs():
 def test_cap_compares_exact_ratio_not_the_rounded_percent():
     r = go(_new("a.py", ["# a", "# b", "# c"] + ["y = 1"] * 96))  # 3 of 99 = 3.03%
     assert r.doc_metrics.over_cap and r.docs
+
+
+def test_common_manifests_pipelines_and_interfaces_keep_the_architect():
+    for path in ("requirements.txt", "requirements-dev.txt", "Jenkinsfile", ".circleci/config.yml", "app/App.csproj",
+                 "Dockerfile.prod", "api.Dockerfile", "include/api.h", "types/api.d.ts", "db/migrate/20240101_add.rb",
+                 "go.sum", "makefile"):
+        r = go(_mod(path, ["x"], ["y"]))
+        assert r.architect, path
+    assert not go(_mod("src/a.py", ["x"], ["y"])).architect
