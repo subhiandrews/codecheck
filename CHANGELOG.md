@@ -5,7 +5,7 @@ User-visible changes per release, newest first. Earlier releases: `git log`. The
 ## [1.1.2]
 
 ### Changed
-- Performance routing: also scores list membership tests and `await` inside a loop, blocking calls in async code, and regex compile or copy per iteration; test files no longer score and one file read counts once, so about 8 in 38 recent commits route the reviewer instead of 20.
+- The performance reviewer is now routed for list membership or `await` in a loop, blocking calls in async code and regex compile per iteration, and no longer for test files.
 
 ## [1.1.1]
 
