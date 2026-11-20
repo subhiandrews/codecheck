@@ -64,7 +64,7 @@ Reviewers run in parallel per chunk of the diff and write findings files. The CL
 | `deep-reviewer` (optional slot) | Your own knowledge sources via MCP; off by default | Sonnet |
 | `aggregator` | Merges duplicates, verifies, drops noise | Opus |
 
-`context` routes `architect`, `performance` and `docs` from the diff, in code, and records why in `panel.routing`; `review.routing` tunes it. Force a reviewer with `--security` / `--performance` on `context` and `run-pr`, the `security` / `performance` skill argument, or `review.security` / `review.performance`. `--full`, the `full` skill argument or `review.full` runs every reviewer, security and performance included, with no routing. Codex uses its own model table (`[codex_models]`).
+`context` routes `architect`, `performance` and `doc-skeptic` from the diff, in code, and records why in `panel.routing`; `review.routing` tunes it. Force a reviewer with `--security` / `--performance` on `context` and `run-pr`, the `security` / `performance` skill argument, or `review.security` / `review.performance`. `--full`, the `full` skill argument or `review.full` runs every reviewer, security and performance included, with no routing. Codex uses its own model table (`[codex_models]`).
 
 ## CLI
 
@@ -128,6 +128,7 @@ A `CODE_CHECK.md` at the repository root tells the reviewers, in plain prose, wh
 | [docs/decisions/](docs/decisions/README.md) | Why each choice was made: short, append-only decision records |
 | [docs/MAINTAINING.md](docs/MAINTAINING.md) | Shadow mode, hand-offs, golden cases, evals, commit gates, extending |
 | [docs/Evals.md](docs/Evals.md) | How the evals fit together |
+| [CHANGELOG.md](CHANGELOG.md) | User-visible changes per release |
 
 ## Troubleshooting
 
