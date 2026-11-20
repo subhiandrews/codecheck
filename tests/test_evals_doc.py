@@ -110,10 +110,10 @@ def test_the_diagram_is_there_and_its_class_lists_name_real_nodes():
         assert command in diagram
 
 
-def test_the_readme_points_at_the_page_and_the_page_points_at_the_specs():
+def test_the_readme_points_at_the_page_and_the_page_points_at_the_decision_records():
     assert "docs/Evals.md" in (REPO / "README.md").read_text()
-    for spec in ("2026-11-13-handoff-and-golden-eval-design.md", "2026-11-15-judge-eval-design.md"):
-        assert f"docs/superpowers/specs/{spec}" in DOC
+    for record in ("0010-replay-gates-every-commit-live-eval-is-manual.md", "0023-the-llm-judge-is-advisory-only.md"):
+        assert f"{record}" in DOC and (REPO / "docs" / "decisions" / record).is_file()
 
 
 @pytest.mark.parametrize("section", ["The picture", "The four evals", "Where the data comes from",

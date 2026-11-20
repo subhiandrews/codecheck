@@ -17,4 +17,11 @@ else
   echo "eslint not found at $E (npm ci); skipping lint" >&2
 fi
 
+P="$ROOT/.venv/bin/python"
+if [ -x "$P" ]; then
+  "$P" "$ROOT/scripts/decisions.py" check --staged >&2 || { echo 'decision records invalid: see above (max 100 words each)' >&2; exit 1; }
+else
+  echo "python not found at $P (pip install -e '.[dev]'); skipping decision record check" >&2
+fi
+
 exec "$ROOT/scripts/gates.sh"

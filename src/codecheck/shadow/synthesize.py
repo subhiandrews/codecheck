@@ -3,7 +3,7 @@
 `build_brief` turns a labelled case into what is general about it (language, category, severity, whether the finding
 was right) and nothing that identifies it. `check_synthetic` verifies a hand-written live snippet against the source:
 it must share nothing distinctive with it and must match the brief. Both are deterministic; the model that writes the
-snippet never sees the source (see docs/superpowers/specs/2026-11-19-synthetic-cases-design.md).
+snippet never sees the source (see docs/decisions/0026-synthetic-cases-keep-the-lesson-and-drop-the-code.md).
 """
 
 import json

@@ -28,7 +28,7 @@ def add_arguments(p) -> None:
 
 
 def parse_result(stdout: str, returncode: int, stderr: str) -> dict:
-    """Normalise `claude -p --output-format json` output (key names confirmed by the Task 1 spike)."""
+    """Normalise `claude -p --output-format json` output (key names confirmed by the headless spike in docs/spikes/)."""
     try:
         data = json.loads(stdout)
         if not isinstance(data, dict):
@@ -69,7 +69,7 @@ def run_one(ctx, mode: str, ref, fingerprint: str | None = None, dry_run: bool =
             "--permission-mode", cfg.permission_mode, "--permission-prompts", "none"]
     if cfg.add_state_dir:
         # Reviews and fixes happen in worktrees and run directories under state_dir, outside the run's cwd.
-        # An absolute path never starts with '-'. (`--add-dir` is not covered by the Task 1 spike.)
+        # An absolute path never starts with '-'. (`--add-dir` is not covered by the headless spike.)
         argv += ["--add-dir", str(expand_path(ctx.config.state_dir).resolve())]
     argv += ["--allowedTools", *tools]
     if dry_run:

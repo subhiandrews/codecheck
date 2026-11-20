@@ -2,7 +2,7 @@
 
 code-check reviews pull requests with a panel of LLM reviewers, and a model's output changes from run to run. The evals exist to answer one question: **did a change make the reviews better or worse?** There are four of them. Each answers a different part of that question, and none of them answers all of it, so this page explains what each one measures, how they connect, and how far to trust each number.
 
-The README is the reference for flags and output shapes. The files under `docs/superpowers/specs/` record why each piece was built. This page is the map between them.
+The README is the reference for flags and output shapes. The records in `docs/decisions/` say why each piece was built. This page is the map between them.
 
 ## The picture
 
@@ -120,12 +120,12 @@ All of it is local and scrubbed of secrets before it is written. The scrub is pa
 
 - The sets are small: 7 golden cases and 5 snippets. The live score is coarse and the calibration estimate is weak.
 - The evals cover the review panel. The `address-comments` flow records its verdicts in shadow mode, but nothing evaluates them.
-- No eval scores the reviewers with a judge yet. The pair question ("is this the same issue as that concern?") is the better basis for one, and it needs snippets that carry explicit concerns. See `docs/superpowers/specs/2026-11-15-judge-eval-design.md`.
+- No eval scores the reviewers with a judge yet. The pair question ("is this the same issue as that concern?") is the better basis for one, and it needs snippets that carry explicit concerns. See `docs/decisions/0023-the-llm-judge-is-advisory-only.md`.
 - The live eval is local, so a contributor who never installs the git hooks never runs it. CI does not backstop that.
 
 ## Where to read more
 
 - `README.md`: the "Shadow mode", "Golden cases and replay", "Live snippet eval", "Judge calibration" and "Eval score history" sections, for flags and output.
-- `docs/superpowers/specs/2026-11-13-handoff-and-golden-eval-design.md`: hand-off data, the golden set, replay, the live eval and the gates.
-- `docs/superpowers/specs/2026-11-15-judge-eval-design.md`: the judge and its first calibration.
+- `docs/decisions/0007-hand-offs-are-read-from-the-session-transcript.md`, `0009-golden-cases-need-human-confirmed-labels.md` and `0010-replay-gates-every-commit-live-eval-is-manual.md`: hand-off data, the golden set, replay, the live eval and the gates.
+- `docs/decisions/0023-the-llm-judge-is-advisory-only.md`: the judge and its first calibration.
 - `docs/eval-history.md`: the scores over time.

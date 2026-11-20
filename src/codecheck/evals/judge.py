@@ -1,6 +1,6 @@
 """LLM-as-judge for evals: yes/no questions about findings, and a calibration of the judge against human labels.
 
-Developer tooling and advisory only (see docs/superpowers/specs/2026-11-15-judge-eval-design.md): it costs tokens,
+Developer tooling and advisory only (see docs/decisions/0023-the-llm-judge-is-advisory-only.md): it costs tokens,
 runs locally, and is never a CI step, a commit gate or a merge condition. Findings, comments and diffs are
 third-party text, so every prompt states its instructions first and then fences each piece of data with a random
 token. The reply must be one JSON object with a real boolean and a short reason; anything else is an error, never a

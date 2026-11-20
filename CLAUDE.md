@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`code-check` is a Claude Code plugin plus a Python CLI for PR review and review-comment handling. The design is split on purpose: a **deterministic Python CLI** does everything that must be exact (diff parsing, finding validation, dedupe, anchoring, policy, state, git/gh calls), and **skills + subagents** do only the LLM work (reviewing, aggregating, addressing comments). Authority order when they disagree: spec (`docs/superpowers/specs/2026-11-12-code-check-design.md`), then the Task 1 spike (`docs/superpowers/spikes/`, which records real `claude` CLI behaviour and overrides plan prose), then the plan.
+`code-check` is a Claude Code plugin plus a Python CLI for PR review and review-comment handling. The design is split on purpose: a **deterministic Python CLI** does everything that must be exact (diff parsing, finding validation, dedupe, anchoring, policy, state, git/gh calls), and **skills + subagents** do only the LLM work (reviewing, aggregating, addressing comments). The code and `docs/ARCHITECTURE.md` describe what is true now; `docs/decisions/` records why each choice was made and `docs/spikes/` records measured `claude` and Codex CLI behaviour. When they disagree with the code, the code wins unless the code is the bug.
 
 ## Commands
 
@@ -40,7 +40,7 @@ scripts/install-git-hooks.sh                     # opt in: git config core.hooks
 
 **Plugin and installer:** `skills/`, `agents/`, `hooks/`, `bin/`, `.claude-plugin/` form the plugin payload. `agents/*.md` are **generated** from `agentgen.py` and committed; a drift test fails if they differ, so rerun `gen-agents` after changing prompts or default models. Subagent types are namespaced `code-check:<agent>`. `hooks/ensure-runtime.sh` (with `bin/code-check`) bootstraps a venv into `CLAUDE_PLUGIN_DATA` (fallback `~/.local/share/code-check`); the wrapper re-runs it on every call. `installer/` (Node) installs either as a Claude plugin or by copying skills/agents, tracking a receipt so uninstall removes only what it created.
 
-Docs layout: `README.md` is the short guide (capped at 260 lines by `tests/test_readme.py`); design and flows are in `docs/ARCHITECTURE.md`, every setting in `docs/CONFIGURATION.md`, maintainer tooling in `docs/MAINTAINING.md`. `CODE_CHECK.md` rule 4 makes reviews flag docs that fall behind a PR.
+Docs layout: `README.md` is the short guide (capped at 260 lines by `tests/test_readme.py`); design and flows are in `docs/ARCHITECTURE.md`, every setting in `docs/CONFIGURATION.md`, maintainer tooling in `docs/MAINTAINING.md`; decision records in `docs/decisions/`, at most 100 words each and append-only (add one with `.venv/bin/python scripts/decisions.py new`, which refuses a longer one). `CODE_CHECK.md` rule 4 makes reviews flag docs that fall behind a PR.
 
 `tests/test_plugin_static.py` cross-checks skills against the real argparse parser (subcommands, flags, agent names), and `tests/test_readme.py` checks the README against the CLI and config keys, so changing a command, flag or config key means updating skills and README too.
 

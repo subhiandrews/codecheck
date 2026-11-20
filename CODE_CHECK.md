@@ -18,3 +18,8 @@
    - **Size and scope.** Flag a `README.md` over 260 lines. Flag architecture or design prose, long config reference or maintainer tooling added to the README; it should be a short summary with a link to the `docs/` file.
    - **Structure.** The README must keep: what it is, the host and runtime support matrix, install for Claude Code and Codex and for GitHub and GitLab, quick start, the skills, the reviewer agents, the CLI, configuration, safety, and links to `docs/`.
    - Flag each missing update as a Warning and say which doc and which change it follows from. A PR that changes only tests, CI or golden cases needs none.
+5. Check decision records in `docs/decisions/`. They are an append-only timeline of why a choice was made, in at most 100 words each (the Status line is not counted); `docs/ARCHITECTURE.md` and the code describe the current state.
+   - Flag a PR that makes a lasting design choice (a new invariant, a security boundary, a rejected alternative that will be proposed again, a change of an existing decision) without adding a record. A record is added with `.venv/bin/python scripts/decisions.py new`, which refuses more than 100 words.
+   - Flag a record over 100 words, and flag an edit to an accepted record other than its Status line. A reversal is a new record that supersedes the old one (`--supersedes NNNN`).
+   - Flag a record that restates how the code works, lists implementation steps, or contradicts the code without saying the code changed.
+   - Flag design rationale added to `README.md` or `docs/ARCHITECTURE.md` that belongs in a record.

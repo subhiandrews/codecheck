@@ -456,7 +456,7 @@ def test_protected_paths_are_matched_case_insensitively(path):
     "src/codecheck/runner.py", "src/codecheck/cli.py", "src/codecheck/commands/__init__.py",
     "src/codecheck/config.py", "src/codecheck/commands/run_pr.py", "src/codecheck/commands/loop.py",
     "src/codecheck/core/policy.py", "src/codecheck/providers/github.py", "tests/conftest.py", "tests/__init__.py",
-    "src/codecheck/conftest.py", "docs/superpowers/specs/x.md",
+    "src/codecheck/conftest.py", "docs/decisions/0099-x.md", "docs/spikes/x.md",
 ])
 def test_the_guards_dependencies_and_security_plumbing_are_protected(path):
     out = check(diff(path))
