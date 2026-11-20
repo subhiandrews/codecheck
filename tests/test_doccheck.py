@@ -51,9 +51,9 @@ def test_context_lines_keep_a_docstring_open_but_are_not_counted():
 
 
 def test_doc_paths():
-    for p in ("README.md", "docs/a.txt", "CHANGELOG", "guide.rst", "a/b/NOTES.adoc", "docs/decisions/0001-x.md"):
+    for p in ("README.md", "docs/a.rst", "CHANGELOG", "guide.rst", "a/b/NOTES.adoc", "docs/decisions/0001-x.md"):
         assert is_doc_path(p), p
-    for p in ("src/a.py", "tests/readme_test.py", "data.json"):
+    for p in ("src/a.py", "tests/readme_test.py", "data.json", "requirements.txt"):
         assert not is_doc_path(p), p
 
 
@@ -61,3 +61,10 @@ def test_doc_files_report_their_added_lines():
     diffs = _diff("docs/new.md", "+# T\n+body\n")
     m = measure(diffs, {"docs/new.md": None}, 3)
     assert m.doc_files == ({"path": "docs/new.md", "status": "added", "added_lines": 2},)
+
+
+def test_a_run_that_starts_inside_a_docstring_closes_it():
+    lines = ['"""', "x = 1", "y = 2"]
+    assert comment_flags("python", lines, mid=True) == [True, False, False]
+    assert comment_flags("python", lines) == [True, True, True]  # a file that opens with it opens a docstring
+    assert comment_flags("c", ["*/", "int x;"], mid=True) == [True, False]

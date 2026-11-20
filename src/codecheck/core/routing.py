@@ -13,7 +13,7 @@ from pathlib import PurePosixPath
 
 from codecheck.config import RoutingConfig
 from codecheck.core.diffmap import FileDiff
-from codecheck.core.doccheck import DocMetrics, comment_flags, measure, runs
+from codecheck.core.doccheck import DocMetrics, comment_flags, measure, runs, starts_mid
 
 STRUCTURAL_NAMES = {
     "pyproject.toml", "setup.py", "setup.cfg", "package.json", "tsconfig.json", "Cargo.toml", "go.mod", "pom.xml",
@@ -70,7 +70,7 @@ def _performance_signals(diffs: Mapping[str, FileDiff], languages: Mapping[str, 
         ddl = 0
         for run in runs(fd):
             stack: list[int] = []  # indents of the loop headers that enclose the current line
-            for ln, flag in zip(run, comment_flags(language, [x.text for x in run]), strict=True):
+            for ln, flag in zip(run, comment_flags(language, [x.text for x in run], mid=starts_mid(run)), strict=True):
                 if flag is None or flag:  # blank or comment: never a signal, never closes a loop
                     continue
                 text = ln.text

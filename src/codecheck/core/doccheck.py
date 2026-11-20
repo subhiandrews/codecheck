@@ -11,7 +11,7 @@ from pathlib import PurePosixPath
 
 from codecheck.core.diffmap import FileDiff
 
-DOC_SUFFIXES = (".md", ".mdx", ".rst", ".adoc", ".txt")
+DOC_SUFFIXES = (".md", ".mdx", ".rst", ".adoc")
 DOC_STEMS = ("README", "CHANGELOG", "CHANGES", "HISTORY", "CONTRIBUTING", "NOTES", "AUTHORS")
 _HASH = {"python", "ruby", "shell"}
 _SLASH = {"javascript", "typescript", "java", "csharp", "cpp", "c", "go", "rust", "php", "swift", "kotlin"}
@@ -40,14 +40,26 @@ def _step(language: str, s: str) -> tuple[bool, str]:
     return False, ""
 
 
-def comment_flags(language: str, lines: Sequence[str]) -> list[bool | None]:
-    """True for a comment or docstring line, False for code, None for a blank line."""
+def _closes_only(language: str, s: str) -> bool:
+    """A line that can only end a comment opened before it: a lone triple quote or a leading `*/`."""
+    return (language == "python" and s in ('"""', "'''")) or (language in _SLASH | {"sql"} and s.startswith("*/"))
+
+
+def comment_flags(language: str, lines: Sequence[str], mid: bool = False) -> list[bool | None]:
+    """True for a comment or docstring line, False for code, None for a blank line.
+
+    `mid` means the lines start part-way through a file, so a first line that only closes a comment closes one.
+    """
     out: list[bool | None] = []
     state = ""  # "*/" inside a block comment, a triple quote inside a docstring
+    first = True
     for raw in lines:
         s = raw.strip()
         if not s:
             out.append(None)
+            continue
+        if first and mid and _closes_only(language, s):
+            out.append(True)
         elif state:
             out.append(True)
             if state in s:
@@ -55,6 +67,7 @@ def comment_flags(language: str, lines: Sequence[str]) -> list[bool | None]:
         else:
             is_comment, state = _step(language, s)
             out.append(is_comment)
+        first = False
     return out
 
 
@@ -73,12 +86,16 @@ class DocMetrics:
 
     @property
     def over_cap(self) -> bool:
-        return self.percent > self.cap_percent
+        return 100 * self.comment_lines > self.cap_percent * (self.comment_lines + self.code_lines)
 
     def to_json(self) -> dict:
         return {"cap_percent": self.cap_percent, "comment_lines_added": self.comment_lines,
                 "code_lines_added": self.code_lines, "comment_percent": self.percent, "over_cap": self.over_cap,
                 "doc_files": list(self.doc_files), "files_with_comments": list(self.files)}
+
+
+def starts_mid(run) -> bool:
+    return bool(run) and run[0].new is not None and run[0].new > 1
 
 
 def runs(fd: FileDiff):
@@ -110,7 +127,7 @@ def measure(diffs: Mapping[str, FileDiff], languages: Mapping[str, str | None], 
             continue
         c = k = 0
         for run in runs(fd):
-            for ln, flag in zip(run, comment_flags(language, [x.text for x in run]), strict=True):
+            for ln, flag in zip(run, comment_flags(language, [x.text for x in run], mid=starts_mid(run)), strict=True):
                 if ln.kind == "add" and flag is not None:
                     c, k = (c + 1, k) if flag else (c, k + 1)
         comments, code = comments + c, code + k

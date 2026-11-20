@@ -78,4 +78,13 @@ def test_doc_file_or_comment_excess_routes_docs():
 
 def test_reasons_are_recorded():
     r = go(_new("a.py", ["x = 1"]))
-    assert r.reasons and all(isinstance(s, str) for s in r.reasons)
+    assert [x.split(":")[0] for x in r.reasons] == ["architect", "performance", "docs"]
+
+
+def test_text_files_alone_do_not_route_docs():
+    assert not go(_mod("requirements.txt", ["flask==3.0"], ["flask==2.0"])).docs
+
+
+def test_cap_compares_exact_ratio_not_the_rounded_percent():
+    r = go(_new("a.py", ["# a", "# b", "# c"] + ["y = 1"] * 96))  # 3 of 99 = 3.03%
+    assert r.doc_metrics.over_cap and r.docs

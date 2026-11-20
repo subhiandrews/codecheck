@@ -90,7 +90,7 @@ def select_panel(
     docs: bool = False,
     full: bool = False,
 ) -> Panel:
-    """`full` turns every reviewer on; otherwise the optional ones are the caller's decision (flags, config, routing)."""
+    """`full` turns architect, security, performance and docs on (deep still needs `deep_enabled`); otherwise the optional ones are the caller's decision (flags, config, routing)."""
     if full:
         architect = security = performance = docs = True
     languages = tuple(sorted(group_by_language(paths, first_lines)))
