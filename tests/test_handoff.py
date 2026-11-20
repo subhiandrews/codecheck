@@ -791,3 +791,11 @@ def test_markdown_shows_the_text_of_a_missed_thread():
            "unraised_findings": [], "misses": ["T9"], "general_comments": []}
     text = render_markdown({"run_id": "r", "skill": "review-pr", "mode": "pr", "comparison": cmp, "reviewers": {}, "findings": []})
     assert "T9 by bob at a.py:3: missed by us: this leaks the handle on the error path" in text
+
+
+def test_comparison_body_is_collapsed_and_capped_like_general_comments():
+    from codecheck.shadow.handoff import build_comparison
+    rec = {"type": "human_comment", "thread_id": "T", "path": "a.py", "line": 1, "author": "bob",
+           "body": "x  y\n" + "z" * 400, "matches_finding": None}
+    (c,) = build_comparison([rec], [])["human_comments"]
+    assert c["body"].startswith("x y z") and len(c["body"]) == 300

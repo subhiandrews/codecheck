@@ -67,7 +67,7 @@ def build_comparison(records: Sequence[dict], findings: Sequence[dict], general_
         comments.append({
             "thread_id": rec["thread_id"], "path": rec.get("path"), "line": rec.get("line"), "author": rec.get("author"),
             "matched_finding": fid, "human_severity": human, "finding_severity": ours,
-            "severity_agrees": (human == ours) if human and ours else None, "body": rec.get("body") or "",
+            "severity_agrees": (human == ours) if human and ours else None, "body": " ".join((rec.get("body") or "").split())[:300],
         })
         if fid:
             matched.add(fid)
