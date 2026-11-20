@@ -67,7 +67,7 @@ def build_comparison(records: Sequence[dict], findings: Sequence[dict], general_
         comments.append({
             "thread_id": rec["thread_id"], "path": rec.get("path"), "line": rec.get("line"), "author": rec.get("author"),
             "matched_finding": fid, "human_severity": human, "finding_severity": ours,
-            "severity_agrees": (human == ours) if human and ours else None,
+            "severity_agrees": (human == ours) if human and ours else None, "body": " ".join((rec.get("body") or "").split())[:300],
         })
         if fid:
             matched.add(fid)
@@ -120,6 +120,8 @@ def render_markdown(h: dict) -> str:
     else:
         for c in cmp["human_comments"]:
             match = f"matched {c['matched_finding']}" if c["matched_finding"] else "missed by us"
+            if not c["matched_finding"] and (c.get("body") or "").strip():  # a miss is only useful with its text
+                match += f": {' '.join(c['body'].split())[:160]}"
             lines.append(f"- {c['thread_id']} by {c['author']} at {c['path']}:{c['line']}: {match}"
                          + (f", human says {c['human_severity']}, we said {c['finding_severity']}" if c["human_severity"] else ""))
         for g in cmp.get("general_comments") or []:
