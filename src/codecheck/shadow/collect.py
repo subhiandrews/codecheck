@@ -4,6 +4,7 @@ from collections import Counter
 
 from codecheck.core.render import FINDING_MARKER
 from codecheck.models import PRRef, is_bot_login
+from codecheck.shadow.roles import RoleResolver
 from codecheck.shadow.store import ShadowStore
 
 REPLY_MARKER = "code-check:reply"
@@ -39,6 +40,19 @@ def _own_marker(body: str) -> str | None:
     return matches[-1].group(1)
 
 
+def _pr_author(provider, ref: PRRef, shadow: ShadowStore, run_ids: list[str]) -> str | None:
+    """The PR author, from a recorded run when it has one, else from the host. None when neither says."""
+    for rid in reversed(run_ids):
+        for rec in shadow.read(rid):
+            if rec.get("type") == "run" and isinstance(rec.get("pr_author"), str) and rec["pr_author"]:
+                return rec["pr_author"]
+    try:
+        author = provider.get_pr(ref).author
+    except Exception:  # noqa: BLE001 - collection must not fail over a missing role
+        return None
+    return author if isinstance(author, str) and author else None
+
+
 def collect_outcomes(provider, shadow: ShadowStore, ref: PRRef, me: str) -> dict:
     run_ids = shadow.runs_for_pr(str(ref))
     if not run_ids:
@@ -52,6 +66,7 @@ def collect_outcomes(provider, shadow: ShadowStore, ref: PRRef, me: str) -> dict
                 by_run[rid].append((rid, rec))
     latest_run = run_ids[-1]  # runs_for_pr is chronological
     outcomes = humans = 0
+    roles = RoleResolver(provider, ref.repo, me, _pr_author(provider, ref, shadow, run_ids))  # one lookup per login
     for thread in provider.list_threads(ref):
         if not thread.comments:
             continue
@@ -60,7 +75,7 @@ def collect_outcomes(provider, shadow: ShadowStore, ref: PRRef, me: str) -> dict
         if fid is not None and fid in findings and findings[fid][1].get("file") == thread.path:
             rid = findings[fid][0]
             replies = [
-                {"author": c.author, "body": c.body}
+                {"author": c.author, "body": c.body, "role": roles.role(c.author, c.association)}
                 for c in thread.comments[1:]
                 if c.author != me and not _is_bot(c) and REPLY_MARKER not in c.body
             ]
@@ -68,6 +83,7 @@ def collect_outcomes(provider, shadow: ShadowStore, ref: PRRef, me: str) -> dict
                 "type": "outcome", "finding_id": fid, "thread_id": thread.id,
                 "resolved": thread.is_resolved, "outdated": thread.is_outdated,
                 "replies": replies, "reactions": dict(Counter(root.reactions)),
+                "resolved_by_role": roles.role(thread.resolved_by) if thread.resolved_by else None,
             })
             outcomes += 1
         elif root.author != me and _is_bot(root):
@@ -87,6 +103,7 @@ def collect_outcomes(provider, shadow: ShadowStore, ref: PRRef, me: str) -> dict
             shadow.append(home, {
                 "type": "human_comment", "thread_id": thread.id, "path": thread.path, "line": thread.line,
                 "author": root.author, "body": root.body, "matches_finding": near,
+                "role": roles.role(root.author, root.association),
             })
             humans += 1
     return {"runs": len(run_ids), "outcomes": outcomes, "human_comments": humans}

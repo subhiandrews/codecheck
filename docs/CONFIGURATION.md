@@ -4,7 +4,7 @@ Every code-check setting. The README has a minimal example; this is the full ref
 
 Settings are layered, highest precedence first: environment (`CODE_CHECK_<SECTION>__<KEY>`, for example `CODE_CHECK_REVIEW__AUTO_APPROVE=true`), your `~/.config/code-check/config.toml`, the repository's `.code-check.toml`, then the defaults below. Your own settings therefore win over a repository's. Unknown keys and wrong types in files are errors.
 
-A repository's `.code-check.toml` may **not** set the security-sensitive keys `state_dir`, anything under `[run_pr]`, `[shadow]`, `[golden]`, `[codex]`, `[codex_models]` or `[codex_reasoning]`, `review.auto_approve`, `review.attribution`, `review.label`, `review.login`, `loop.review_forks`, `address.test_command` or `deep_reviewer.command`: a repository you review is not trusted to choose what an unattended run may do or execute, where state is written, or whether reviews approve. Such a key in the repository file is an error that names the key; set it in your user file or the environment instead. Model names must match `[A-Za-z0-9._:[\]-]+`, `run_pr.permission_mode` must be one of `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`, and allowed-tool entries and prompts must not start with `-`.
+A repository's `.code-check.toml` may **not** set the security-sensitive keys `state_dir`, anything under `[run_pr]`, `[shadow]`, `[golden]`, `[memory]`, `[codex]`, `[codex_models]` or `[codex_reasoning]`, `review.auto_approve`, `review.attribution`, `review.label`, `review.login`, `loop.review_forks`, `address.test_command` or `deep_reviewer.command`: a repository you review is not trusted to choose what an unattended run may do or execute, where state is written, or whether reviews approve. Such a key in the repository file is an error that names the key; set it in your user file or the environment instead. Model names must match `[A-Za-z0-9._:[\]-]+`, `run_pr.permission_mode` must be one of `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`, and allowed-tool entries and prompts must not start with `-`.
 
 ```toml
 provider = "auto"              # auto (a gitlab.com remote means gitlab, anything else github), "github" or "gitlab"
@@ -59,6 +59,26 @@ handoff = false                # record hand-off data even when shadow.enabled i
 [golden]                       # user config or environment only
 licenses = ["mit", "apache-2.0", "bsd-2-clause", "bsd-3-clause", "isc", "0bsd", "unlicense"]   # `shadow promote --finalize` refuses a repository under any other license
 
+[memory]                       # user config or environment only; evidence is recorded, lessons are not yet read into reviews
+enabled = false                # collect evidence and consolidate lessons
+read = false                   # put lessons into reviews (needs enabled)
+reviewers = false              # also give the reviewers miss lessons; the aggregator gets dispute and confirm lessons
+store = "~/.local/share/code-check/memory"
+max_lessons = 12               # most lessons shown to one review
+max_chars = 6000               # most characters of lessons shown to one review
+timeout_seconds = 3            # time budget for reading memory; a slow store is skipped, never waited on
+url = ""                       # shared memory server, https unless it is on this machine; "" keeps memory local
+token_file = ""                # file holding the server token
+share_level = "lessons"        # most detail pushed to the server: "lessons", "evidence" or "episodes"
+private_level = "lessons"      # the same cap, applied to private repositories
+share_repos = []               # repositories whose memory may be pushed; empty pushes nothing
+embed_url = "http://127.0.0.1:11434"   # embedding service, https unless it is on this machine
+embed_model = ""
+embed_at = "client"            # where embeddings are computed: "client" or "server"
+collect = false                # collect outcomes automatically when a skill finishes
+half_life_days = 90            # evidence weighs half after this many days
+expire_days = 180              # a lesson with no new evidence expires after this many days
+
 [address]
 test_command = ""              # run before every push; a failure blocks the push
 resolve_fixed_threads = true
@@ -102,3 +122,9 @@ Each posted PR review ends its summary comment with one small line saying it was
 ## Shadow and golden settings (user config or environment only)
 
 `[shadow]` and `[golden]` are listed in the block above. `shadow.enabled` records runs locally, `shadow.store` is where, `shadow.handoff` also records hand-off data (see [MAINTAINING.md](MAINTAINING.md#shadow-mode)), and `golden.licenses` lists the licenses whose diffs may be promoted to golden cases. A repository's `.code-check.toml` cannot set any of them.
+
+## Memory settings (user config or environment only)
+
+`[memory]` is listed in the block above and can only come from your user file or `CODE_CHECK_MEMORY__<KEY>` (for example `CODE_CHECK_MEMORY__ENABLED=1`, `CODE_CHECK_MEMORY__SHARE_REPOS=org/a,org/b`); a repository's `.code-check.toml` containing `[memory]` is an error. `share_level` and `private_level` must be `lessons`, `evidence` or `episodes`, `embed_at` must be `client` or `server`, the numeric keys must be positive, and `url` and `embed_url` must be `https` unless they point at `localhost` or `127.x.x.x`. The settings above are all defined now; the collecting, reading and sharing they control arrive in later releases, so today they change nothing except what shadow records store.
+
+Shadow records carry who said what: each run records `pr_author`, each reply on a posted finding records a `role`, and each outcome records `resolved_by_role`. A role is `maintainer` (can push to the repository), `author` (the PR author), `contributor`, `self` (code-check's own login) or `unknown`. Write access comes from the host (GitHub: the collaborator permission endpoint; GitLab: project member access level 30 or more); when the host will not say, GitHub's author association is used instead (OWNER, MEMBER and COLLABORATOR count as maintainer, which can over-count organisation members). Records written before this carry none of these fields and still load.

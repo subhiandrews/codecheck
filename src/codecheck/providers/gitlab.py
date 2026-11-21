@@ -213,6 +213,19 @@ class GitLabProvider:
             return None
         return None if visibility is None else visibility != "public"
 
+    def can_write(self, repo: str, login: str) -> bool | None:
+        """True when `login` is a project member (direct or inherited) with access level 30 (Developer) or more."""
+        try:
+            pid, name = _pid(repo), quote(_login(login), safe="")  # validate both before any call
+            users = self._get(f"users?username={name}")
+            if not isinstance(users, list) or not users or not isinstance(users[0].get("id"), int):
+                return None
+            member = self._get(f"projects/{pid}/members/all/{users[0]['id']}")
+            level = member.get("access_level")
+        except (ProviderError, ValueError, AttributeError, KeyError, TypeError):
+            return None
+        return level >= 30 if isinstance(level, int) and not isinstance(level, bool) else None
+
     def repo_license(self, repo: str) -> str | None:
         try:
             lic = self._get(f"projects/{_pid(repo)}?license=true").get("license")

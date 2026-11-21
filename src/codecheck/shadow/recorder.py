@@ -21,7 +21,7 @@ def record_run(shadow: ShadowStore, meta: Mapping, diff: str, cfg: Config) -> No
     shadow.append(run_id, {
         "type": "run", "skill": meta.get("skill"), "repo": meta.get("repo"), "pr": meta.get("pr"),
         "head_sha": meta.get("head_sha"), "mode": meta.get("mode"), "panel": list(meta["panel"]["members"]),
-        "models": dict(meta.get("models", {})), "tool_version": __version__, "config_hash": config_hash(cfg),
+        "pr_author": meta.get("pr_author"), "models": dict(meta.get("models", {})), "tool_version": __version__, "config_hash": config_hash(cfg),
         "tokens": None,
         **({k: meta.get(k) for k in ("handoff", "blind", "repo_private", "repo_license")} if "handoff" in meta else {}),
     })

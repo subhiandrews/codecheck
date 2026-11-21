@@ -75,6 +75,7 @@ class ThreadComment:
     created_at: str
     reactions: tuple[str, ...] = ()
     is_bot: bool = False
+    association: str = ""  # the host's author association (GitHub: OWNER, MEMBER, COLLABORATOR, ...); "" when unknown
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +104,7 @@ class Thread:
     is_resolved: bool
     is_outdated: bool
     comments: tuple[ThreadComment, ...]
+    resolved_by: str | None = None  # login that resolved the thread, when the host says
 
 
 @dataclass(frozen=True, slots=True)
