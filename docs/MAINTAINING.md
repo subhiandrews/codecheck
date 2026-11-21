@@ -37,6 +37,18 @@ code-check shadow export-golden --out golden.jsonl    # auto-labelled examples (
 
 `collect` records resolved or outdated threads, human replies and reactions, and human comments the tool never raised. Findings nobody reacted to are false-positive candidates; human comments with no matching finding are misses. Labels are marked `auto` for a human to review.
 
+### Automatic collection (`memory.collect`)
+
+With `memory.collect = true` (user config only), `cleanup`, which ends every review skill, collects outcomes for reviewed PRs that are due and then consolidates the shadow store into `memory.store`. A PR is due 1, 3, 7 and 14 days after its review was posted (the `decision` record's time, else the `run` record's); a newer review restarts the schedule. The host does not say when a PR closed, so the first collection that sees it closed is taken as its closing time, and collection stops 7 days later. Each call handles at most 3 PRs (newest review first) and stops starting new ones after 10 seconds. Bookkeeping lives in `state.json` under `memory:collect:<ref>` (`posted`, `done` milestone index, `closed_at`). A PR that fails (host error) is not marked and is retried on the next call. Collection reuses `shadow collect`'s function, never changes `cleanup`'s output, and also runs in blind hand-off runs because it gathers evidence and reads no memory.
+
+```bash
+code-check memory collect --dry-run   # list what is due
+code-check memory collect             # collect and consolidate now (works with memory.collect = false)
+code-check memory collect --all       # ignore the schedule
+```
+
+Verdict evidence takes its role at extraction time from the thread's `outcome` replies: the role that counts most against a finding (maintainer, then contributor, self, unknown, author), or `self` when the thread has no replies. Older records without roles load as `unknown`.
+
 ### Golden cases and replay
 
 A golden case is one JSON file in `tests/golden/` holding a review run frozen in time: the diff, each reviewer's stored findings, the aggregator's raw output, and what the pipeline posted for it as a human confirmed it (`expected_posted`: file, line, category, severity and whether it went inline or only into the summary; and `expected_decision`, the decision the approval policy would reach with `auto_approve` on, so `APPROVE` exactly when nothing critical or warning was posted). Only cases with `label_status: "confirmed"` are accepted. The repository ships one hand-built synthetic case, `seed-pipeline.json`.
