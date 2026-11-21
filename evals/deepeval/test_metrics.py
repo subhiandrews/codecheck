@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+import _env  # noqa: F401  (telemetry opt-out, must run before deepeval is imported)
 from deepeval.test_case import LLMTestCase
 from metrics import (
     AggregatorAccounting,
@@ -109,6 +110,28 @@ def test_accounting_counts_a_reviewer_once_per_item_and_flags_a_shortfall():
     short = {"reviewers": reviewers, "kept": [{"reviewers": ["a"]}], "dropped": []}
     assert metric.measure(_case(short)) == 1 / 3
     assert not AggregatorAccounting.applies({"reviewers": reviewers, "kept": [], "dropped": []})
+
+
+def test_accounting_agrees_with_the_hand_off_rule_on_the_same_input():
+    from codecheck.commands.handoff import _accounting
+
+    cases = [
+        ({"a": [{}, {}], "b": [{}]}, [{"reviewers": ["a"]}], [{"reviewers": ["a", "b"]}]),  # everything named
+        ({"a": [{}, {}], "b": [{}]}, [{"reviewers": ["a"]}], []),  # b is never named
+        ({"a": [{}, {}, {}]}, [{"reviewers": ["a"]}], []),  # three findings merged into one item
+        ({"a": [{}], "b": []}, [{"reviewers": ["a", "a", 7, None]}, "oops", 3], [{"reviewers": "a"}]),  # malformed items
+        ({"a": "not a list", "b": [{}]}, [{"reviewers": ["b"]}], []),  # a reviewer whose output is not a list
+    ]
+    for reviewers, kept, dropped in cases:
+        meta = {"reviewers": reviewers, "kept": kept, "dropped": dropped}
+        assert AggregatorAccounting.applies(meta), meta
+        theirs = _accounting(reviewers, kept, dropped)
+        short = theirs["possibly_unaccounted"]
+        metric = AggregatorAccounting()
+        metric.measure(_case(meta))
+        assert metric.denominator == theirs["reviewer_findings"], meta
+        assert metric.numerator == theirs["reviewer_findings"] - sum(short.values()), meta
+        assert (metric.reason == f"possibly unaccounted {short}") if short else metric.reason == "all named", meta
 
 
 def test_metrics_follow_deepevals_async_and_name_contract():
