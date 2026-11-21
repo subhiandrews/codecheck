@@ -31,3 +31,15 @@ python3.14 -m venv ~/.venvs/codecheck-evals       # any venv outside the repo wo
 - Versions are not a controlled comparison: the pull requests differ and most versions have few runs.
 - A finding that is not on an added line is not necessarily wrong. A finding about a deletion, or about unchanged code the change breaks, can legitimately sit elsewhere.
 - The scorecard measures format and bookkeeping, not whether a finding is true or worth raising. For that, see the judge results in `FAILURE-MODES.md`: the model judges tried so far were not reliable enough to use as metrics.
+
+## Judge experiments (kept as a record)
+
+Model-judge tools that were tried and measured. They cost tokens and read `ANTHROPIC_API_KEY` from the environment of the command you run (never from Claude Code's own environment). None is a metric you should trust, and none is part of the scorecard.
+
+| File | What it does | Measured |
+|---|---|---|
+| `judge.py` | An Anthropic judge for DeepEval (handles a leading thinking block). | Only a building block. |
+| `same_concern.py` | A "do these two comments raise the same concern?" metric with rubrics `STEPS` (v1) and `STEPS_V2`. | On 16 hand-labelled pairs, v1 matched the label exactly on 8 and v2 on 7. Useful only as a filter: every pair v1 scored 0.2 or lower was labelled "different". |
+| `pairs.py`, `pairs.json` | 11 hand-built pairs of a human comment and a finding. `my_label` and `my_reason` are the assistant's; `owner_label` is the maintainer's label, whose provenance is not independently verified, and P2 is unlabelled. | Calibration data for the judge only. |
+| `handoff_pairs.py` | Judges every human comment against every kept and dropped finding in real hand-offs. Output stays outside the repo. | Not a result by itself. |
+| `compare_rubrics.py` | Runs both rubrics on every labelled pair. | See `same_concern.py`. |
