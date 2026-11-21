@@ -163,7 +163,7 @@ Flags and configuration always win: `--security`, `--performance`, `review.secur
 
 ## Memory read path
 
-When `memory.enabled` and `memory.read` are on and the run is not blind, `context` writes `memory.md` with miss lessons for the reviewers (if `memory.reviewers`) and `ingest` replaces it with finding lessons for the aggregator. Retrieval is exact-key and deterministic (`memory/retrieve.py`), rendering is framed, scrubbed and capped (`memory/render.py`), and `memory/inject.py` never raises, so a broken store costs a review nothing. Default off leaves `run_files` unchanged. Details are in `docs/MAINTAINING.md` (Memory read path) and `docs/decisions/0039-*`.
+When `memory.enabled` and `memory.read` are on and the run is not blind, `context` writes `memory.md` with miss lessons for the reviewers (if `memory.reviewers`) and `ingest` replaces it with finding lessons for the aggregator. Retrieval is exact-key and deterministic (`memory/retrieve.py`), rendering is framed, scrubbed and capped (`memory/render.py`), and `memory/inject.py` never raises, so a broken store costs a review nothing. With `memory.url` set, `inject` first calls `sync.pull_if_stale` (not in blind runs, within half of `memory.timeout_seconds`, failures ignored); with `memory.url` and `memory.share_repos` set, `autocollect` pushes after consolidating. Default off leaves `run_files` unchanged. Details are in `docs/MAINTAINING.md` (Memory read path) and `docs/decisions/0039-*`.
 
 ## Docs review
 

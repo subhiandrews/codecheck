@@ -48,6 +48,21 @@ def collect_due(ctx, *, everything: bool = False, dry_run: bool = False, now: Ca
             params = Params(half_days=float(m.half_life_days), expire_days=float(m.expire_days))
             consolidate_store(ctx.shadow, MemoryDB(expand_path(m.store), now=lambda: stamp), params, stamp)
             result["consolidated"] = True
+            if m.url and m.share_repos:
+                result["pushed"] = _push_shared(ctx)
     except Exception as e:  # noqa: BLE001 - never raises
         result["errors"].append({"error": f"{type(e).__name__}: {e}"})
     return result
+
+
+def _push_shared(ctx) -> dict:
+    """Send what consolidation produced to the shared server, through the sharing levels. Never raises: a down server
+    is retried by the next collection (the outbox in `sync.json` remembers what it accepted). Only called with
+    `memory.url` and a non-empty `memory.share_repos`, so the default configuration sends nothing."""
+    try:
+        from codecheck.memory import sync
+
+        out = sync.sync(ctx, do_pull=False)
+        return {"ok": bool(out.get("ok")), **({"error": out["error"]} if "error" in out else {})}
+    except Exception as e:  # noqa: BLE001 - collection must never fail because the server did
+        return {"ok": False, "error": type(e).__name__}

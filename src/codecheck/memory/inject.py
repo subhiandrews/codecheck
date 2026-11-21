@@ -6,6 +6,7 @@ corrupt store, a missing git ref, a bug or a slow disk costs the review nothing 
 """
 
 import threading
+import time
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -53,6 +54,35 @@ def _build(ctx, *, stage: str, repo: str, base_ref: str, paths: Iterable[str],
     return text, [le.id for le in lessons]
 
 
+def _pull_replica(ctx, stage: str, budget: float) -> dict | None:
+    """Refresh the local replica from the shared server before the reviewers read it. Never raises, never waits past
+    half of `memory.timeout_seconds` (the build keeps the rest), and a failure just leaves the replica as it is.
+
+    Only for the reviewers stage (the aggregator runs after `context` pulled), only with a configured `memory.url`.
+    Blind runs never get here: `_gate` returns first."""
+    try:
+        if stage != REVIEWERS or not ctx.config.memory.url:
+            return None
+        from codecheck.memory import sync
+        box: dict = {}
+
+        def work() -> None:
+            try:
+                box["out"] = sync.pull_if_stale(ctx)
+            except BaseException as e:  # noqa: BLE001 - nothing in the worker may escape
+                box["out"] = {"pulled": False, "error": type(e).__name__}
+
+        t = threading.Thread(target=work, name="code-check-memory-pull", daemon=True)
+        t.start()
+        t.join(budget / 2)
+        if t.is_alive():
+            return {"pulled": False, "reason": "timeout"}
+        out = box.get("out") or {}
+        return {k: out[k] for k in ("pulled", "reason", "error") if k in out}
+    except Exception as e:  # noqa: BLE001
+        return {"pulled": False, "error": type(e).__name__}
+
+
 def safe_build(ctx, run_dir: Path, *, stage: str, repo: str | None, base_ref: str | None, blind: bool,
                paths: Iterable[str] = (), findings: Iterable[tuple[str, object]] = ()) -> dict:
     """Write `run_dir/memory.md` when there is something to say. Never raises.
@@ -66,7 +96,15 @@ def safe_build(ctx, run_dir: Path, *, stage: str, repo: str | None, base_ref: st
             return {"read": False, "reason": why}
         if not repo or not base_ref:
             return {"read": False, "reason": "no repository or base"}
+        started = time.monotonic()
+        budget = max(float(cfg.timeout_seconds), 0.0)
+        pull = _pull_replica(ctx, stage, budget)
         box: dict = {}
+
+        def done(result: dict) -> dict:
+            if pull:
+                result["pull"] = pull  # only present when memory.url is set
+            return result
 
         def work() -> None:
             try:
@@ -76,18 +114,18 @@ def safe_build(ctx, run_dir: Path, *, stage: str, repo: str | None, base_ref: st
 
         worker = threading.Thread(target=work, name="code-check-memory", daemon=True)
         worker.start()
-        worker.join(max(float(cfg.timeout_seconds), 0.0))
+        worker.join(max(budget - (time.monotonic() - started), 0.0))  # the pull and the build share one budget
         if worker.is_alive():
-            return {"read": False, "reason": "timeout"}
+            return done({"read": False, "reason": "timeout"})
         if "error" in box:
-            return {"read": False, "reason": "error", "error": box["error"]}
+            return done({"read": False, "reason": "error", "error": box["error"]})
         out = box.get("out")
         if isinstance(out, str):
-            return {"read": False, "reason": out}
+            return done({"read": False, "reason": out})
         text, ids = out
         (run_dir / FILE_NAME).write_text(text, encoding="utf-8")
-        return {"read": True, "reason": "ok", "stage": stage, "lessons": len(ids), "ids": ids, "chars": len(text),
-                "file": FILE_NAME}
+        return done({"read": True, "reason": "ok", "stage": stage, "lessons": len(ids), "ids": ids, "chars": len(text),
+                     "file": FILE_NAME})
     except BaseException as e:
         if isinstance(e, KeyboardInterrupt):
             raise
