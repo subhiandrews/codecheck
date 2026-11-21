@@ -2,10 +2,17 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.2.1]
+
+### Changed
+- The aggregator prompt now says "the step 6 cap" where it said "the cap", so it no longer reads like the removed comment cap.
+
 ## [1.2.0]
 
 ### Changed
-- The aggregator's reasoning about a severity no longer goes into the posted comment. Aggregated findings carry an optional `rated_because` field, recorded in the hand-off and never posted. Reviewers and the aggregator are asked to lead `message` with the claim and aim for 400 characters or fewer. Codex aggregator output must now include `rated_because` (null when unused).
+- The aggregator's severity reasoning is no longer posted in the review comment.
+- Reviewers and the aggregator now lead with the claim and aim for about 400 characters.
+- Codex aggregator output must include `rated_because` (null when unused).
 
 ### Removed
 - The docs reviewer's built-in 3% comment cap, with `review.routing.max_comment_percent` and `docs_min_comment_lines`. Comment volume no longer routes the docs reviewer, which now runs only when a documentation file changes. It still flags comments that restate the code or narrate the change. Old config files that still set the two keys keep loading; the keys are ignored.
