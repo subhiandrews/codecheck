@@ -3,6 +3,7 @@ import time
 from codecheck.commands import memory_collect
 from codecheck.config import expand_path
 from codecheck.memory import cli_lessons
+from codecheck.memory import cli_server
 from codecheck.memory.consolidate import Params
 from codecheck.memory.db import MemoryDB
 from codecheck.memory.measure import measure
@@ -22,11 +23,14 @@ def add_arguments(p) -> None:
     c.add_argument("--prune", action="store_true", help="also delete evidence older than memory.expire_days")
     cli_lessons.add_arguments(sub)
     memory_collect.add_arguments(sub.add_parser("collect", help=memory_collect.HELP))
+    cli_server.add_arguments(sub)  # serve, token, sync, status (memory/cli_server.py)
 
 
 def run(args, ctx) -> dict:
     if args.memory_cmd in cli_lessons.COMMANDS:
         return cli_lessons.run(args, ctx)
+    if args.memory_cmd in cli_server.COMMANDS:
+        return cli_server.run(args, ctx)
     # Both read the shadow store directly, available with shadow recording off. A missing store is empty.
     if args.memory_cmd == "collect":
         return memory_collect.run(args, ctx)

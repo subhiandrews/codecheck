@@ -200,6 +200,10 @@ Loop bookkeeping is kept separately from review results. A PR whose headless run
 
 State lives in `state_dir/state.json` (the directory is created readable only by you). Every change to it is a read-modify-write under a short lock (`state.json.lock`), so concurrent processes do not lose each other's updates. A corrupt state file is moved aside to `state.corrupt` and treated as empty rather than crashing the loop. If listing one PR fails (for example a GitHub error), that PR is reported under `skipped` with the reason and the rest of the iteration goes ahead.
 
+## Memory server and sync
+
+Optional and off by default. `memory/server.py` is `http.server` plus `sqlite3` over the lesson store of `memory/db.py`, with extra tables for named tokens, per-contributor evidence, episodes and (later) vectors; `memory/client.py` is the stdlib HTTP client, and solo mode calls the same `Service` class directly against a local file. `memory/levels.py` decides what may leave the machine (lessons, evidence, episodes; the lowest of the client level, the server maximum and a cap for private or unknown-visibility repos) and `memory/sync.py` pushes it, keeps an outbox in `sync.json` so transient failures retry and permanent refusals do not block later items, and pulls teammates' evidence into the local store, where lessons are recomputed. The server never trusts a client count. See [Hosting the memory server](MAINTAINING.md#hosting-the-memory-server) and decision 0041.
+
 ## Safety model
 
 - Never force-pushes: the git layer has no force option. Pushes happen only after the configured `address.test_command` passes (when set) and only when the remote branch has no commits you lack.
