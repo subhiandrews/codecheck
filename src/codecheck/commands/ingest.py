@@ -18,11 +18,15 @@ def add_arguments(p) -> None:
 
 
 def _earlier_invalid(path) -> dict[str, list[str]]:
+    """The `invalid` entries an earlier ingest wrote. Only lists of strings count: nothing else may reach post."""
     try:
         earlier = json.loads(path.read_text(encoding="utf-8")).get("invalid")
     except (OSError, ValueError, AttributeError):
         return {}
-    return {m: e for m, e in earlier.items() if isinstance(e, list)} if isinstance(earlier, dict) else {}
+    if not isinstance(earlier, dict):
+        return {}
+    kept = {m: [e for e in errs if isinstance(e, str)] for m, errs in earlier.items() if isinstance(errs, list)}
+    return {m: errs for m, errs in kept.items() if errs}
 
 
 def run(args, ctx) -> dict:
@@ -58,10 +62,11 @@ def run(args, ctx) -> dict:
     # The skills run ingest again after re-dispatching `missing` reviewers. Validation rewrites a findings file
     # without its bad items and quarantines unparseable ones, so a second run would forget they were invalid.
     for member, errors in _earlier_invalid(ingest_path).items():
-        if member in meta["panel"]["members"] and member not in invalid:
-            invalid[member] = errors
-            if member in missing:
-                missing.remove(member)
+        if member not in meta["panel"]["members"]:
+            continue
+        invalid[member] = errors + [e for e in invalid.get(member, []) if e not in errors]
+        if member in missing:
+            missing.remove(member)
     result = {"valid": valid, "invalid": invalid, "missing": missing, "incomplete": bool(invalid or missing)}
     write_json(ingest_path, result)
     return result
