@@ -2,6 +2,12 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.2.3]
+
+### Changed
+- The performance reviewer is routed for what its prompt asks it to check: test files no longer earn a review, and blocking calls in async code, awaits in loops and list-membership tests in loops now count.
+- Hand-off comparisons no longer count a human comment on a file no reviewer was given as a miss.
+
 ## [1.2.2]
 
 ### Fixed

@@ -119,3 +119,86 @@ def test_comprehension_match_is_bounded_so_long_lines_cannot_backtrack_far():
     from codecheck.core.routing import _LOOP_CALL
     assert _LOOP_CALL.search("y = [x for x in xs]")
     assert not _LOOP_CALL.search("y = [" + "x" * 500 + " for x in xs]")  # past the 200-character window
+
+
+WARRANTED = {
+    "py list membership in a loop": ("a.py", [
+        "def dedupe(items):", "    seen = []", "    out = []", "    for x in items:", "        if x in seen:",
+        "            continue", "        seen.append(x)", "        out.append(x)", "    return out"]),
+    "py blocking call in async code": ("a.py", [
+        "async def fetch(url):", "    time.sleep(1)", "    return await client.get(url)"]),
+    "js sequential await in a loop": ("a.js", [
+        "async function load(ids) {", "  const out = [];", "  for (const id of ids) {", "    out.push(await load(id));",
+        "  }", "  return out;", "}"]),
+    "js blocking sync call in async code": ("a.js", [
+        "async function read(p) {", "  const text = fs.readFileSync(p, 'utf8');", "  return text;", "}"]),
+    "py regex compiled every iteration": ("a.py", [
+        "for line in lines:", "    pat = re.compile(r'^a+$')", "    if pat.match(line):", "        hits += 1"]),
+    "java regex compiled every iteration": ("A.java", [
+        "for (String s : items) {", "  Pattern p = Pattern.compile(\"^a+$\");", "  if (p.matcher(s).find()) { n++; }", "}"]),
+    "py query in a loop": ("a.py", ["for u in users:", "    rows = db.execute('SELECT 1', u)"]),
+    "js nested loops": ("a.js", [
+        "for (const a of xs) {", "  for (const b of ys) {", "    out.push(a * b);", "  }", "}"]),
+    "py unbounded read in a loop": ("a.py", ["for p in paths:", "    data = open(p).read()"]),
+}
+
+NOT_WARRANTED = {
+    "py set membership in a loop": ("a.py", [
+        "def dedupe(items):", "    seen = set()", "    for x in items:", "        if x in seen:", "            continue",
+        "        seen.add(x)"]),
+    "py async function that only awaits once": ("a.py", [
+        "async def fetch(url):", "    return await client.get(url)"]),
+    "js await outside a loop": ("a.js", ["async function f(id) {", "  const r = await load(id);", "  return r;", "}"]),
+    "py plain loop over a few values": ("a.py", ["for name in names:", "    print(name)"]),
+    "py compile once outside a loop": ("a.py", ["PAT = re.compile(r'^a+$')", "def ok(s):", "    return PAT.match(s)"]),
+    "py comment that mentions a loop and sleep": ("a.py", ["# for x in xs: time.sleep(1)  (why we do not loop)", "y = 1"]),
+    "py dict membership on a parameter in a loop": ("a.py", [
+        "def count(words, table):", "    for w in words:", "        if w in table:", "            print(w)"]),
+    "py membership outside a loop": ("a.py", ["def f(x, items):", "    return x in items"]),
+}
+
+
+def test_performance_is_routed_for_every_warranted_situation():
+    missed = [name for name, (path, lines) in WARRANTED.items() if not go(_new(path, lines)).performance]
+    assert not missed, missed
+
+
+def test_performance_is_not_routed_for_ordinary_code():
+    noisy = [name for name, (path, lines) in NOT_WARRANTED.items() if go(_new(path, lines)).performance]
+    assert not noisy, noisy
+
+
+def test_test_files_never_earn_the_performance_reviewer():
+    nested = ["for a in xs:", "    for b in ys:", "        db.execute('SELECT 1', a, b)"]
+    assert go(_new("src/a.py", nested)).performance
+    for path in ("tests/test_a.py", "test/a.js", "a_test.py", "src/a.spec.js", "pkg/__tests__/a.js"):
+        assert not go(_new(path, nested)).performance, path
+
+
+def test_reads_pile_up_no_score_beyond_one_hint():
+    reads = [f"t{i} = p{i}.read_text()" for i in range(6)]
+    alone = go(_new("a.py", reads))
+    assert not alone.performance and "score 2" in alone.reasons[1]  # six reads count once
+    assert "score 3" in go(_new("a.py", reads + ["for x in xs:", "    print(x)"])).reasons[1]
+
+
+def test_membership_on_an_unknown_name_is_a_weak_hint_and_a_known_list_a_strong_one():
+    unknown = go(_new("a.py", ["def f(xs, d):", "    for x in xs:", "        if x in d:", "            pass"]))
+    assert "list membership in a loop" in unknown.reasons[1] and not unknown.performance
+    known = go(_new("a.py", ["seen = []", "for x in xs:", "    if x in seen:", "        pass"]))
+    assert known.performance
+
+
+def test_long_membership_lines_stay_cheap():
+    import time
+    line = "    if " + "a and " * 5000 + "b:"
+    start = time.perf_counter()
+    go(_new("a.py", ["for x in xs:", line]))
+    assert time.perf_counter() - start < 5  # generous: a quadratic scan of this line takes minutes
+
+
+def test_list_membership_signal_never_passes_its_cap():
+    """Three unknown names (1 each) then a known list (2) would reach 5; the signal is capped at 4."""
+    lines = ["seen_list = []", "for x in xs:", "    if x in a:", "    if x in b:", "    if x in c:", "    if x in seen_list:"]
+    r = go(_new("a.py", lines))
+    assert "score 5 (list membership in a loop, loop)" in r.reasons[1], r.reasons[1]
