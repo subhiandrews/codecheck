@@ -20,10 +20,12 @@ python3.14 -m venv ~/.venvs/codecheck-evals       # any venv outside the repo wo
 | `anchoring.py` | Classifies every reviewer finding as on an added line, a context line, relocated, unanchored or in a file outside the diff, using the tool's own `anchor_finding`. No model. |
 | `metrics.py` | Six DeepEval `BaseMetric`s: anchoring share, no aggregator process notes, message length, no comment-cap findings, findings file written, aggregator accounting. |
 | `scorecard.py` | Runs those metrics over each run as an `LLMTestCase` in an `EvaluationDataset`. |
+| `f1_baseline.py` | For each human comment a golden case's panel missed, reports the furthest pipeline stage that held a finding at the same place (kept, dropped, raw only, same file, not raised). Location matching only, so a nearby finding is a candidate, not proof. Reads `tests/golden`; no model. |
+| `review_sheets.py` | Builds blind labelling sheets (dropped and kept findings, drawn at random with a seed) from your shadow store, with the diff around each finding and the aggregator's reason hidden until you choose. Sheets and the answer key are written outside the repo because they hold finding text. No model. |
 | `_env.py` | Sets DeepEval's telemetry opt-out before it is imported. |
-| `test_*.py` | Tests for the three modules above. |
+| `test_*.py` | Tests for the modules above. |
 
-`FAILURE-MODES.md` records the failure modes these metrics were built for, how well each is supported, and what did not work.
+`FAILURE-MODES.md` records the failure modes these metrics were built for, how well each is supported, and what did not work. `notes.md` is the longer working record: the failure taxonomy (F1 to F7), what each measurement showed, and what was later corrected.
 
 ## Read the numbers carefully
 
