@@ -2,8 +2,7 @@ import time
 
 from codecheck.commands import memory_collect
 from codecheck.config import expand_path
-from codecheck.memory import cli_lessons
-from codecheck.memory import cli_server
+from codecheck.memory import cli_lessons, cli_server
 from codecheck.memory.consolidate import Params
 from codecheck.memory.db import MemoryDB
 from codecheck.memory.measure import measure
