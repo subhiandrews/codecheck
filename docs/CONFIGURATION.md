@@ -76,8 +76,8 @@ embed_url = "http://127.0.0.1:11434"   # embedding service, https unless it is o
 embed_model = ""
 embed_at = "client"            # where embeddings are computed: "client" or "server"
 collect = false                # collect outcomes automatically when a skill finishes
-half_life_days = 90            # evidence weighs half after this many days
-expire_days = 180              # a lesson with no new evidence expires after this many days
+half_life_days = 90            # evidence weighs half after this many days (used by `memory consolidate`)
+expire_days = 180              # evidence counts for nothing after this many days; `memory consolidate` does not store it, `--prune` deletes it
 
 [address]
 test_command = ""              # run before every push; a failure blocks the push
@@ -125,6 +125,6 @@ Each posted PR review ends its summary comment with one small line saying it was
 
 ## Memory settings (user config or environment only)
 
-`[memory]` is listed in the block above and can only come from your user file or `CODE_CHECK_MEMORY__<KEY>` (for example `CODE_CHECK_MEMORY__ENABLED=1`, `CODE_CHECK_MEMORY__SHARE_REPOS=org/a,org/b`); a repository's `.code-check.toml` containing `[memory]` is an error. `share_level` and `private_level` must be `lessons`, `evidence` or `episodes`, `embed_at` must be `client` or `server`, the numeric keys must be positive, and `url` and `embed_url` must be `https` unless they point at `localhost` or `127.x.x.x`. The settings above are all defined now; the collecting, reading and sharing they control arrive in later releases, so today they change nothing except what shadow records store.
+`[memory]` is listed in the block above and can only come from your user file or `CODE_CHECK_MEMORY__<KEY>` (for example `CODE_CHECK_MEMORY__ENABLED=1`, `CODE_CHECK_MEMORY__SHARE_REPOS=org/a,org/b`); a repository's `.code-check.toml` containing `[memory]` is an error. `share_level` and `private_level` must be `lessons`, `evidence` or `episodes`, `embed_at` must be `client` or `server`, the numeric keys must be positive, and `url` and `embed_url` must be `https` unless they point at `localhost` or `127.x.x.x`. The settings above are all defined now; the collecting, reading and sharing they control arrive in later releases, so today they change nothing except what shadow records store and what `memory consolidate` writes: it is run by hand, works with `enabled = false`, writes `memory.db` inside `store` (directory mode 0700, file 0600) and reads `half_life_days` and `expire_days`. Nothing in a review reads that store yet.
 
 Shadow records carry who said what: each run records `pr_author`, each reply on a posted finding records a `role`, and each outcome records `resolved_by_role`. A role is `maintainer` (can push to the repository), `author` (the PR author), `contributor`, `self` (code-check's own login) or `unknown`. Write access comes from the host (GitHub: the collaborator permission endpoint; GitLab: project member access level 30 or more); when the host will not say, GitHub's author association is used instead (OWNER, MEMBER and COLLABORATOR count as maintainer, which can over-count organisation members). Records written before this carry none of these fields and still load.

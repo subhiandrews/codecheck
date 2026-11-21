@@ -56,3 +56,4 @@ Records dated before 2026-11-20 were reconstructed from the original design spec
 - [0035-missing-findings-files-are-retried-once-not-treated-as-empty.md](0035-missing-findings-files-are-retried-once-not-treated-as-empty.md): Missing findings files are retried once, not treated as empty
 - [0036-memory-is-measured-before-it-is-built-and-stays-advisory.md](0036-memory-is-measured-before-it-is-built-and-stays-advisory.md): Memory is measured before it is built and stays advisory
 - [0037-evidence-is-weighted-by-the-writer-s-repository-role-a-reply-alone-stays-neutral.md](0037-evidence-is-weighted-by-the-writer-s-repository-role-a-reply-alone-stays-neutral.md): Evidence is weighted by the writer's repository role; a reply alone stays neutral
+- [0038-a-finding-scope-is-one-lesson-and-weights-follow-the-writer-s-role.md](0038-a-finding-scope-is-one-lesson-and-weights-follow-the-writer-s-role.md): A finding scope is one lesson and weights follow the writer's role

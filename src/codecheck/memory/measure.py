@@ -8,113 +8,11 @@ repositories.
 import time
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass, field
 
-from codecheck.core.panel import detect_language
-from codecheck.memory.categories import ANY, canonical_category
-from codecheck.memory.consolidate import WEIGHTS, Params, consolidate
-from codecheck.memory.model import (
-    DEFAULT_HOST,
-    Evidence,
-    Lesson,
-    Scope,
-    evidence_id,
-    lesson_id,
-)
-from codecheck.shadow.export import finding_label, run_feedback
+from codecheck.memory.consolidate import Params, consolidate
+from codecheck.memory.evidence import RunData, load_runs
+from codecheck.memory.model import Lesson
 from codecheck.shadow.store import ShadowStore
-
-_VERDICT_SIGNALS = {"valid": "verdict_valid", "incorrect": "verdict_incorrect", "preference": "verdict_preference",
-                    "out_of_scope": "verdict_out_of_scope"}
-
-
-@dataclass
-class RunData:
-    run_id: str
-    repo: str
-    pr: str
-    ts: float
-    evidence: list[Evidence] = field(default_factory=list)
-    misses: list[Scope] = field(default_factory=list)  # one per unmatched human comment
-    labelled: list[tuple[Scope, str]] = field(default_factory=list)  # (scope, confirmed|disputed) per finding
-    counts: Counter = field(default_factory=Counter)
-
-
-def path_glob(path: object) -> str:
-    """The first two directories of a path plus `/**`; a file at the top level is `*`. Never absolute, never `..`."""
-    if not isinstance(path, str):
-        return "*"
-    dirs = [p for p in path.replace("\\", "/").split("/")[:-1] if p not in ("", ".", "..")]
-    return "/".join(dirs[:2]) + "/**" if dirs else "*"
-
-
-def scope_for(repo: str, path: object, category: str, host: str = DEFAULT_HOST) -> Scope:
-    language = detect_language(path) if isinstance(path, str) else None
-    return Scope(host, repo, path_glob(path), language or "", category)
-
-
-def _evidence(scope: Scope, pr: str, thread_id: str, signal: str, ts: float, version: object) -> Evidence:
-    polarity, weight = WEIGHTS[signal]
-    kind = "miss" if polarity == "miss" else "confirm" if polarity == "for" else "dispute"
-    return Evidence(
-        id=evidence_id(scope.host, scope.repo, pr, thread_id, signal), lesson_id=lesson_id(scope, kind), scope=scope,
-        polarity=polarity, signal=signal, weight=weight, ts=ts, pr=pr, tool_version=version if isinstance(version, str) else None,
-    )
-
-
-def _outcome_signal(outcome: dict) -> str | None:
-    """One signal per thread, the strongest: a verdict, then a resolve, then a bare reply."""
-    verdict = _VERDICT_SIGNALS.get(outcome.get("verdict"))
-    if verdict:
-        return verdict
-    resolved, outdated = bool(outcome.get("resolved")), bool(outcome.get("outdated"))
-    if resolved and outdated:
-        return "resolved_outdated"
-    if resolved:
-        return "resolved"
-    if outdated:
-        return "outdated"
-    return "reply" if outcome.get("replies") else None
-
-
-def load_runs(shadow: ShadowStore) -> list[RunData]:
-    """Every run that recorded a repo and PR, oldest first (`ordered_run_ids`, never `run_ids`)."""
-    feedback = run_feedback(shadow)
-    runs = []
-    for rid in shadow.ordered_run_ids():
-        recs = shadow.read(rid)
-        run = next((r for r in recs if r.get("type") == "run"), None)
-        if not run or not isinstance(run.get("repo"), str) or not isinstance(run.get("pr"), str):
-            continue
-        stamps = [r["ts"] for r in recs if r.get("type") == "run" and isinstance(r.get("ts"), (int, float))]
-        if not stamps:
-            continue
-        data = RunData(rid, run["repo"], run["pr"], min(stamps))
-        outcomes, humans = feedback.get(rid, ({}, {}))
-        version = run.get("tool_version")
-        for f in (r for r in recs if r.get("type") == "finding" and isinstance(r.get("id"), str)):
-            data.counts["findings"] += 1
-            scope = scope_for(data.repo, f.get("file"), canonical_category(f.get("category")))
-            outcome = outcomes.get(f["id"])
-            signal = _outcome_signal(outcome) if outcome else None
-            if outcome and signal:
-                data.evidence.append(_evidence(scope, data.pr, str(outcome.get("thread_id")), signal, data.ts, version))
-                data.counts[f"signal:{signal}"] += 1
-            for h in (h for h in humans.values() if h.get("matches_finding") == f["id"]):
-                data.evidence.append(_evidence(scope, data.pr, str(h.get("thread_id")), "human_matched", data.ts, version))
-                data.counts["signal:human_matched"] += 1
-            label = finding_label(f["id"], outcomes, humans)
-            if label in ("confirmed", "disputed"):
-                data.labelled.append((scope, label))
-        for h in humans.values():
-            data.counts["human_comments"] += 1
-            if not h.get("matches_finding"):
-                scope = scope_for(data.repo, h.get("path"), ANY)
-                data.misses.append(scope)
-                data.evidence.append(_evidence(scope, data.pr, str(h.get("thread_id")), "human_miss", data.ts, version))
-                data.counts["signal:human_miss"] += 1
-        runs.append(data)
-    return runs
 
 
 def lessons_visible_to(runs: list[RunData], index: int, params: Params) -> dict[tuple, Lesson]:
@@ -134,7 +32,7 @@ def _new_repo() -> dict:
 
 
 def measure(shadow: ShadowStore, params: Params | None = None, now: Callable[[], float] = time.time) -> dict:
-    params = params or Params()
+    params = params or Params(weighted=False)  # phase 0 asks about recurrence, so nobody's role changes a weight
     runs = load_runs(shadow)
     repos: dict[str, dict] = {}
     for i, run in enumerate(runs):
@@ -161,11 +59,11 @@ def measure(shadow: ShadowStore, params: Params | None = None, now: Callable[[],
             bucket = agg[label]
             bucket["total"] += 1
             prior = visible.get(scope.key())
-            if prior and prior.kind in ("confirm", "dispute"):
+            if prior and prior.kind == "finding":
                 bucket["with_prior_lesson"] += 1
                 if prior.status == "contested":
                     bucket["prior_contested"] += 1
-                elif (prior.kind == "confirm") == (label == "confirmed"):
+                elif (prior.lean == "confirm") == (label == "confirmed"):
                     bucket["prior_agreed"] += 1
                 else:
                     bucket["prior_disagreed"] += 1
@@ -176,7 +74,7 @@ def measure(shadow: ShadowStore, params: Params | None = None, now: Callable[[],
         agg = repos[repo]
         mine = [le for le in final if le.scope.repo == repo]
         status = Counter(le.status for le in mine)
-        by_kind = Counter(f"{le.kind}:{le.status}" for le in mine)
+        by_kind = Counter(f"{le.lean or le.kind}:{le.status}" for le in mine)
         per_repo[repo] = {
             "runs": agg["runs"], "prs": len(agg["prs"]), "findings": agg["findings"], "human_comments": agg["human_comments"],
             "evidence_by_signal": dict(sorted(agg["signals"].items())),
@@ -194,7 +92,7 @@ def measure(shadow: ShadowStore, params: Params | None = None, now: Callable[[],
 
     misses, recur = total("missed_human_comments"), total("missed_in_bucket_with_earlier_miss")
     return {
-        "unweighted": True, "note": "roles are not recorded, so no weight reflects who commented; the write-access rule of the activation threshold is not applied",
+        "unweighted": True, "note": "measured with flat weights: no weight reflects who commented and the maintainer rule of the activation threshold is not applied (`memory consolidate` applies both)",
         "params": {"activation_weight": params.activation_weight, "min_prs": params.min_prs, "contest_ratio": params.contest_ratio,
                    "half_days": params.half_days, "expire_days": params.expire_days},
         "store": {"runs_in_store": len(shadow.run_ids()), "runs_measured": len(runs), "prs": len({(r.repo, r.pr) for r in runs}),

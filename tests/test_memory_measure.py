@@ -6,7 +6,8 @@ from clihelp import call, make_ctx
 from gitutil import make_origin_and_clone
 
 from codecheck.memory.consolidate import DAY, Params
-from codecheck.memory.measure import lessons_visible_to, load_runs, measure, path_glob
+from codecheck.memory.evidence import load_runs, path_glob
+from codecheck.memory.measure import lessons_visible_to, measure
 from codecheck.shadow.store import ShadowStore
 
 T0 = 1_700_000_000.0
@@ -74,7 +75,7 @@ def test_no_future_evidence_leaks_into_a_runs_lessons(store):
     seed_run(shadow, clock, "a3", 3, day=2, misses=[("T3", "src/app/c.py"), ("T4", "src/app/d.py")])
     runs = load_runs(shadow)
     assert [r.run_id for r in runs] == [rid_of("a1"), rid_of("a2"), rid_of("a3")]
-    seen = [sum(le.support for le in lessons_visible_to(runs, i, Params()).values()) for i in range(3)]
+    seen = [sum(le.support for le in lessons_visible_to(runs, i, Params(weighted=False)).values()) for i in range(3)]
     assert seen == [0, 1.0, 2.0]  # a run sees exactly what came before it, never its own or later comments
     assert measure(shadow, now=lambda: T0 + 3 * DAY)["repos"]["o/r"]["missed_in_bucket_with_earlier_miss"] == 3
 
