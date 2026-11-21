@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 from codecheck.core.panel import detect_language
 from codecheck.memory.categories import ANY, canonical_category
+from codecheck.memory.consolidate import AGAINST_BY_ROLE
 from codecheck.memory.model import (
     DEFAULT_HOST,
     UNKNOWN,
@@ -88,12 +89,20 @@ def outcome_signal(outcome: dict) -> str | None:
 
 
 def _signal_role(signal: str, outcome: dict) -> str:
-    """Who gave the signal. A verdict records no role yet, so it is `unknown`; a resolve has the resolver's role."""
+    """Who gave the signal. A resolve has the resolver's role. A verdict records no role of its own, so it takes the role of
+    the thread comment being judged, joined from the thread's outcome (its replies carry roles): the reply whose role
+    counts most (a maintainer disputing the finding beats the author answering it). A thread with no replies judges
+    the finding's own comment, so the verdict is the tool user's own word, `self`. Old records without roles stay `unknown`."""
     if signal.startswith("resolved"):
         return clean_role(outcome.get("resolved_by_role"))
+    replies = [r for r in outcome.get("replies") or [] if isinstance(r, dict)]
     if signal == "reply":
-        replies = [r for r in outcome.get("replies") or [] if isinstance(r, dict)]
         return clean_role(replies[-1].get("role")) if replies else UNKNOWN
+    if signal.startswith("verdict_"):
+        if not replies:
+            return "self"
+        roles = [clean_role(r.get("role")) for r in replies]
+        return max(roles, key=lambda r: AGAINST_BY_ROLE.get(r, AGAINST_BY_ROLE[UNKNOWN]))  # first wins a tie
     return UNKNOWN
 
 
