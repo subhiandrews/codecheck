@@ -85,6 +85,9 @@ class FakeProvider:
         self.private: bool | None = None
         self.private_calls: list = []
         self.license: str | None = "mit"
+        self.write_access: dict[str, bool | None] = {}  # login -> can_write answer; an unlisted login is unknown
+        self.write_errors: set[str] = set()  # logins whose lookup raises
+        self.can_write_calls: list[tuple[str, str]] = []
 
     def add_pr(self, number: int = 7, **over) -> PullRequest:
         ref = PRRef(self.repo, number)
@@ -116,6 +119,12 @@ class FakeProvider:
     def repo_is_private(self, repo):
         self.private_calls.append(repo)
         return self.private
+
+    def can_write(self, repo, login):
+        self.can_write_calls.append((repo, login))
+        if login in self.write_errors:
+            raise ProviderError("cannot look up permission")
+        return self.write_access.get(login)
 
     def repo_license(self, repo):
         return self.license

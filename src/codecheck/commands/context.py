@@ -96,7 +96,7 @@ def _build(args, ctx, run_id, run_dir) -> dict:
         guidance = from_base(ctx.git, sync.base_ref)  # base branch only: a PR cannot change the rules it is judged by
         root = expand_path(cfg.state_dir) / "worktrees" / run_id
         root.parent.mkdir(parents=True, exist_ok=True)
-        meta.update(root=str(root), head_sha=ctx.git.rev_parse(local_ref), pr=str(ref), repo=ref.repo,
+        meta.update(root=str(root), head_sha=ctx.git.rev_parse(local_ref), pr=str(ref), repo=ref.repo, pr_author=pr.author,
                     title=pr.title, description=(pr.body or "")[:4000], fingerprint=None, local_key=None, worktree=True)
 
     parsed = parse_diff(diff)

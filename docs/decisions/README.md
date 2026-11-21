@@ -54,3 +54,4 @@ Records dated before 2026-11-20 were reconstructed from the original design spec
 - [0033-the-docs-reviewer-has-no-built-in-comment-cap.md](0033-the-docs-reviewer-has-no-built-in-comment-cap.md): The docs reviewer has no built-in comment cap
 - [0034-the-aggregator-s-reasoning-goes-in-rated-because-not-the-posted-message.md](0034-the-aggregator-s-reasoning-goes-in-rated-because-not-the-posted-message.md): The aggregator's reasoning goes in rated_because, not the posted message
 - [0035-missing-findings-files-are-retried-once-not-treated-as-empty.md](0035-missing-findings-files-are-retried-once-not-treated-as-empty.md): Missing findings files are retried once, not treated as empty
+- [0036-evidence-is-weighted-by-the-writer-s-repository-role-a-reply-alone-stays-neutral.md](0036-evidence-is-weighted-by-the-writer-s-repository-role-a-reply-alone-stays-neutral.md): Evidence is weighted by the writer's repository role; a reply alone stays neutral

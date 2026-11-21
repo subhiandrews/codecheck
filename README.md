@@ -103,7 +103,7 @@ aggregator = "opus"
 language_experts = "haiku"
 ```
 
-A repository's `.code-check.toml` cannot set `state_dir`, `[run_pr]`, `[shadow]`, `[golden]`, `[codex]`, `[codex_models]`, `[codex_reasoning]`, `review.auto_approve`, `review.attribution`, `review.label`, `review.login`, `loop.review_forks`, `address.test_command` or `deep_reviewer.command`: a repository you review is not trusted to decide what an unattended run may do. Set those in your user file or the environment. After changing `[models]`, re-run the installer or `code-check gen-agents --out agents`. Every key, with defaults: [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+A repository's `.code-check.toml` cannot set `state_dir`, `[run_pr]`, `[shadow]`, `[golden]`, `[memory]`, `[codex]`, `[codex_models]`, `[codex_reasoning]`, `review.auto_approve`, `review.attribution`, `review.label`, `review.login`, `loop.review_forks`, `address.test_command` or `deep_reviewer.command`: a repository you review is not trusted to decide what an unattended run may do. Set those in your user file or the environment. After changing `[models]`, re-run the installer or `code-check gen-agents --out agents`. Every key, with defaults: [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
 ### CODE_CHECK.md
 
