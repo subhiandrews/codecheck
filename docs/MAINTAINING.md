@@ -6,7 +6,7 @@ Developer and maintainer tooling: shadow mode, hand-off data, golden cases, eval
 
 Use it first alongside human reviewers. It does not change behavior; it records what the tool did so human feedback can improve the skills and become a golden evaluation set.
 
-Everything is local: nothing leaves your machine. It is written as JSONL under `shadow.store`: the run, every reviewer finding, which ones the aggregator kept, what was posted, the decision, and the verdict for every comment `address-comments` evaluated.
+Everything is local: nothing leaves your machine unless you set `memory.url` and list repositories in `memory.share_repos` (see [Hosting the memory server](#hosting-the-memory-server)); with either empty, nothing is ever sent. It is written as JSONL under `shadow.store`: the run, every reviewer finding, which ones the aggregator kept, what was posted, the decision, and the verdict for every comment `address-comments` evaluated.
 
 `shadow.handoff` (default `false`) turns on the hand-off data recording and makes the shadow store available even when `shadow.enabled = false`. Like the rest of `[shadow]` it can only be set in your user config or with `CODE_CHECK_SHADOW__HANDOFF=1`, never in a repository's `.code-check.toml`.
 
@@ -116,6 +116,29 @@ The two charts mean different things. The live score is the share of snippets wh
 ### DeepEval metrics (advisory, developer tooling)
 
 `evals/deepeval/` holds deterministic metrics (line anchoring, message length, process notes in kept messages, comment-cap findings, missing findings files) that run over the golden cases or your own shadow store with no model calls. They are an optional `evals` extra, never a gate, not run in CI and not part of the plugin. See `evals/deepeval/README.md` to run them and `evals/deepeval/FAILURE-MODES.md` for what they were built for and which judges did not work.
+
+### Hosting the memory server
+
+`code-check memory serve` is a small HTTP server (standard library only: `http.server` and `sqlite3`) that holds the lesson store of `memory/db.py` for several people, and `memory sync` pushes to it and pulls from it. It is optional: with `memory.url = ""` nothing talks to a server. A runnable Docker example is in [`examples/memory-server/`](../examples/memory-server/README.md); Docker is an example, never a requirement.
+
+**Nothing is sent unless both `memory.url` is set and `memory.share_repos` is non-empty.** `memory sync` with an empty `share_repos` makes no request at all. A repository that is not listed is never pushed.
+
+**Solo.** With `memory.url = ""`, `memory sync --db DIR` syncs the local store with another local server directory through the same `Service` class the server runs (no daemon, no token). Without `--db` it uses `memory-server` next to `memory.store`. To run an actual server on this machine:
+
+```
+code-check memory serve --db ~/.local/share/code-check/memory-server     # binds 127.0.0.1:8787, prints one JSON line, then runs
+code-check memory token add me                                            # prints the token once; only its SHA-256 is stored
+printf '%s\n' cck_... > ~/.config/code-check/memory.token; chmod 600 ~/.config/code-check/memory.token
+# ~/.config/code-check/config.toml
+# [memory]  url = "http://127.0.0.1:8787"  token_file = "~/.config/code-check/memory.token"  share_repos = ["owner/name"]
+code-check memory sync && code-check memory status
+```
+
+**Team.** Run the server on a host everyone can reach and give each person a named token (`memory token add alice`; `--admin` may also `DELETE /v1/evidence?contributor=`). The token name is the contributor id, so one person's evidence can be removed: `memory token revoke alice --purge`. The server refuses a non-loopback `--host` unless it terminates TLS itself (`--tls-cert`, `--tls-key`) or is declared to sit behind a TLS reverse proxy (`--behind-proxy`, with `--allow-host your.name` to enforce the `Host` header). A proxy is recommended. Clients refuse `http://` to anything but this machine, refuse credentials in the URL, never follow a redirect, and read the token from a 0600 file.
+
+**Sharing levels.** `memory.share_level` (`lessons`, `evidence` or `episodes`) is the most a client pushes, `memory.private_level` caps private repositories (default `lessons`), and the server's `--max-level` caps everyone (default `lessons`). The effective level is the lowest of the three, and a repository whose visibility cannot be determined counts as private. Level `lessons` sends each lesson's evidence without `quote` or `finding`; `evidence` adds a scrubbed quote (240 characters, 3 per lesson) and `finding{severity, message}` (400); `episodes` adds scrubbed shadow records per run and never the diff. A field above the server's maximum is a 422 for the whole request, not silently dropped. Scrubbing is best effort.
+
+**What the server trusts.** It never uses a count from a client: lessons are recomputed from evidence rows with the same consolidation code, and evidence ids are derived from host, repo, PR, thread and signal, so the same thread sent by two contributors is one row. Roles in evidence are asserted by the client, so anyone with a token is trusted; revocation is the control. It logs method, path (no query), status and contributor name, never a token, header or evidence text. Limits: 256 KB bodies, 100 lessons per batch, a 10 second read timeout, 32 concurrent requests (`--max-concurrent`). There is no rate limit on failed tokens and no revocation propagation to teammates' replicas (a pulled row stays until `memory forget`): put a proxy in front if that matters.
 
 ### Memory measurement (developer tooling)
 

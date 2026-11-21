@@ -7,3 +7,4 @@
 ^src/codecheck/evals/
 ^src/codecheck/core/(panel|chunk|paths)
 ^src/codecheck/commands/(context|handoff|eval_run)\.py$
+^src/codecheck/memory/

@@ -1,0 +1,29 @@
+# Example only. The memory server plus an Ollama container for the embeddings added in a later phase.
+# Run from this directory:  docker compose up -d --build
+# Create a token:           docker compose exec memory code-check memory token add alice
+services:
+  memory:
+    build:
+      context: ../..
+      dockerfile: examples/memory-server/Dockerfile
+    # Loopback only. To serve a team, put a TLS reverse proxy in front and publish nothing else.
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - memory-data:/data
+    # Most detail the server accepts: lessons, evidence or episodes. Add --allow-host your.name behind a proxy.
+    command: ["--max-level", "lessons"]
+    restart: unless-stopped
+
+  # Used from phase 5 (embeddings). Not needed to store and share lessons.
+  ollama:
+    image: ollama/ollama
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  memory-data:
+  ollama-models:
