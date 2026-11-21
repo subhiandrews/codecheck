@@ -17,6 +17,18 @@ def add_arguments(p) -> None:
     p.add_argument("--run", required=True)
 
 
+def _earlier_invalid(path) -> dict[str, list[str]]:
+    """The `invalid` entries an earlier ingest wrote. Only lists of strings count: nothing else may reach post."""
+    try:
+        earlier = json.loads(path.read_text(encoding="utf-8")).get("invalid")
+    except (OSError, ValueError, AttributeError):
+        return {}
+    if not isinstance(earlier, dict):
+        return {}
+    kept = {m: [e for e in errs if isinstance(e, str)] for m, errs in earlier.items() if isinstance(errs, list)}
+    return {m: errs for m, errs in kept.items() if errs}
+
+
 def run(args, ctx) -> dict:
     meta = load_meta(ctx, args.run)
     fdir = ctx.run_dir(args.run) / "findings"
@@ -46,6 +58,15 @@ def run(args, ctx) -> dict:
         valid[member] = len(findings)
         if errors:
             invalid[member] = errors
+    ingest_path = ctx.run_dir(args.run) / "ingest.json"
+    # The skills run ingest again after re-dispatching `missing` reviewers. Validation rewrites a findings file
+    # without its bad items and quarantines unparseable ones, so a second run would forget they were invalid.
+    for member, errors in _earlier_invalid(ingest_path).items():
+        if member not in meta["panel"]["members"]:
+            continue
+        invalid[member] = errors + [e for e in invalid.get(member, []) if e not in errors]
+        if member in missing:
+            missing.remove(member)
     result = {"valid": valid, "invalid": invalid, "missing": missing, "incomplete": bool(invalid or missing)}
-    write_json(ctx.run_dir(args.run) / "ingest.json", result)
+    write_json(ingest_path, result)
     return result

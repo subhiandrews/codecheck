@@ -2,6 +2,12 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.2.2]
+
+### Fixed
+- A reviewer that wrote no findings file is now re-dispatched once by `review-pr` and `review-local` instead of leaving the review incomplete (#64).
+- A second `ingest` keeps the reviewers the first one found invalid.
+
 ## [1.2.1]
 
 ### Changed

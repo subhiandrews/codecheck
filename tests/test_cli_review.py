@@ -117,6 +117,43 @@ def test_missing_or_invalid_reviewer_makes_review_incomplete_and_never_approves(
     assert ctx.state.get(f"review:{pr.ref}") is None  # a rerun on the same head is still allowed
 
 
+def test_second_ingest_keeps_what_the_first_one_found_invalid(tmp_path):
+    """#64: the skills run ingest again after re-dispatching `missing` reviewers; that must not forget invalid ones."""
+    ctx, _provider, pr = pr_setup(tmp_path, review=ReviewConfig(auto_approve=True))
+    out = run_pr_context(ctx, pr)
+    run_dir = Path(out["run_dir"])
+    members = out["panel"]["members"]
+    bad_item, broken, late = members[0], members[1], members[2]
+    write_findings(run_dir, {m: [] for m in members[3:]})
+    write_findings(run_dir, {bad_item: [{"file": "x.py", "line": 1}]})  # no severity or message: dropped by validation
+    (run_dir / "findings" / f"{broken}.json").write_text("{not json")
+    _code, first = call(ctx, "ingest", "--run", out["run_id"])
+    assert set(first["invalid"]) == {bad_item, broken} and first["missing"] == [late]
+    write_findings(run_dir, {late: []})  # the retried reviewer now wrote its file
+    _code, second = call(ctx, "ingest", "--run", out["run_id"])
+    assert second["missing"] == []
+    assert set(second["invalid"]) == {bad_item, broken}
+    assert second["incomplete"] is True
+
+
+def test_second_ingest_merges_errors_and_ignores_a_planted_ingest_json(tmp_path):
+    ctx, _provider, pr = pr_setup(tmp_path, review=ReviewConfig(auto_approve=True))
+    out = run_pr_context(ctx, pr)
+    run_dir = Path(out["run_dir"])
+    members = out["panel"]["members"]
+    write_findings(run_dir, {m: [] for m in members})
+    write_findings(run_dir, {members[0]: [{"file": "x.py", "line": 1}]})
+    _code, first = call(ctx, "ingest", "--run", out["run_id"])
+    earlier = first["invalid"][members[0]]
+    write_findings(run_dir, {members[0]: [{"file": "y.py", "line": "two", "severity": "warning", "message": "m"}]})  # another kind of error
+    _code, second = call(ctx, "ingest", "--run", out["run_id"])
+    assert second["invalid"][members[0]][: len(earlier)] == earlier and len(second["invalid"][members[0]]) > len(earlier)
+    # a file with non-string errors (planted, or damaged) must not reach post or handoff
+    (run_dir / "ingest.json").write_text(json.dumps({"invalid": {members[1]: [{"x": 1}, 5], members[2]: "text"}}))
+    _code, third = call(ctx, "ingest", "--run", out["run_id"])
+    assert members[1] not in third["invalid"] and members[2] not in third["invalid"]
+
+
 def test_clean_complete_review_auto_approves_when_enabled(tmp_path):
     ctx, provider, pr = pr_setup(tmp_path, review=ReviewConfig(auto_approve=True))
     out = run_pr_context(ctx, pr)

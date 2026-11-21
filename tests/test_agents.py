@@ -217,3 +217,13 @@ def test_docs_agent_is_skeptical_has_no_built_in_cap_and_defers_only_to_explicit
     assert "explicit rule about documentation or comments in `CODE_CHECK.md`" in body
     assert "Silence" in body and "Never use `critical`" in body and "do not ask for more of it" in body
     assert "RUN_DIR/existing-comments.md" in body  # the shared rules still apply
+
+
+def test_findings_file_is_the_last_step_and_done_needs_it():
+    """#64: a reviewer that found nothing must still write `[]`; silence is not an empty list."""
+    rendered = {n: t for n, t in render_all(ModelsConfig()).items() if n.endswith(".md") and n != "aggregator.md"}
+    assert rendered
+    for name, text in rendered.items():
+        assert "last tool call must be the Write" in text, name
+        assert "`done:` line is only valid after the file exists" in text, name
+        assert "Finding nothing is not a reason to skip the file" in text, name
