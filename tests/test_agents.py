@@ -210,6 +210,8 @@ def test_docs_agent_is_skeptical_has_no_built_in_cap_and_defers_only_to_explicit
     for gone in ("cap_percent", "over_cap", "comment cap", "cap exceeded", "at or under"):
         assert gone not in body and gone not in files["aggregator.md"], gone
     assert "docs-metrics" not in files["aggregator.md"]  # it only read the file to confirm a cap finding
+    for gone in ("sets a limit", "limit that `CODE_CHECK.md` sets", "naming the number"):  # nothing counts comments for a repo
+        assert gone not in body, gone
     assert "restates what the code says" in body  # the comment-quality checks stay
     assert "explicit rule about documentation or comments in `CODE_CHECK.md`" in body
     assert "Silence" in body and "Never use `critical`" in body and "do not ask for more of it" in body

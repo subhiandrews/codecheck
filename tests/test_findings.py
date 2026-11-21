@@ -44,6 +44,25 @@ def test_rated_because_must_be_a_string_and_is_not_part_of_the_message_or_id():
     assert b.to_dict()["rated_because"] == "why"
 
 
+def test_only_the_aggregator_can_set_rated_because():
+    for reviewer in ("skeptic", "lang-python", "architect"):
+        (f,), errors = validate_findings([good(rated_because="Lowered from warning")], reviewer=reviewer)
+        assert errors == [] and f.rated_because is None, reviewer  # reviewers keep their reasoning in message
+        assert "rated_because" not in f.to_dict()
+
+
+def test_merging_duplicates_keeps_the_rated_because_of_the_severity_that_won():
+    def dup(severity, why):
+        return Finding(file="a.py", line=3, severity=severity, category="bug", message="same", rated_because=why)
+
+    kept = merge_exact_duplicates([dup(Severity.WARNING, None), dup(Severity.SUGGESTION, "lowered from warning")])
+    assert [(f.severity, f.rated_because) for f in kept] == [(Severity.WARNING, None)]  # the note belongs to the loser
+    kept = merge_exact_duplicates([dup(Severity.SUGGESTION, "lowered from warning"), dup(Severity.WARNING, None)])
+    assert [(f.severity, f.rated_because) for f in kept] == [(Severity.WARNING, None)]
+    kept = merge_exact_duplicates([dup(Severity.SUGGESTION, None), dup(Severity.SUGGESTION, "kept low: unconfirmed")])
+    assert kept[0].rated_because == "kept low: unconfirmed"  # equal severity: keep whichever has a reason
+
+
 def test_root_prefix_is_stripped():
     findings, _ = validate_findings([good(file="/work/tree/a.py")], reviewer="r", root="/work/tree")
     assert findings[0].file == "a.py"
