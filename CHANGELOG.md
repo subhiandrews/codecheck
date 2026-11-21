@@ -2,6 +2,11 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.2.2]
+
+### Fixed
+- A reviewer that found nothing could end without writing its findings file, which `ingest` reports as `missing`. The reviewer prompts now make that write the last tool call and say a missing file counts as a failed reviewer, and the `review-pr` and `review-local` skills re-dispatch each `missing` reviewer once and run `ingest` again (#64).
+
 ## [1.2.1]
 
 ### Changed

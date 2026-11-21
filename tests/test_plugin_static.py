@@ -497,3 +497,11 @@ def test_codex_skills_are_generated_and_use_real_cli():
             assert text.count("`code-check panel run --run <run_id>`") == 1
             assert "`code-check loop " not in text
             assert "Note `run_id`. If" in text
+
+
+@pytest.mark.parametrize("name", ["review-pr", "review-local"])
+def test_review_skills_redispatch_members_missing_after_ingest(name):
+    """#64: a reviewer that wrote no findings file is re-dispatched once, then ingest runs again."""
+    text = (REPO / f"skills/{name}/SKILL.md").read_text()
+    step = next(line for line in text.splitlines() if line.startswith("4. "))
+    assert "`missing`" in step and "once" in step and "ingest" in step.split("`missing`", 1)[1]
