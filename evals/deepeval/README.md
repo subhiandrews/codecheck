@@ -44,3 +44,7 @@ Model-judge tools that were tried and measured. They cost tokens and read `ANTHR
 | `handoff_pairs.py` | Judges every human comment against every kept and dropped finding in real hand-offs. Output stays outside the repo. | Not a result by itself. |
 | `compare_rubrics.py` | Runs both rubrics on every labelled pair. | See `same_concern.py`. |
 | `code_validity.py` | A judge that decides whether a finding's claim is true of the code at the PR head commit, given the cited file and the PR diff. Pass bar fixed before the single run (8 of 9 correct, including 3 of the 4 true items). | **Missed its bar: 5 of 9**, no better than an always-"false" judge (5 of 9). It never gave a confident wrong answer, but 4 items came back UNCERTAIN, 3 of them because the deciding code was outside its context. Dropped; a subagent that reads the repo with `git show` at the head commit remains the only method that worked. |
+
+## Routing A/B
+
+`routing_ab.py` runs the reviewer routing at a git ref (`--base-ref`, default `origin/main`) and the checkout's routing over every distinct diff in your shadow store, and lists the diffs where the performance decision, the architect or the docs reviewer changed. No model, no tokens; it prints counts, run ids and routing reasons only. It says whether routing changed, not whether the change was right: that needs the reviewers' findings on those runs. On the 1.2.3 routing it reproduced 72 distinct diffs, 14 of them turned off and none turned on for performance.
