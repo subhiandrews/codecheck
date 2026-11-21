@@ -76,7 +76,7 @@ Every subcommand prints exactly one JSON document, errors included, except `memo
 | Address comments | `status`, `workspace`, `threads`, `commit`, `push`, `reply`, `resolve`, `request-review`, `checks`, `check-log`, `attempt` |
 | Unattended | `list-work`, `mark-done`, `run-pr --mode review\|babysit --pr REF`, `loop --mode review\|babysit` |
 | Setup | `doctor`, `gen-agents --out agents`, `gen-skills --out codex/skills` |
-| Developer | `shadow` (collect, export-golden, record-verdict), `memory measure`, `memory consolidate`, `memory collect [--all] [--dry-run]`, `memory list`, `memory forget`, `memory serve\|token\|sync\|status`, `eval --replay\|--live\|--calibrate\|--history` |
+| Developer | `shadow` (collect, export-golden, record-verdict), `memory measure`, `memory report`, `memory consolidate`, `memory collect [--all] [--dry-run]`, `memory list`, `memory forget`, `memory serve\|token\|sync\|status`, `eval --replay\|--live\|--calibrate\|--history\|--memory-retrieval\|--memory-effect` |
 
 Loops: `/loop 15m /code-check:review-pr`, `/loop 10m /code-check:babysit-pr`, `/loop 2m /code-check:review-local`. Each iteration handles at most `loop.max_prs_per_iteration` PRs, one headless `claude -p` process each, and retries a failing PR up to 3 attempts per fingerprint.
 

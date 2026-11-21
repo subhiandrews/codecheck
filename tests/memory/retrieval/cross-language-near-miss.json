@@ -1,0 +1,19 @@
+{
+  "id": "cross-language-near-miss",
+  "description": "A lesson about Python in a directory is not shown for a Go file in the same directory, but is for a Python file.",
+  "files_at_base": ["svc/api/handler.py", "svc/api/handler.go"],
+  "lessons": [
+    {"name": "py-handler-error", "kind": "finding", "lean": "confirm", "path_glob": "svc/api/**", "language": "python", "category": "error-handling",
+     "statement": "Handlers that swallow a broad exception were confirmed as defects."},
+    {"name": "py-handler-miss", "kind": "miss", "path_glob": "svc/api/**", "language": "python",
+     "statement": "Humans asked about request timeouts in handlers; reviews did not."}
+  ],
+  "queries": [
+    {"name": "go-file-findings", "mode": "findings", "findings": [{"file": "svc/api/handler.go", "category": "errors"}],
+     "expect_absent": ["py-handler-error"]},
+    {"name": "go-file-diff", "mode": "diff", "paths": ["svc/api/handler.go"], "expect_absent": ["py-handler-miss"]},
+    {"name": "py-file-findings", "mode": "findings", "findings": [{"file": "svc/api/handler.py", "category": "errors"}],
+     "expect": ["py-handler-error"]},
+    {"name": "py-file-diff", "mode": "diff", "paths": ["svc/api/handler.py"], "expect": ["py-handler-miss"]}
+  ]
+}

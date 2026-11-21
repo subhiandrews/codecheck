@@ -1,0 +1,19 @@
+{
+  "id": "candidate-lesson-not-shown",
+  "description": "A candidate has too little evidence to reach a review, for both miss and finding lessons.",
+  "files_at_base": ["web/forms/signup.ts", "web/forms/login.ts", "web/pages/home.ts"],
+  "lessons": [
+    {"name": "signup-candidate", "kind": "finding", "lean": "confirm", "path_glob": "web/forms/**", "language": "typescript", "category": "validation", "status": "candidate", "support": 1,
+     "statement": "Form fields without length limits were confirmed once."},
+    {"name": "home-candidate-miss", "kind": "miss", "path_glob": "web/pages/**", "language": "typescript", "status": "candidate", "support": 1,
+     "statement": "A human asked about empty states on pages once."},
+    {"name": "home-active-miss", "kind": "miss", "path_glob": "web/forms/**", "language": "typescript",
+     "statement": "Humans repeatedly asked about double submit on forms."}
+  ],
+  "queries": [
+    {"name": "candidate-finding", "mode": "findings", "findings": [{"file": "web/forms/signup.ts", "category": "validation"}],
+     "expect_absent": ["signup-candidate"]},
+    {"name": "candidate-miss", "mode": "diff", "paths": ["web/pages/home.ts"], "expect_absent": ["home-candidate-miss"]},
+    {"name": "active-miss", "mode": "diff", "paths": ["web/forms/login.ts"], "expect": ["home-active-miss"], "expect_absent": ["signup-candidate"]}
+  ]
+}

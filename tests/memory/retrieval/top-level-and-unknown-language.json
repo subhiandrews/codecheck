@@ -1,0 +1,14 @@
+{
+  "id": "top-level-and-unknown-language",
+  "description": "A top-level file uses the `*` glob, and a file of an unrecognised language matches a lesson with an empty language.",
+  "files_at_base": ["setup.py", "Makefile", "docs/index.md"],
+  "lessons": [
+    {"name": "top-level-py", "kind": "miss", "path_glob": "*", "language": "python", "statement": "Humans asked about pinned versions in setup files."},
+    {"name": "top-level-make", "kind": "miss", "path_glob": "*", "language": "", "statement": "Humans asked about phony targets in the Makefile."}
+  ],
+  "queries": [
+    {"name": "setup-py", "mode": "diff", "paths": ["setup.py"], "expect": ["top-level-py"], "expect_absent": ["top-level-make"]},
+    {"name": "makefile", "mode": "diff", "paths": ["Makefile"], "expect": ["top-level-make"], "expect_absent": ["top-level-py"]},
+    {"name": "nested-file-not-top-level", "mode": "diff", "paths": ["docs/index.md"], "expect_absent": ["top-level-py", "top-level-make"]}
+  ]
+}

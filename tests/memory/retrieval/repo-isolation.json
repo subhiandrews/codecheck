@@ -1,0 +1,12 @@
+{
+  "id": "repo-isolation",
+  "description": "A lesson learned in another repository never reaches this one, even with an identical scope.",
+  "files_at_base": ["src/net/client.py"],
+  "lessons": [
+    {"name": "mine", "kind": "miss", "path_glob": "src/net/**", "language": "python", "statement": "Humans asked about retry limits here."},
+    {"name": "theirs", "kind": "miss", "repo": "other/project", "path_glob": "src/net/**", "language": "python", "statement": "Humans asked about retry limits there."}
+  ],
+  "queries": [
+    {"name": "own-repo-only", "mode": "diff", "paths": ["src/net/client.py"], "expect": ["mine"], "expect_absent": ["theirs"]}
+  ]
+}

@@ -61,7 +61,7 @@ Reviews vary from run to run, so the matching is tolerant on purpose. A reported
 
 Each run is isolated. State, the shadow store and review bookkeeping point into a temporary directory through `CODE_CHECK_` variables, and git's repository-selecting variables are unset, so an eval started from a git hook cannot touch your own repository.
 
-The repository ships **6 snippets**: `clean-code` (which should produce nothing), `docs-only-api`, `off-by-one`, `weaker-access-override`, `rust-shutdown-race` and `poisoned-memory-lesson` (a poisoned memory lesson must not hide a real SQL injection; it is the only snippet that reads memory, from lessons seeded into a store in its own work directory). Four are marked `"calibrated": true`, meaning they were run by hand against a real model and passed every time. The race and poisoned-lesson snippets are not calibrated yet. Each snippet is worth a sixth of the score, so one flaky run moves the headline by about 17 points.
+The repository ships **8 snippets**: `clean-code` (which should produce nothing), `docs-only-api`, `off-by-one`, `weaker-access-override`, `rust-shutdown-race` and `poisoned-memory-lesson` (a poisoned memory lesson must not hide a real SQL injection), `memory-dispute-lesson-downgrades-false-positive` and `memory-miss-lesson-surfaces-issue`. The last three are the snippets that read memory, from lessons seeded into a store in their own work directory (see [Memory evals](#memory-evals)). Four are marked `"calibrated": true`, meaning they were run by hand against a real model and passed every time. The race and the three memory snippets are not calibrated yet. Each snippet is worth an eighth of the score, so one flaky run moves the headline by about 13 points.
 
 ### Calibrate: measuring the measuring stick
 
@@ -76,6 +76,31 @@ The first real run, on 2026-11-15, **failed**: 14 findings judged, 7 agreed, kap
 Every full `eval --live` or `eval --calibrate` run appends one line to `docs/eval-history.jsonl` (time, commit, branch, models, score, cost) and regenerates `docs/eval-history.md`, which charts each mode with a rolling average. The record is append-only and merges by union, so two branches that each ran an eval keep both lines. Nothing is committed for you: the developer commits both files with their change.
 
 Gates and hand-off rounds pass `--no-record`, because a gate runs after the commit and recording it would only leave the tree dirty. So the chart moves only when someone chooses to measure and commit.
+
+## Memory evals
+
+Review memory (`memory.read`) has its own advisory measurements, kept apart from the four above because each answers a different question and none of them gates anything (`docs/decisions/0042-memory-evals-are-advisory-and-report-retrieval-and-effect-separately.md`, and `docs/decisions/0023-the-llm-judge-is-advisory-only.md` for why). They are never written to `docs/eval-history.jsonl`.
+
+| | `eval --memory-retrieval` | `eval --memory-effect` | `memory report` |
+|---|---|---|---|
+| Question | Does retrieval return the right lessons, and only those? | Does a lesson change a review the way it should? | In real use, did findings fare differently when lessons were shown? |
+| Uses a model | No | Yes (two reviews per snippet) | No |
+| Input | the JSON files in `tests/memory/retrieval` | the snippets in `tests/snippets` that carry `memory` | the shadow store |
+| Output | recall@5 and MRR per retriever, per case and overall | per pair: what memory suppressed, surfaced or lost | dispute and confirm rates per repository and arm, with sample sizes |
+
+### Retrieval
+
+A case seeds a few synthetic lessons (no real repository content), asks queries (the paths of a diff, or candidate findings) and names the lessons that should come back (`expect`) and must not (`expect_absent`: expired, candidate, another language, a path that no longer exists, another repository). It also checks the rendered `memory.md`: a poisoned, instruction-like statement must be retrieved and shown only on its framed statement line, and a contested lesson must show both counts. recall@5 is the share of expected lessons in the top five, and MRR is the mean of 1 over the rank of the first expected lesson. A query marked `"tier": "semantic"` is one the exact-key baseline is not expected to answer; it counts in the totals and is also reported under `by_tier`, so the gap a semantic retriever should close is visible.
+
+A retriever is a function from a query to lesson ids, best first. `exact` calls the real `memory/retrieve.py`. Another one is added with one line, `register_retriever("name", fn, available=reason_or_none)` in `src/codecheck/evals/memory_retrieval.py`, and then scored next to it (`--retriever NAME` scores one). When `available()` gives a reason (for example Ollama is not running), `--if-reachable` reports `skipped` for that retriever instead of failing.
+
+### Effect
+
+For each snippet with `memory` lessons, `eval --memory-effect` reviews it with memory off and again with the lessons on, and reports `suppressed` (a forbidden finding the off arm reported and the on arm did not), `surfaced` (an expected finding only the on arm found) and `lost` (an expected finding only the off arm found, the harm a poisoned lesson could do). `as_expected` means the on arm met the snippet's expectations and lost nothing. The snippet's own `expected` and `must_not_report` are the memory-on expectations; `memory_effect.off` can override either list for the off arm. `poisoned-memory-lesson` is the harm check (a true critical must survive a lesson that says to drop it), `memory-dispute-lesson-downgrades-false-positive` the help check for the aggregator and `memory-miss-lesson-surfaces-issue` the help check for the reviewers. Run it by hand, each review is real tokens, and read it over several runs: one pair is one sample.
+
+### Online
+
+`memory report` splits the findings of non-blind runs by whether memory was read (a `memory` record or `memory.read` in the run record) and joins them with the outcomes collected later. It is observational (runs are not assigned to an arm at random), per repository, and flags `underpowered` below 30 findings per arm (`--min-findings`).
 
 ## Where the data comes from
 
@@ -118,7 +143,7 @@ All of it is local and scrubbed of secrets before it is written. The scrub is pa
 
 ## Known limits
 
-- The sets are small: 7 golden cases and 6 snippets. The live score is coarse and the calibration estimate is weak.
+- The sets are small: 7 golden cases and 8 snippets. The live score is coarse and the calibration estimate is weak.
 - The evals cover the review panel. The `address-comments` flow records its verdicts in shadow mode, but nothing evaluates them.
 - No eval scores the reviewers with a judge yet. The pair question ("is this the same issue as that concern?") is the better basis for one, and it needs snippets that carry explicit concerns. See `docs/decisions/0023-the-llm-judge-is-advisory-only.md`.
 - The live eval is local, so a contributor who never installs the git hooks never runs it. CI does not backstop that.

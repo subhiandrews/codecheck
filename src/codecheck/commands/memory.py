@@ -3,6 +3,7 @@ import time
 from codecheck.commands import memory_collect
 from codecheck.config import expand_path
 from codecheck.memory import cli_lessons, cli_server
+from codecheck.memory import report as memory_report
 from codecheck.memory.consolidate import Params
 from codecheck.memory.db import MemoryDB
 from codecheck.memory.measure import measure
@@ -22,6 +23,7 @@ def add_arguments(p) -> None:
     c.add_argument("--prune", action="store_true", help="also delete evidence older than memory.expire_days")
     cli_lessons.add_arguments(sub)
     memory_collect.add_arguments(sub.add_parser("collect", help=memory_collect.HELP))
+    memory_report.add_arguments(sub.add_parser("report", help="read-only: dispute and confirm rates of findings with and without lessons shown"))
     cli_server.add_arguments(sub)  # serve, token, sync, status (memory/cli_server.py)
 
 
@@ -36,6 +38,8 @@ def run(args, ctx) -> dict:
     store = ctx.shadow or ShadowStore(expand_path(ctx.config.shadow.store))
     if args.memory_cmd == "measure":
         return measure(store)
+    if args.memory_cmd == "report":
+        return memory_report.report(store, args.min_findings)
     # Explicit and user-invoked, so it works with memory.enabled = false. Nothing in a review reads this store yet.
     m = ctx.config.memory
     params = Params(half_days=float(m.half_life_days), expire_days=float(m.expire_days))
