@@ -23,7 +23,7 @@ python3.14 -m venv ~/.venvs/codecheck-evals       # any venv outside the repo wo
 | `_env.py` | Sets DeepEval's telemetry opt-out before it is imported. |
 | `test_*.py` | Tests for the three modules above. |
 
-`FAILURE-MODES.md` records the failure modes these metrics were built for, how well each is supported, and what did not work.
+`FAILURE-MODES.md` records the failure modes these metrics were built for, how well each is supported, and what did not work. `notes.md` is the longer working record: the failure taxonomy (F1 to F7), what each measurement showed, and what was later corrected.
 
 ## Read the numbers carefully
 
