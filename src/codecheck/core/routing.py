@@ -127,9 +127,10 @@ def _performance_signals(diffs: Mapping[str, FileDiff], languages: Mapping[str, 
                     if _AWAIT.search(text) and signals["sequential await in a loop"] < 4:
                         signals["sequential await in a loop"] += 2
                     if (language == "python" and (m := _MEMBERSHIP.search(text)) and m.group(1) not in hashed
-                            and m.group(1) != "range" and signals["list membership in a loop"] < 4):
+                            and signals["list membership in a loop"] < 4):
                         # a name known to be a list scores fully; an unknown one (a parameter, an attribute) may be a set
-                        signals["list membership in a loop"] += 2 if m.group(1) in listy else 1
+                        step = 2 if m.group(1) in listy else 1
+                        signals["list membership in a loop"] = min(4, signals["list membership in a loop"] + step)
                     if _QUERY.search(text):
                         signals["query or I/O in a loop"] += 3
                     if _SLOW_IN_LOOP.search(text):

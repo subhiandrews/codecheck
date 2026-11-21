@@ -195,3 +195,10 @@ def test_long_membership_lines_stay_cheap():
     start = time.perf_counter()
     go(_new("a.py", ["for x in xs:", line]))
     assert time.perf_counter() - start < 5  # generous: a quadratic scan of this line takes minutes
+
+
+def test_list_membership_signal_never_passes_its_cap():
+    """Three unknown names (1 each) then a known list (2) would reach 5; the signal is capped at 4."""
+    lines = ["seen_list = []", "for x in xs:", "    if x in a:", "    if x in b:", "    if x in c:", "    if x in seen_list:"]
+    r = go(_new("a.py", lines))
+    assert "score 5 (list membership in a loop, loop)" in r.reasons[1], r.reasons[1]
