@@ -25,6 +25,10 @@ def path_ok(rel: object) -> bool:
     return not p.is_absolute() and all(part != ".." and not _is_git_dir_name(part) for part in p.parts)
 
 
+def path_glob_ok(value: object) -> bool:
+    return isinstance(value, str) and (value == "*" or (value.endswith("/**") and path_ok(value[:-3])))
+
+
 def _category_ok(value: object) -> bool:
     if isinstance(value, str):
         return bool(value.strip())
@@ -77,6 +81,15 @@ def snippet_problems(snippet: object) -> list[str]:
                     and (r.get("severity") is None or _severities_ok(r["severity"]))):
                 out.append(f"must_not_report[{i}] needs file, and optionally category, line and severity "
                            f"(a non-empty list of {', '.join(SEVERITIES)})")
+    memory = snippet.get("memory")
+    if memory is not None:
+        lessons = memory.get("lessons") if isinstance(memory, dict) else None
+        if not (isinstance(lessons, list) and lessons and all(
+                isinstance(le, dict) and le.get("kind") in ("miss", "finding") and path_glob_ok(le.get("path_glob"))
+                and isinstance(le.get("statement"), str) and le["statement"].strip()
+                and all(isinstance(le.get(k, ""), str) for k in ("language", "category", "lean"))
+                for le in lessons)):
+            out.append("memory must be {lessons: [{kind, path_glob, statement, language?, category?, lean?}]}")
     if "calibrated" in snippet and not isinstance(snippet["calibrated"], bool):
         out.append("calibrated must be true or false")
     return out

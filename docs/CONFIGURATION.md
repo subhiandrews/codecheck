@@ -59,10 +59,10 @@ handoff = false                # record hand-off data even when shadow.enabled i
 [golden]                       # user config or environment only
 licenses = ["mit", "apache-2.0", "bsd-2-clause", "bsd-3-clause", "isc", "0bsd", "unlicense"]   # `shadow promote --finalize` refuses a repository under any other license
 
-[memory]                       # user config or environment only; evidence is recorded, lessons are not yet read into reviews
+[memory]                       # user config or environment only; `read` and `reviewers` now put lessons into reviews (see MAINTAINING.md, Memory read path)
 enabled = false                # collect evidence and consolidate lessons
-read = false                   # put lessons into reviews (needs enabled)
-reviewers = false              # also give the reviewers miss lessons; the aggregator gets dispute and confirm lessons
+read = false                   # put lessons into reviews (needs enabled; never in a blind hand-off run)
+reviewers = false              # also give the reviewers miss lessons (`context`); the aggregator gets finding lessons (`ingest`) whenever read is on
 store = "~/.local/share/code-check/memory"
 max_lessons = 12               # most lessons shown to one review
 max_chars = 6000               # most characters of lessons shown to one review

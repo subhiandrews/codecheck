@@ -73,6 +73,9 @@ def draft_case(shadow: ShadowStore, run_id: str) -> dict:
         raise CodeCheckError(f"no aggregator output recorded for {run_id}: there is nothing to replay")
     records = shadow.read(run_id)
     run = next((r for r in records if r.get("type") == "run"), {})
+    if (isinstance(run.get("memory"), dict) and run["memory"].get("read")) or any(r.get("type") == "memory" for r in records):
+        raise CodeCheckError(f"{run_id} read review memory, so its findings are not independent of earlier lessons "
+                             "and cannot become a golden case")
     root = raw.get("root") if isinstance(raw.get("root"), str) else None
     view = posted_view(raw["aggregator"], diff, root=root)  # as `post` saw it; raises on invalid output
     outcomes, humans = run_feedback(shadow).get(run_id, ({}, {}))

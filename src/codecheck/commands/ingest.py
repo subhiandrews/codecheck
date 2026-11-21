@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 
 from codecheck.commands._common import (
@@ -8,6 +9,7 @@ from codecheck.commands._common import (
     write_json,
 )
 from codecheck.core.findings import validate_findings
+from codecheck.memory.inject import AGGREGATOR, FILE_NAME, safe_build
 
 NAME = "ingest"
 HELP = "Validate the findings files the reviewers wrote for a run"
@@ -35,6 +37,7 @@ def run(args, ctx) -> dict:
     valid: dict[str, int] = {}
     invalid: dict[str, list[str]] = {}
     missing: list[str] = []
+    candidates: list[tuple[str, str]] = []  # (file, category) of every valid finding, the key for finding lessons
     for member in meta["panel"]["members"]:
         path = fdir / f"{member}.json"
         if path.is_symlink():
@@ -56,6 +59,7 @@ def run(args, ctx) -> dict:
         path.unlink()  # never write through a symlink planted by a reviewer
         path.write_text(json.dumps([f.to_dict() for f in findings], indent=2), encoding="utf-8")
         valid[member] = len(findings)
+        candidates += [(f.file, f.category) for f in findings]
         if errors:
             invalid[member] = errors
     ingest_path = ctx.run_dir(args.run) / "ingest.json"
@@ -68,5 +72,41 @@ def run(args, ctx) -> dict:
         if member in missing:
             missing.remove(member)
     result = {"valid": valid, "invalid": invalid, "missing": missing, "incomplete": bool(invalid or missing)}
+    publish = not missing or ingest_path.exists()  # never hand the aggregator a half-built input
     write_json(ingest_path, result)
+    mem = _aggregator_memory(ctx, args.run, meta, candidates) if publish else None
+    if mem is not None and ctx.config.memory.enabled and ctx.config.memory.read:
+        return {**result, "memory": mem}
     return result
+
+
+def _aggregator_memory(ctx, run_id: str, meta: dict, candidates: list[tuple[str, str]]) -> dict | None:
+    """Replace memory.md with the lessons for these findings and list it in context.json. None when memory is not in play.
+
+    The reviewers' miss lessons are no use to the aggregator (it may not invent findings), so when nothing applies the
+    old file is removed instead of left behind."""
+    run_dir = ctx.run_dir(run_id)
+    try:
+        info = safe_build(ctx, run_dir, stage=AGGREGATOR, repo=meta.get("repo"), base_ref=meta.get("base_ref"),
+                          blind=bool(meta.get("blind")), findings=candidates)
+        if info["reason"] in ("disabled", "read off", "blind"):
+            return None
+        files = [n for n in meta.get("run_files", []) if n != FILE_NAME]
+        if info.get("file"):
+            files.append(FILE_NAME)
+        else:
+            (run_dir / FILE_NAME).unlink(missing_ok=True)
+        if files != meta.get("run_files", []) or meta.get("memory_findings") != _brief(info):
+            meta.update(run_files=files, memory_findings=_brief(info))
+            stage = run_dir / "context.json.tmp"  # same directory, so the replace is atomic
+            write_json(stage, meta)
+            os.replace(stage, run_dir / "context.json")
+        if info.get("read"):
+            ctx.record(run_id, {"type": "memory", "stage": AGGREGATOR, "ids": info["ids"]})
+        return _brief(info)
+    except Exception as e:  # noqa: BLE001 - memory never breaks ingest
+        return {"read": False, "reason": "error", "error": f"{type(e).__name__}: {e}"[:200]}
+
+
+def _brief(info: dict) -> dict:
+    return {k: v for k, v in info.items() if k != "ids"}

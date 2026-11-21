@@ -161,6 +161,10 @@ Flags and configuration always win: `--security`, `--performance`, `review.secur
 
 **Full mode** puts every reviewer on the panel (architect, pragmatist, skeptic, security, performance, docs, every language expert, and the deep reviewer when available) and skips routing entirely. Ask for it with `/code-check:review-local full` or `/code-check:review-pr 123 full`, `code-check context --full`, `code-check run-pr --full`, or `review.full = true`, which also applies to `code-check loop --mode review`. `models.performance` and `models.security` still choose their models.
 
+## Memory read path
+
+When `memory.enabled` and `memory.read` are on and the run is not blind, `context` writes `memory.md` with miss lessons for the reviewers (if `memory.reviewers`) and `ingest` replaces it with finding lessons for the aggregator. Retrieval is exact-key and deterministic (`memory/retrieve.py`), rendering is framed, scrubbed and capped (`memory/render.py`), and `memory/inject.py` never raises, so a broken store costs a review nothing. Default off leaves `run_files` unchanged. Details are in `docs/MAINTAINING.md` (Memory read path) and `docs/decisions/0039-*`.
+
 ## Docs review
 
 The docs reviewer is a skeptic about documentation. Its default stance is that documentation must be limited, precise and current. Before it runs, code (`core/doccheck.py`) measures the change and writes `docs-metrics.json` into the run directory: the added comment and docstring lines against the added code lines, and the documentation files that changed. There is no limit on how many comments a change may add; the reviewer judges each comment on its own merit. The scan is a line scanner, not a parser, so treat the counts as an estimate.

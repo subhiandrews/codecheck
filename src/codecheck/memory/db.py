@@ -257,6 +257,14 @@ class MemoryDB:
                 f"SELECT * FROM lessons{' WHERE ' + ' AND '.join(where) if where else ''} ORDER BY support + contra DESC, id", args)  # noqa: S608 - column names are literals, values bound
             return [_lesson_from(r) for r in rows]
 
+    def put_lessons(self, lessons: Iterable[Lesson]) -> int:
+        """Store lessons as given, for seeding an eval or a test. The next `recompute` replaces them with what the evidence says."""
+        rows = [_lesson_row(le) for le in lessons]
+        with self._use(write=True) as conn, self._tx(conn):
+            conn.executemany(f"INSERT OR REPLACE INTO lessons ({', '.join(_LESSON_COLS)}) VALUES ({', '.join('?' * len(_LESSON_COLS))})",  # noqa: S608
+                             rows)
+        return len(rows)
+
     def lesson(self, lesson_id: str) -> Lesson | None:
         with self._use(write=False) as conn:
             if not self._ready(conn):

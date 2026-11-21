@@ -61,7 +61,7 @@ Reviews vary from run to run, so the matching is tolerant on purpose. A reported
 
 Each run is isolated. State, the shadow store and review bookkeeping point into a temporary directory through `CODE_CHECK_` variables, and git's repository-selecting variables are unset, so an eval started from a git hook cannot touch your own repository.
 
-The repository ships **5 snippets**: `clean-code` (which should produce nothing), `docs-only-api`, `off-by-one`, `weaker-access-override` and `rust-shutdown-race`. Four are marked `"calibrated": true`, meaning they were run by hand against a real model and passed every time. The race snippet is not calibrated yet. Each snippet is worth a fifth of the score, so one flaky run moves the headline by 20 points.
+The repository ships **6 snippets**: `clean-code` (which should produce nothing), `docs-only-api`, `off-by-one`, `weaker-access-override`, `rust-shutdown-race` and `poisoned-memory-lesson` (a poisoned memory lesson must not hide a real SQL injection; it is the only snippet that reads memory, from lessons seeded into a store in its own work directory). Four are marked `"calibrated": true`, meaning they were run by hand against a real model and passed every time. The race and poisoned-lesson snippets are not calibrated yet. Each snippet is worth a sixth of the score, so one flaky run moves the headline by about 17 points.
 
 ### Calibrate: measuring the measuring stick
 
@@ -118,7 +118,7 @@ All of it is local and scrubbed of secrets before it is written. The scrub is pa
 
 ## Known limits
 
-- The sets are small: 7 golden cases and 5 snippets. The live score is coarse and the calibration estimate is weak.
+- The sets are small: 7 golden cases and 6 snippets. The live score is coarse and the calibration estimate is weak.
 - The evals cover the review panel. The `address-comments` flow records its verdicts in shadow mode, but nothing evaluates them.
 - No eval scores the reviewers with a judge yet. The pair question ("is this the same issue as that concern?") is the better basis for one, and it needs snippets that carry explicit concerns. See `docs/decisions/0023-the-llm-judge-is-advisory-only.md`.
 - The live eval is local, so a contributor who never installs the git hooks never runs it. CI does not backstop that.

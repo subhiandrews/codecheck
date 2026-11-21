@@ -8,6 +8,7 @@ store or review bookkeeping. This costs real tokens; it is local developer tooli
 """
 
 import json
+import time
 from pathlib import Path
 
 from codecheck.commands.run_pr import parse_result
@@ -16,6 +17,8 @@ from codecheck.core.paths import contained, finding_items
 from codecheck.errors import CodeCheckError
 from codecheck.evals.match import match_case
 from codecheck.evals.snippet import path_ok, snippet_problems
+from codecheck.memory.db import MemoryDB
+from codecheck.memory.model import DEFAULT_HOST, Lesson, Scope, lesson_id
 from codecheck.runner import run_checked
 from codecheck.shadow.store import ShadowStore
 
@@ -127,7 +130,21 @@ def _setup_repo(ctx, snippet: dict, workdir: Path) -> Path:
     return repo
 
 
-def review_argv(ctx, workdir: Path) -> list[str]:
+def _seed_memory(memory: dict, workdir: Path, repo: str) -> None:
+    """Put the snippet's own lessons, active and well supported, into a store in its workdir."""
+    now = time.time()
+    lessons = []
+    for spec in memory["lessons"]:
+        category = spec.get("category") or ("any" if spec["kind"] == "miss" else "other")
+        scope = Scope(DEFAULT_HOST, repo, spec["path_glob"], spec.get("language", ""), category)
+        lessons.append(Lesson(
+            id=lesson_id(scope, spec["kind"]), scope=scope, kind=spec["kind"], lean=spec.get("lean", ""),
+            statement=spec["statement"], support=4.0, contra=0.0, n_prs=3, confidence=1.0, status="active",
+            first_ts=now - 86400, last_ts=now, expires_ts=now + 86400 * 180, maintainer=True, provenance={"seeded": True}))
+    MemoryDB(workdir / "memory").put_lessons(lessons)
+
+
+def review_argv(ctx, workdir: Path, *, memory: bool = False) -> list[str]:
     cfg = ctx.config.run_pr
     root = plugin_root(ctx.env)
     # Paths are absolute, so never start with '-'; tools and permission mode are validated with the config.
@@ -138,7 +155,11 @@ def review_argv(ctx, workdir: Path) -> list[str]:
                # A user's review.security, review.performance or review.full would add an extra agent to every snippet,
                # and routing would drop the architect from these small changes: the eval measures the fixed panel.
                "CODE_CHECK_REVIEW__SECURITY=0", "CODE_CHECK_REVIEW__PERFORMANCE=0", "CODE_CHECK_REVIEW__FULL=0",
-               "CODE_CHECK_REVIEW__ROUTING__MODE=off"]
+               "CODE_CHECK_REVIEW__ROUTING__MODE=off",
+               # A user's memory settings would put their lessons into every snippet. Only a snippet that carries lessons
+               # of its own (`memory` in its case.json) reads memory, from a store built in its workdir.
+               *(["CODE_CHECK_MEMORY__ENABLED=1", "CODE_CHECK_MEMORY__READ=1", "CODE_CHECK_MEMORY__REVIEWERS=1",
+                  f"CODE_CHECK_MEMORY__STORE={workdir}/memory"] if memory else ["CODE_CHECK_MEMORY__READ=0"])]
     # The prompt comes first: --allowedTools and --add-dir are variadic and would swallow a later positional.
     return ["env", *UNSET_GIT_REPO_VARS, *isolate, claude_bin(ctx), "-p", REVIEW_PROMPT, "--plugin-dir", str(root),
             "--output-format", "json", "--permission-mode", cfg.permission_mode, "--permission-prompts", "none",
@@ -164,7 +185,9 @@ def run_snippet(ctx, snippet: dict, workdir: Path) -> dict:
         repo = _setup_repo(ctx, snippet, workdir)
     except CodeCheckError as e:
         raise CodeCheckError(f"snippet {snippet['name']}: could not build its repository: {e}") from e
-    res = ctx.runner.run(review_argv(ctx, workdir), cwd=repo, timeout=ctx.config.run_pr.timeout_seconds, input="")
+    if snippet.get("memory"):
+        _seed_memory(snippet["memory"], workdir, repo.name)
+    res = ctx.runner.run(review_argv(ctx, workdir, memory=bool(snippet.get("memory"))), cwd=repo, timeout=ctx.config.run_pr.timeout_seconds, input="")
     claude = parse_result(res.stdout, res.returncode, res.stderr)
     got, invalid, error = _findings(ShadowStore(workdir / "shadow"))
     if not claude["ok"]:
