@@ -238,8 +238,16 @@ def test_routing_full_and_docs_defaults(tmp_path):
     assert cfg.codex_models.docs == "gpt-6.2-sol" and cfg.codex_reasoning.docs == "medium"
     routing = cfg.review.routing
     assert (routing.mode, routing.small_max_lines, routing.small_max_files) == ("auto", 40, 3)
-    assert (routing.performance_min_score, routing.max_comment_percent, routing.docs_min_comment_lines) == (3, 3, 3)
+    assert routing.performance_min_score == 3
+    assert not hasattr(routing, "max_comment_percent") and not hasattr(routing, "docs_min_comment_lines")
     assert model_for(cfg.models, "docs") == "sonnet"
+
+
+def test_removed_comment_cap_keys_in_an_old_config_are_ignored_not_errors(tmp_path):
+    repo = tmp_path / "repo"
+    write(repo / ".code-check.toml", "[review.routing]\nmax_comment_percent = 5\ndocs_min_comment_lines = 2\nsmall_max_lines = 10\n")
+    cfg = load_config(repo, tmp_path / "home", {"CODE_CHECK_REVIEW__ROUTING__MAX_COMMENT_PERCENT": "7"})
+    assert cfg.review.routing.small_max_lines == 10
 
 
 def test_routing_is_settable_from_repo_file_and_env(tmp_path):
@@ -251,7 +259,7 @@ def test_routing_is_settable_from_repo_file_and_env(tmp_path):
 
 @pytest.mark.parametrize("text, key", [
     ('[review.routing]\nmode = "sometimes"\n', "review.routing.mode"),
-    ("[review.routing]\nmax_comment_percent = -1\n", "review.routing.max_comment_percent"),
+    ("[review.routing]\nsmall_max_lines = -1\n", "review.routing.small_max_lines"),
 ])
 def test_routing_values_are_validated(tmp_path, text, key):
     repo = tmp_path / "repo"

@@ -182,7 +182,7 @@ def test_codex_capture_redacts_auth_tokens_before_posting(tmp_path):
     }
     runner = CaptureRunner({
         "architect": (0, json.dumps({"findings": [finding]})),
-        "aggregator": (0, json.dumps({"findings": [{**finding, "reviewers": ["architect"]}], "dropped": []})),
+        "aggregator": (0, json.dumps({"findings": [{**finding, "reviewers": ["architect"], "rated_because": None}], "dropped": []})),
     })
     ctx, run_dir, _ = prepare_pr(tmp_path, runner)
     assert execute(ctx)[1]["failed_members"] == {}
@@ -241,6 +241,21 @@ def test_chunk_scoping_and_failed_chunk_invalidate_the_member(tmp_path):
     assert 'Files you own (JSON): ["readme.md"]' in calls["architect-2"]
     assert set(json.loads((run_dir / "ingest.json").read_text())["missing"]) == {"architect"}
     assert not (run_dir / "findings/architect.json").exists()
+
+
+def test_only_the_aggregator_schema_carries_rated_because():
+    from codecheck.core.panel_output import capture_schema, validate_capture
+    agg = capture_schema(True)["properties"]["findings"]["items"]
+    assert agg["properties"]["rated_because"] == {"type": ["string", "null"]} and "rated_because" in agg["required"]
+    rev = capture_schema(False)["properties"]["findings"]["items"]
+    assert "rated_because" not in rev["properties"]
+    finding = {"file": "a.py", "line": 1, "message": "m", "category": "bug", "severity": "warning", "suggestion": None,
+               "reviewers": ["skeptic"]}
+    out = validate_capture({"findings": [{**finding, "rated_because": "lowered: unconfirmed"}], "dropped": []},
+                           capture_schema(True), "aggregator", "/r", {"skeptic"})
+    assert out["findings"][0]["rated_because"] == "lowered: unconfirmed"
+    with pytest.raises(Exception, match="schema"):  # the key is required, null is allowed
+        validate_capture({"findings": [finding], "dropped": []}, capture_schema(True), "aggregator", "/r", {"skeptic"})
 
 
 def test_bad_aggregator_capture_removes_stale_output(tmp_path):

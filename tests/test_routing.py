@@ -68,13 +68,11 @@ def test_sql_files_score_and_comments_do_not():
     assert not go(_mod("src/a.py", ["# for i in x: db.execute(q)", "# for j in y:"])).performance
 
 
-def test_doc_file_or_comment_excess_routes_docs():
+def test_only_a_documentation_file_routes_docs_never_the_comment_ratio():
     assert go(_mod("README.md", ["new line"])).docs
     noisy = ["# why a", "# why b", "# why c", "x = 1", "y = 2"]
-    assert go(_mod("src/a.py", noisy)).docs
-    quiet = ["x = 1"] * 40 + ["# why"]
-    assert not go(_mod("src/a.py", quiet)).docs
-    assert not go(_mod("src/a.py", ["# a", "# b", "x = 1"] + ["y = 1"] * 100)).docs  # under the cap
+    assert not go(_mod("src/a.py", noisy)).docs  # there is no comment cap, so a comment-heavy change adds no reviewer
+    assert not go(_mod("src/a.py", ["x = 1"] * 40 + ["# why"])).docs
 
 
 def test_reasons_are_recorded():
@@ -86,9 +84,10 @@ def test_text_files_alone_do_not_route_docs():
     assert not go(_mod("requirements.txt", ["flask==3.0"], ["flask==2.0"])).docs
 
 
-def test_cap_compares_exact_ratio_not_the_rounded_percent():
-    r = go(_new("a.py", ["# a", "# b", "# c"] + ["y = 1"] * 96))  # 3 of 99 = 3.03%
-    assert r.doc_metrics.over_cap and r.docs
+def test_docs_reason_names_the_files_or_says_none_changed():
+    assert "documentation file" in go(_mod("README.md", ["new line"])).reasons[2]
+    why = go(_new("a.py", ["# a", "x = 1"])).reasons[2]
+    assert why.startswith("docs: not needed") and "cap" not in why and "%" not in why
 
 
 def test_common_manifests_pipelines_and_interfaces_keep_the_architect():

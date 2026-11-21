@@ -20,8 +20,6 @@ class RoutingConfig:
     small_max_lines: int = 40  # at most this many changed lines, in at most small_max_files files, skips the architect
     small_max_files: int = 3
     performance_min_score: int = 3  # score of the performance signals in the added lines that adds the reviewer
-    max_comment_percent: int = 3  # comments may be at most this share of the added lines
-    docs_min_comment_lines: int = 3  # fewer added comment lines than this never route the docs reviewer by ratio
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +163,8 @@ class Config:
 
 
 _FREEFORM = {(table, "per_language") for table in ("models", "codex_models", "codex_reasoning")}
+# Keys that older versions accepted. Ignored so an existing config file keeps loading.
+_REMOVED = {("review", "routing", "max_comment_percent"), ("review", "routing", "docs_min_comment_lines")}
 # Keys (or whole tables) a repository's .code-check.toml may not set.
 REPO_FORBIDDEN = {
     ("state_dir",), ("run_pr",), ("shadow",), ("golden",), ("review", "auto_approve"), ("review", "attribution"), ("review", "label"), ("review", "login"), ("loop", "review_forks"),
@@ -227,6 +227,8 @@ def _merge(base: dict, over: Mapping, path: tuple[str, ...] = ()) -> None:
         here = (*path, key)
         if path in _FREEFORM:
             base[key] = value
+            continue
+        if here in _REMOVED:
             continue
         if key not in base:
             raise ConfigError(f"unknown config key: {'.'.join(here)}")
@@ -339,7 +341,7 @@ def validate(cfg: Config) -> Config:
     routing = cfg.review.routing
     if routing.mode not in ("auto", "off"):
         raise ConfigError("config key review.routing.mode must be \"auto\" or \"off\"")
-    for key in ("small_max_lines", "small_max_files", "performance_min_score", "max_comment_percent", "docs_min_comment_lines"):
+    for key in ("small_max_lines", "small_max_files", "performance_min_score"):
         if getattr(routing, key) < 0:
             raise ConfigError(f"config key review.routing.{key} must not be negative")
     label = cfg.review.label

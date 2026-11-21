@@ -120,7 +120,7 @@ def _performance_signals(diffs: Mapping[str, FileDiff], languages: Mapping[str, 
 
 def route(diffs: Mapping[str, FileDiff], languages: Mapping[str, str | None], cfg: RoutingConfig) -> Routing:
     scans = scan(diffs, languages)
-    metrics = measure(diffs, languages, cfg.max_comment_percent, cfg.docs_min_comment_lines, scans)
+    metrics = measure(diffs, languages, scans)
     if cfg.mode == "off":
         return Routing(True, False, False, ("routing is off: fixed panel",), metrics)
     architect, why_architect = _architect(diffs, cfg)
@@ -132,9 +132,6 @@ def route(diffs: Mapping[str, FileDiff], languages: Mapping[str, str | None], cf
                        else f"performance: not needed, score {score} below {cfg.performance_min_score} ({named})")
     if metrics.doc_files:
         docs, why_docs = True, f"docs: added, {len(metrics.doc_files)} documentation file(s) changed"
-    elif metrics.over_cap:
-        docs = True
-        why_docs = f"docs: added, comments are {metrics.percent}% of added lines (cap {cfg.max_comment_percent}%)"
     else:
-        docs, why_docs = False, f"docs: not needed, comments are {metrics.percent}% of added lines"
+        docs, why_docs = False, "docs: not needed, no documentation file changed"
     return Routing(architect, performance, docs, (why_architect, why_performance, why_docs), metrics)

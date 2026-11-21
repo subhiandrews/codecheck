@@ -3,7 +3,7 @@
 `handoff.json` (SCHEMA 1) holds, from the design's section 3: the run (`run_id`, `skill`, `mode`, `repo`, `pr`,
 `pr_url`, `head_sha`, `tool_version`, `plugin_root`, `prompts_hash` (12 hex chars over the agent and skill
 prompts) and `build_reason` (why they are null), `config_hash`, `models`, `panel`, `blind`), each reviewer's ingest status
-(`reviewers`), the aggregated `findings` (ids and order as `post` gives them, each with its scrubbed message capped at 300 characters), the aggregator's `dropped` list, the
+(`reviewers`), the aggregated `findings` (ids and order as `post` gives them, each with its scrubbed message capped at 300 characters, and its `rated_because` capped the same when the aggregator gave one), the aggregator's `dropped` list, the
 `decision`, transcript `signals` (tool calls and errors, retries, permission denials, turns and output tokens per
 transcript file), `ignored_guidance` lines from the transcripts, the human `comparison` (or `comparison_reason`; `general_comments_reason` says why its general comments are missing, null when fine) with `comparison_mode` (`posted`, `unposted` or null), `head_moved`
 and `pr_state` (`open`, `closed`, `merged`; both null for local runs, on the posted path, for drafts and when the PR fetch

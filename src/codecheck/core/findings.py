@@ -53,12 +53,16 @@ def validate_findings(raw: object, *, reviewer: str, root: str | None = None) ->
             category = "general"
         if suggestion is not None and not isinstance(suggestion, str):
             problems.append("suggestion must be a string")
+        rated_because = item.get("rated_because") if reviewer == "aggregator" else None  # decision 0034: aggregator only
+        if rated_because is not None and not isinstance(rated_because, str):
+            problems.append("rated_because must be a string")
         if problems:
             errors.extend(f"{where}: {p}" for p in problems)
             continue
         message, category = message.strip(), category.strip()
         # Backstop: comments are public, so never let an echoed secret through.
         message = scrub_text(message)
+        rated_because = (scrub_text(rated_because.strip()) or None) if rated_because is not None else None
         if suggestion is not None and scrub_text(suggestion) != suggestion:
             # Scrubbing rewrites code (`X = os.environ["X"]` becomes garbage), so withhold instead.
             suggestion = None
@@ -70,7 +74,7 @@ def validate_findings(raw: object, *, reviewer: str, root: str | None = None) ->
             Finding(
                 file=_clean_path(file, root), line=line, severity=Severity(sev.lower()),
                 category=category, message=message, suggestion=suggestion,
-                reviewers=who,
+                reviewers=who, rated_because=rated_because,
             )
         )
     return findings, errors
@@ -86,7 +90,12 @@ def merge_exact_duplicates(findings: list[Finding]) -> list[Finding]:
         prev = merged[key]
         reviewers = tuple(dict.fromkeys((*prev.reviewers, *f.reviewers)))
         severity = max(prev.severity, f.severity, key=lambda s: s.rank)
-        merged[key] = replace(prev, severity=severity, reviewers=reviewers, suggestion=prev.suggestion or f.suggestion)
+        if prev.severity.rank != f.severity.rank:  # the reasoning belongs to the finding whose severity won
+            rated_because = (prev if prev.severity == severity else f).rated_because
+        else:
+            rated_because = prev.rated_because or f.rated_because
+        merged[key] = replace(prev, severity=severity, reviewers=reviewers, suggestion=prev.suggestion or f.suggestion,
+                              rated_because=rated_because)
     return list(merged.values())
 
 

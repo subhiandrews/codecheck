@@ -51,3 +51,5 @@ Records dated before 2026-11-20 were reconstructed from the original design spec
 - [0030-each-released-version-has-a-changelog-entry.md](0030-each-released-version-has-a-changelog-entry.md): Each released version has a changelog entry
 - [0031-the-aggregator-confirms-the-docs-cap-against-computed-metrics.md](0031-the-aggregator-confirms-the-docs-cap-against-computed-metrics.md): The aggregator confirms the docs cap against computed metrics
 - [0032-deepeval-metrics-are-advisory-and-optional.md](0032-deepeval-metrics-are-advisory-and-optional.md): DeepEval metrics are advisory and optional
+- [0033-the-docs-reviewer-has-no-built-in-comment-cap.md](0033-the-docs-reviewer-has-no-built-in-comment-cap.md): The docs reviewer has no built-in comment cap
+- [0034-the-aggregator-s-reasoning-goes-in-rated-because-not-the-posted-message.md](0034-the-aggregator-s-reasoning-goes-in-rated-because-not-the-posted-message.md): The aggregator's reasoning goes in rated_because, not the posted message

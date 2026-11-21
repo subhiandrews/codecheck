@@ -30,6 +30,7 @@ def capture_schema(aggregator: bool) -> dict:
     }
     if aggregator:
         finding["reviewers"] = REVIEWERS
+        finding["rated_because"] = {"type": ["string", "null"]}  # reasoning about the severity; recorded, never posted
         return _object(findings=_array(_object(**finding)), dropped=_array(_object(
             **location, reviewers=REVIEWERS, reason={**TEXT, "enum": list(DROPPED_REASONS)},
         )))

@@ -132,8 +132,7 @@ def _build(args, ctx, run_id, run_dir) -> dict:
     full = args.full or cfg.review.full
     if full:
         routing = None
-        doc_metrics = measure(diffs, languages_by_path, cfg.review.routing.max_comment_percent,
-                               cfg.review.routing.docs_min_comment_lines)
+        doc_metrics = measure(diffs, languages_by_path)
         reasons = ("full: every reviewer, routing skipped",)
     else:
         routing = route(diffs, languages_by_path, cfg.review.routing)
