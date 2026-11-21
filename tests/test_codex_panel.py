@@ -11,7 +11,7 @@ from fakes import FakeProvider, FakeRunner
 from codecheck.cli import build_context, main
 from codecheck.commands import panel
 from codecheck.config import Config, load_config, model_for
-from codecheck.errors import ConfigError
+from codecheck.errors import CodeCheckError, ConfigError
 
 MEMBERS = ["architect", "pragmatist", "skeptic", "lang-python"]
 RUN_ID = "123456789abc"
@@ -254,7 +254,7 @@ def test_only_the_aggregator_schema_carries_rated_because():
     out = validate_capture({"findings": [{**finding, "rated_because": "lowered: unconfirmed"}], "dropped": []},
                            capture_schema(True), "aggregator", "/r", {"skeptic"})
     assert out["findings"][0]["rated_because"] == "lowered: unconfirmed"
-    with pytest.raises(Exception, match="schema"):  # the key is required, null is allowed
+    with pytest.raises(CodeCheckError, match="schema"):  # the key is required, null is allowed
         validate_capture({"findings": [finding], "dropped": []}, capture_schema(True), "aggregator", "/r", {"skeptic"})
 
 

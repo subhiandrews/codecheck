@@ -142,6 +142,7 @@ def test_aggregator_puts_its_reasoning_in_rated_because_not_in_the_posted_messag
     assert "say why in `rated_because`" in agg and "say why in `message`" not in agg
     assert "never posted" in agg and '"rated_because"' in agg  # the output shape lists it, null when nothing was lowered
     assert "no first-person" in agg and "no note about severity" in agg  # message reads as a reviewer's comment
+    assert "or the step 6 cap)" in agg and "or the cap)" not in agg  # "the cap" alone reads like the removed comment cap
 
 
 def test_reviewers_and_aggregator_get_the_same_length_guidance():
