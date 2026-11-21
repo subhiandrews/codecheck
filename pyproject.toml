@@ -13,6 +13,7 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=9.2.0", "hypothesis>=6.170.15", "ruff>=0.17.4"]
+evals = ["deepeval>=4.3.4,<5"]  # advisory DeepEval metrics in evals/deepeval; not part of the plugin, gates or CI
 
 [project.scripts]
 code-check = "codecheck.cli:main_entry"
@@ -29,4 +30,5 @@ extend-select = ["S"]  # bandit rules; src/ is the code that handles untrusted P
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S"]
+"evals/**/test_*.py" = ["S101"]  # plain asserts in the advisory eval tests
 "src/codecheck/runner.py" = ["S603"]  # the one subprocess wrapper; callers pass argv lists, never a shell

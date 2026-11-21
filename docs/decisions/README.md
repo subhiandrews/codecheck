@@ -50,3 +50,4 @@ Records dated before 2026-11-20 were reconstructed from the original design spec
 - [0029-the-docs-reviewer-is-skeptical-and-capped-per-pr.md](0029-the-docs-reviewer-is-skeptical-and-capped-per-pr.md): The docs reviewer is skeptical and capped per PR
 - [0030-each-released-version-has-a-changelog-entry.md](0030-each-released-version-has-a-changelog-entry.md): Each released version has a changelog entry
 - [0031-the-aggregator-confirms-the-docs-cap-against-computed-metrics.md](0031-the-aggregator-confirms-the-docs-cap-against-computed-metrics.md): The aggregator confirms the docs cap against computed metrics
+- [0032-deepeval-metrics-are-advisory-and-optional.md](0032-deepeval-metrics-are-advisory-and-optional.md): DeepEval metrics are advisory and optional
