@@ -20,7 +20,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import _env  # noqa: F401  (telemetry opt-out, must run before deepeval is imported)
-from anchoring import GOLDEN, STORE
+from anchoring import GOLDEN, STORE, golden_raws, read_json_object, store_raws
 from deepeval.dataset import EvaluationDataset
 from deepeval.test_case import LLMTestCase
 from metrics import default_metrics
@@ -30,36 +30,38 @@ def _case(name: str, meta: dict) -> LLMTestCase:
     return LLMTestCase(input=name, actual_output=f"{len(meta['kept'])} kept findings", name=name, metadata=meta)
 
 
+def _aggregated(raw: dict) -> tuple[list, list]:
+    """The aggregator's kept and dropped lists, or empty lists when the output is missing or oddly shaped."""
+    aggregator = raw.get("aggregator")
+    aggregator = aggregator if isinstance(aggregator, dict) else {}
+    kept, dropped = aggregator.get("findings"), aggregator.get("dropped")
+    return (kept if isinstance(kept, list) else []), (dropped if isinstance(dropped, list) else [])
+
+
 def golden_cases(directory: Path = GOLDEN) -> list[LLMTestCase]:
     cases = []
-    for path in sorted(directory.glob("*.json")):
-        if path.stem.startswith("seed"):  # hand-built, not a real review
-            continue
-        case = json.loads(path.read_text())
-        aggregator = case.get("aggregator") or {}
-        cases.append(_case(f"golden:{path.stem}", {
+    for name, case in golden_raws(directory):
+        kept, dropped = _aggregated(case)
+        cases.append(_case(f"golden:{name}", {
             "source": "golden", "diff": case["diff"], "root": None, "reviewers": case["reviewer_outputs"],
-            "kept": aggregator.get("findings", []), "dropped": aggregator.get("dropped", []), "reviewer_output": None,
+            "kept": kept, "dropped": dropped, "reviewer_output": None,
         }))
     return cases
 
 
 def store_cases(directory: Path = STORE) -> list[LLMTestCase]:
     cases = []
-    for raw_path in sorted(directory.glob("*.raw.json")):
-        run_id = raw_path.name.removesuffix(".raw.json")
-        diff_path = directory / f"{run_id}.diff"
-        raw = json.loads(raw_path.read_text())
-        if not diff_path.is_file() or not isinstance(raw.get("reviewers"), dict):
-            continue
+    for run_id, raw, diff in store_raws(directory):
         handoff_path = directory / f"{run_id}.handoff" / "handoff.json"
-        handoff = json.loads(handoff_path.read_text()) if handoff_path.is_file() else {}
-        status = {name: bool(v.get("output")) for name, v in (handoff.get("reviewers") or {}).items() if isinstance(v, dict)}
-        aggregator = raw.get("aggregator") or {}
+        handoff = (read_json_object(handoff_path) if handoff_path.is_file() else None) or {}
+        reviewers = handoff.get("reviewers")
+        status = {name: bool(v.get("output")) for name, v in (reviewers if isinstance(reviewers, dict) else {}).items()
+                  if isinstance(v, dict)}
+        kept, dropped = _aggregated(raw)
         cases.append(_case(f"store:{run_id}", {
-            "source": "store", "run_id": run_id, "tool_version": handoff.get("tool_version"), "diff": diff_path.read_text(),
-            "root": raw.get("root"), "reviewers": raw["reviewers"], "kept": aggregator.get("findings", []),
-            "dropped": aggregator.get("dropped", []), "reviewer_output": status or None,
+            "source": "store", "run_id": run_id, "tool_version": handoff.get("tool_version"), "diff": diff,
+            "root": raw.get("root"), "reviewers": raw["reviewers"], "kept": kept, "dropped": dropped,
+            "reviewer_output": status or None,
         }))
     return cases
 

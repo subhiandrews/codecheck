@@ -25,16 +25,27 @@ from anchoring import CATEGORIES, check_findings
 from deepeval.metrics import BaseMetric
 from deepeval.test_case import LLMTestCase, SingleTurnParams
 
+# The aggregator's own voice. Phrases that also read as ordinary review prose ("not verified", "I did not") are left
+# out on purpose: none of them appeared in the 20 real process-note messages found when this was written.
 PROCESS_VOICE = re.compile(
-    r"\b(downgraded|lowered from|I could not|I couldn't|I did not|not verified|could not confirm|reviewers said)\b", re.IGNORECASE
+    r"\b(downgraded from|lowered from|I could not|I couldn't|could not confirm|reviewers said)\b", re.IGNORECASE
 )
-COMMENT_CAP = re.compile(
-    r"comments? (are|exceed|cap)|over the cap|comment (lines|density)|cap of 3%|3% cap|added comments", re.IGNORECASE
-)
+# A comment-cap finding is a docs finding that names the cap. Wording like "comments are" or "comment lines" is not
+# enough: a correctness finding about a comment scanner matched it.
+COMMENT_CAP = re.compile(r"\bcap\b", re.IGNORECASE)
+
+
+def _kept(meta: dict) -> list[dict]:
+    return [f for f in meta.get("kept") or [] if isinstance(f, dict)]
 
 
 def _messages(meta: dict) -> list[str]:
-    return [f.get("message", "") for f in meta.get("kept") or [] if isinstance(f, dict)]
+    return [m if isinstance(m := f.get("message", ""), str) else "" for f in _kept(meta)]
+
+
+def _is_comment_cap(finding: dict) -> bool:
+    message = finding.get("message")
+    return finding.get("category", "docs") == "docs" and isinstance(message, str) and bool(COMMENT_CAP.search(message))
 
 
 def _counts(findings) -> int:
@@ -48,6 +59,7 @@ class DeterministicMetric(BaseMetric):
     name = "deterministic"
 
     def __init__(self, threshold: float | None = None) -> None:
+        super().__init__()
         self.threshold = threshold
         self.score = None
         self.success = None
@@ -137,9 +149,9 @@ class NoCommentCapFindings(DeterministicMetric):
         return bool(_messages(meta))
 
     def compute(self, meta: dict) -> tuple[int, int, str]:
-        messages = _messages(meta)
-        hits = sum(bool(COMMENT_CAP.search(m)) for m in messages)
-        return len(messages) - hits, len(messages), f"{hits} comment-cap findings"
+        kept = _kept(meta)
+        hits = sum(_is_comment_cap(f) for f in kept)
+        return len(kept) - hits, len(kept), f"{hits} comment-cap findings"
 
 
 class FindingsFileWritten(DeterministicMetric):

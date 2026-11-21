@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -79,26 +80,60 @@ def summarize(rows: list[dict]) -> dict:
     }
 
 
-def golden_cases(directory: Path = GOLDEN) -> list[tuple[str, str, dict, str | None]]:
+def read_json_object(path: Path) -> dict | None:
+    """The JSON object in `path`, or None (with a note on stderr) when it is unreadable or not an object.
+
+    The shadow store holds files written by a tool that can be killed mid-write, so one bad file must not stop a scorecard.
+    """
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError) as e:  # ValueError covers JSONDecodeError and UnicodeDecodeError
+        print(f"skipping {path.name}: {e}", file=sys.stderr)
+        return None
+    if not isinstance(data, dict):
+        print(f"skipping {path.name}: expected a JSON object", file=sys.stderr)
+        return None
+    return data
+
+
+def golden_raws(directory: Path = GOLDEN) -> list[tuple[str, dict]]:
+    """(name, case) for each golden case with a diff and reviewer outputs. The hand-built `seed*` case is left out."""
     cases = []
     for path in sorted(directory.glob("*.json")):
-        case = json.loads(path.read_text())
-        if not path.stem.startswith("seed"):
-            cases.append((path.stem, case["diff"], case["reviewer_outputs"], None))
+        if path.stem.startswith("seed") or (case := read_json_object(path)) is None:
+            continue
+        if not isinstance(case.get("diff"), str) or not isinstance(case.get("reviewer_outputs"), dict):
+            print(f"skipping {path.name}: no diff or reviewer_outputs", file=sys.stderr)
+            continue
+        cases.append((path.stem, case))
     return cases
 
 
-def store_runs(directory: Path = STORE) -> list[tuple[str, str, dict, str | None]]:
+def store_raws(directory: Path = STORE) -> list[tuple[str, dict, str]]:
+    """(run id, raw outputs, diff text) for each store run that has a diff and a dict of reviewer findings."""
     runs = []
     for raw_path in sorted(directory.glob("*.raw.json")):
         run_id = raw_path.name.removesuffix(".raw.json")
         diff_path = directory / f"{run_id}.diff"
-        if not diff_path.is_file():
+        if not diff_path.is_file() or (raw := read_json_object(raw_path)) is None:
             continue
-        raw = json.loads(raw_path.read_text())
-        if isinstance(raw.get("reviewers"), dict):
-            runs.append((run_id, diff_path.read_text(), raw["reviewers"], raw.get("root")))
+        if not isinstance(raw.get("reviewers"), dict):
+            continue  # a run without reviewer output (an early tool version) has nothing to measure
+        try:
+            diff = diff_path.read_text()
+        except (OSError, ValueError) as e:
+            print(f"skipping {diff_path.name}: {e}", file=sys.stderr)
+            continue
+        runs.append((run_id, raw, diff))
     return runs
+
+
+def golden_cases(directory: Path = GOLDEN) -> list[tuple[str, str, dict, str | None]]:
+    return [(name, case["diff"], case["reviewer_outputs"], None) for name, case in golden_raws(directory)]
+
+
+def store_runs(directory: Path = STORE) -> list[tuple[str, str, dict, str | None]]:
+    return [(run_id, diff, raw["reviewers"], raw.get("root")) for run_id, raw, diff in store_raws(directory)]
 
 
 def main() -> int:

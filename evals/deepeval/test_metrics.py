@@ -64,6 +64,36 @@ def test_comment_cap_findings_are_found_by_their_wording():
     assert metric.measure(_case(meta)) == 0.5 and metric.success is False
 
 
+def test_comment_cap_needs_a_docs_finding_that_names_the_cap():
+    docs = lambda m: {"category": "docs", "message": m}
+    meta = {"kept": [
+        docs("Comment cap exceeded: 5 comment lines out of 51 added lines (9.8%, cap 3%)."),
+        docs("Comments make up 11.2% of the added lines, which is over the 3% cap."),
+        docs("The comments are stale after this rename."),  # about comments, not the cap
+        {"category": "correctness", "message": "comment_flags starts each run with an empty state, so comment lines are miscounted."},
+        {"category": "security", "message": "There is no cap on the request size."},
+    ]}
+    metric = NoCommentCapFindings(threshold=1.0)
+    assert metric.measure(_case(meta)) == 3 / 5 and "2 comment-cap findings" in metric.reason
+
+
+def test_process_voice_ignores_ordinary_review_prose():
+    prose = ["The input is not verified before use.", "I did not see a bounds check here, so a long value overruns it.",
+             "This cap is downgraded in the docs only."]
+    assert NoProcessVoice().measure(_case({"kept": _kept(*prose)})) == 1.0
+    notes = ["Downgraded from warning: unconfirmed.", "Lowered from critical because it is test-only.",
+             "I could not find a caller.", "I couldn't reproduce it.", "The reviewers said it fails on Oracle."]
+    metric = NoProcessVoice()
+    assert metric.measure(_case({"kept": _kept(*notes)})) == 0.0 and "downgraded from" in metric.reason
+
+
+def test_metrics_set_every_attribute_deepeval_defines_on_its_base():
+    from deepeval.metrics import BaseMetric
+    metric = NoProcessVoice()
+    public = [a for a in dir(BaseMetric) if not a.startswith("_") and not callable(getattr(BaseMetric, a, None))]
+    assert [a for a in public if not hasattr(metric, a)] == []  # a new required attribute in DeepEval fails here, not in a run
+
+
 def test_findings_file_written_names_the_reviewers_that_skipped_it():
     metric = FindingsFileWritten(threshold=1.0)
     assert metric.measure(_case({"reviewer_output": {"a": True, "b": False}})) == 0.5

@@ -47,6 +47,22 @@ def test_store_cases_carry_the_run_structure_and_skip_runs_without_a_diff(tmp_pa
     assert meta["kept"][0]["message"] == "a bug" and meta["reviewers"]["skeptic"][0]["line"] == 2
 
 
+def test_one_bad_store_file_does_not_stop_the_scorecard(tmp_path, capsys):
+    _write_store_run(tmp_path, "r1", lines=[2], kept=["a bug"], outputs={"skeptic": True})
+    _write_store_run(tmp_path, "r3", lines=[2], kept=[], outputs={"skeptic": True})
+    (tmp_path / "r3.handoff" / "handoff.json").write_text("{not json")  # unreadable hand-off: score the run without it
+    (tmp_path / "r2.raw.json").write_text('{"reviewers": {"skeptic": [')  # truncated raw output
+    (tmp_path / "r2.diff").write_text(DIFF)
+    (tmp_path / "r4.raw.json").write_text("[]")  # a list where a dict belongs
+    (tmp_path / "r4.diff").write_text(DIFF)
+    cases = {c.name: c for c in store_cases(tmp_path)}
+    assert sorted(cases) == ["store:r1", "store:r3"]
+    assert cases["store:r3"].metadata["reviewer_output"] is None and cases["store:r3"].metadata["tool_version"] is None
+    err = capsys.readouterr().err
+    assert "r2.raw.json" in err and "r4.raw.json" in err and "handoff.json" in err
+    assert len(score(build_dataset(list(cases.values())))) > 0
+
+
 def test_golden_cases_skip_the_hand_built_seed_case(tmp_path):
     body = {"diff": DIFF, "reviewer_outputs": {"skeptic": [{"file": "a.py", "line": 2}]}, "aggregator": {"findings": [], "dropped": []}}
     (tmp_path / "real-case.json").write_text(json.dumps(body))
