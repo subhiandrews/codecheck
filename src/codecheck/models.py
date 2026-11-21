@@ -123,11 +123,14 @@ class Finding:
     suggestion: str | None = None
     reviewers: tuple[str, ...] = ()
     anchor: str = ""
+    rated_because: str | None = None  # the aggregator's reasoning about the severity; recorded, never posted
 
     def to_dict(self) -> dict:
         d = asdict(self)
         d["severity"] = self.severity.value
         d["reviewers"] = list(self.reviewers)
+        if d["rated_because"] is None:
+            del d["rated_because"]
         return d
 
 

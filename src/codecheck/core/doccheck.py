@@ -104,25 +104,17 @@ def comment_flags(language: str, lines: Sequence[str], mid: bool = False) -> lis
 class DocMetrics:
     comment_lines: int
     code_lines: int
-    cap_percent: int
     doc_files: tuple[dict, ...]
     files: tuple[dict, ...]
-    min_comment_lines: int = 0  # fewer comment lines than this never count as over the cap
 
     @property
     def percent(self) -> float:
         total = self.comment_lines + self.code_lines
         return round(100 * self.comment_lines / total, 1) if total else 0.0
 
-    @property
-    def over_cap(self) -> bool:
-        return (self.comment_lines >= max(1, self.min_comment_lines)
-                and 100 * self.comment_lines > self.cap_percent * (self.comment_lines + self.code_lines))
-
     def to_json(self) -> dict:
-        return {"cap_percent": self.cap_percent, "comment_lines_added": self.comment_lines,
-                "code_lines_added": self.code_lines, "comment_percent": self.percent, "over_cap": self.over_cap,
-                "min_comment_lines": self.min_comment_lines,
+        return {"comment_lines_added": self.comment_lines, "code_lines_added": self.code_lines,
+                "comment_percent": self.percent,
                 "doc_files": list(self.doc_files), "files_with_comments": list(self.files)}
 
 
@@ -157,8 +149,7 @@ def scan(diffs: Mapping[str, FileDiff], languages: Mapping[str, str | None]) -> 
     return out
 
 
-def measure(diffs: Mapping[str, FileDiff], languages: Mapping[str, str | None], cap_percent: int,
-            min_comment_lines: int = 0, scans: Scan | None = None) -> DocMetrics:
+def measure(diffs: Mapping[str, FileDiff], languages: Mapping[str, str | None], scans: Scan | None = None) -> DocMetrics:
     scans = scan(diffs, languages) if scans is None else scans
     comments = code = 0
     per_file, doc_files = [], []
@@ -177,4 +168,4 @@ def measure(diffs: Mapping[str, FileDiff], languages: Mapping[str, str | None], 
         if c:
             per_file.append({"path": path, "comment_lines": c, "code_lines": k})
     per_file.sort(key=lambda f: -f["comment_lines"])
-    return DocMetrics(comments, code, cap_percent, tuple(doc_files), tuple(per_file[:10]), min_comment_lines)
+    return DocMetrics(comments, code, tuple(doc_files), tuple(per_file[:10]))

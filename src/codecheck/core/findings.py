@@ -53,12 +53,16 @@ def validate_findings(raw: object, *, reviewer: str, root: str | None = None) ->
             category = "general"
         if suggestion is not None and not isinstance(suggestion, str):
             problems.append("suggestion must be a string")
+        rated_because = item.get("rated_because")
+        if rated_because is not None and not isinstance(rated_because, str):
+            problems.append("rated_because must be a string")
         if problems:
             errors.extend(f"{where}: {p}" for p in problems)
             continue
         message, category = message.strip(), category.strip()
         # Backstop: comments are public, so never let an echoed secret through.
         message = scrub_text(message)
+        rated_because = (scrub_text(rated_because.strip()) or None) if rated_because is not None else None
         if suggestion is not None and scrub_text(suggestion) != suggestion:
             # Scrubbing rewrites code (`X = os.environ["X"]` becomes garbage), so withhold instead.
             suggestion = None
@@ -70,7 +74,7 @@ def validate_findings(raw: object, *, reviewer: str, root: str | None = None) ->
             Finding(
                 file=_clean_path(file, root), line=line, severity=Severity(sev.lower()),
                 category=category, message=message, suggestion=suggestion,
-                reviewers=who,
+                reviewers=who, rated_because=rated_because,
             )
         )
     return findings, errors

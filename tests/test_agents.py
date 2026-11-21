@@ -136,6 +136,22 @@ def test_aggregator_states_severity_mirror_and_cap_rules():
         assert phrase in body, phrase
 
 
+def test_aggregator_puts_its_reasoning_in_rated_because_not_in_the_posted_message():
+    files = render_all(ModelsConfig())
+    agg = files["aggregator.md"]
+    assert "say why in `rated_because`" in agg and "say why in `message`" not in agg
+    assert "never posted" in agg and '"rated_because"' in agg  # the output shape lists it, null when nothing was lowered
+    assert "no first-person" in agg and "no note about severity" in agg  # message reads as a reviewer's comment
+
+
+def test_reviewers_and_aggregator_get_the_same_length_guidance():
+    files = render_all(ModelsConfig())
+    for name in ("skeptic.md", "lang-python.md", "doc-skeptic.md", "aggregator.md"):
+        body = files[name]
+        assert "Lead `message` with the claim in one or two sentences" in body, name
+        assert "400 characters" in body and "never cut a message to fit" in body, name
+
+
 def test_aggregator_reads_context_and_run_files_before_findings():
     body = render_all(ModelsConfig())["aggregator.md"]
     assert body.index("context.json") < body.index("run_files") < body.index("CODE_CHECK.md") < body.index("ingest.json") < body.index("findings/<member>.json")
@@ -183,14 +199,18 @@ def test_performance_agent_uses_its_model_and_calibrated_severities():
     assert "RUN_DIR/existing-comments.md" in body
 
 
-def test_docs_agent_is_skeptical_capped_and_defers_only_to_explicit_project_rules():
+def test_docs_agent_is_skeptical_has_no_built_in_cap_and_defers_only_to_explicit_project_rules():
     files = render_all(ModelsConfig())
     assert "doc-skeptic.md" in files and frontmatter(files["doc-skeptic.md"])["model"] == "sonnet"
     assert frontmatter(render_all(ModelsConfig(docs="opus"))["doc-skeptic.md"])["model"] == "opus"
     body = files["doc-skeptic.md"]
     assert "documentation skeptic" in body and "category `docs`" in body
     assert "limited, precise and current" in body and "Be cynical" in body
-    assert "RUN_DIR/docs-metrics.json" in body and "never recount" in body and "`cap_percent`" in body
+    assert "RUN_DIR/docs-metrics.json" in body and "never recount" in body and "`comment_lines_added`" in body
+    for gone in ("cap_percent", "over_cap", "comment cap", "cap exceeded", "at or under"):
+        assert gone not in body and gone not in files["aggregator.md"], gone
+    assert "docs-metrics" not in files["aggregator.md"]  # it only read the file to confirm a cap finding
+    assert "restates what the code says" in body  # the comment-quality checks stay
     assert "explicit rule about documentation or comments in `CODE_CHECK.md`" in body
     assert "Silence" in body and "Never use `critical`" in body and "do not ask for more of it" in body
     assert "RUN_DIR/existing-comments.md" in body  # the shared rules still apply

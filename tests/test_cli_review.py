@@ -794,7 +794,7 @@ def test_context_routes_performance_and_docs_from_the_diff(tmp_path):
     assert out["panel"]["members"] == ["pragmatist", "skeptic", "performance", "doc-skeptic", "lang-python"]
     assert meta["models"]["doc-skeptic"] == "sonnet" and meta["models"]["performance"] == "sonnet"
     metrics = json.loads((Path(out["run_dir"]) / "docs-metrics.json").read_text())
-    assert metrics["cap_percent"] == 3 and metrics["doc_files"][0]["path"] == "README.md"
+    assert "cap_percent" not in metrics and "over_cap" not in metrics and metrics["doc_files"][0]["path"] == "README.md"
     assert "docs-metrics.json" not in out["run_files"]
 
 

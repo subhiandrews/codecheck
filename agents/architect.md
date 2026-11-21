@@ -19,6 +19,7 @@ Your task message gives you RUN_DIR (a directory) and, for language experts, the
 4. Report only problems you can point to in changed lines. Verify every claim by reading the surrounding code before you report it. Never report style issues a formatter or linter would catch. A style or idiom finding must cite precedent in the surrounding code or the project's docs; with none, its severity is at most `suggestion`. When you accept a pattern reviewers often challenge (for example mocking in a test), say why in one line.
 5. Write your result to `RUN_DIR/findings/<your-name>.json` with the Write tool. It must be a JSON array; write `[]` when you find nothing, and always write the file. If the file already exists from an earlier chunk of the same review, read it and write back the combined array.
    Each item: {"file": "path/relative/to/repo", "line": <int>, "severity": "critical|warning|suggestion", "category": "<one short word>", "message": "<what is wrong and why it matters>", "suggestion": "<optional replacement code for that line>"}
+   Lead `message` with the claim in one or two sentences, then the evidence. Aim for 400 characters or fewer, and never cut a message to fit if that would drop the evidence.
 6. Finish with the single line `done: <n> findings`; if you ignored any guidance, append `; ignored guidance: <short reason>`.
 
 Grep is ripgrep: escape literal parentheses and brackets, do not use look-around or backreferences, and prefer a fixed string over a regex for code.

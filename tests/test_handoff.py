@@ -129,6 +129,27 @@ def test_handoff_local_mode_writes_json_and_md(tmp_path):
     assert out["run_id"] in md and "app.py:2" in md
 
 
+def test_handoff_carries_rated_because_scrubbed_and_capped_but_the_posting_does_not(tmp_path):
+    _, clone = make_origin_and_clone(tmp_path)
+    ctx = make_ctx(tmp_path, clone)
+    enable_handoff(ctx, tmp_path)
+    sh(clone, "checkout", "-b", "feat")
+    commit_file(clone, "app.py", "x = 1\ny = 2\n", "add app")
+    _code, out = call(ctx, "context", "--mode", "local", "--skill", "review-local")
+    secret = "ghp_" + "b" * 36
+    why = f"Lowered from warning: could not confirm it ({secret}). " + "detail " * 80
+    finish_review(ctx, out, {"skeptic": [FINDING]},
+                  {"findings": [{**FINDING, "reviewers": ["skeptic"], "rated_because": why}], "dropped": []})
+    call(ctx, "ingest", "--run", out["run_id"])
+    _code, posted = call(ctx, "post", "--run", out["run_id"])
+    call(ctx, "handoff", "--run", out["run_id"])
+    _folder, data = handoff_files(ctx, out["run_id"])
+    (finding,) = data["findings"]
+    assert finding["rated_because"].startswith("Lowered from warning") and len(finding["rated_because"]) <= 300
+    assert secret not in finding["rated_because"] and finding["message"] == "y is unused"
+    assert "Lowered from" not in json.dumps(posted)  # never part of what is posted
+
+
 def _pr_handoff_run(tmp_path, *, draft=False):
     ctx, provider, pr = pr_setup(tmp_path)
     enable_handoff(ctx, tmp_path)

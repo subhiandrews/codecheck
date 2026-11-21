@@ -29,16 +29,16 @@ def _diff(path, body, header="new file mode 100644\n"):
 def test_measure_counts_only_added_lines_per_language():
     body = "".join(f"+{ln}\n" for ln in ["# a", "x = 1", "y = 2", "z = 3", ""])
     diffs = _diff("a.py", body)
-    m = measure(diffs, {"a.py": "python"}, 3)
+    m = measure(diffs, {"a.py": "python"})
     assert (m.comment_lines, m.code_lines) == (1, 3)
-    assert m.percent == 25.0 and m.over_cap
+    assert m.percent == 25.0
 
 
-def test_measure_ignores_files_without_a_language_and_reports_under_cap():
+def test_measure_ignores_files_without_a_language():
     code = "".join(f"+x{i} = {i}\n" for i in range(40)) + "+# why\n"
     diffs = _diff("a.py", code) | _diff("notes.txt", "+hello\n")
-    m = measure(diffs, {"a.py": "python", "notes.txt": None}, 3)
-    assert (m.comment_lines, m.code_lines) == (1, 40) and not m.over_cap
+    m = measure(diffs, {"a.py": "python", "notes.txt": None})
+    assert (m.comment_lines, m.code_lines) == (1, 40)
 
 
 def test_context_lines_keep_a_docstring_open_but_are_not_counted():
@@ -46,7 +46,7 @@ def test_context_lines_keep_a_docstring_open_but_are_not_counted():
         "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,3 +1,4 @@\n"
         ' """Doc\n+more doc\n """\n x = 1\n'
     )
-    m = measure(parse_diff(text), {"a.py": "python"}, 3)
+    m = measure(parse_diff(text), {"a.py": "python"})
     assert (m.comment_lines, m.code_lines) == (1, 0)
 
 
@@ -60,7 +60,7 @@ def test_doc_paths():
 
 def test_doc_files_report_their_added_lines():
     diffs = _diff("docs/new.md", "+# T\n+body\n")
-    m = measure(diffs, {"docs/new.md": None}, 3)
+    m = measure(diffs, {"docs/new.md": None})
     assert m.doc_files == ({"path": "docs/new.md", "status": "added", "added_lines": 2},)
 
 
@@ -83,9 +83,10 @@ def test_a_run_below_a_multiline_docstring_closes_it():
     assert comment_flags("python", ['"""one"""', "x = 1"], mid=True) == [True, False]  # balanced: nothing is open
 
 
-def test_over_cap_needs_the_minimum_number_of_comment_lines():
+def test_metrics_json_has_counts_and_files_but_no_cap():
     body = "".join(f"+{ln}\n" for ln in ["# why", "x = 1"] + ["y = 2"] * 8)
-    diffs = _diff("a.py", body)
-    assert measure(diffs, {"a.py": "python"}, 3).over_cap
-    m = measure(diffs, {"a.py": "python"}, 3, 3)
-    assert not m.over_cap and m.to_json()["over_cap"] is False
+    m = measure(_diff("a.py", body), {"a.py": "python"})
+    out = m.to_json()
+    assert out["comment_lines_added"] == 1 and out["code_lines_added"] == 9 and out["comment_percent"] == 10.0
+    assert out["files_with_comments"] == [{"path": "a.py", "comment_lines": 1, "code_lines": 9}] and out["doc_files"] == []
+    assert not {"cap_percent", "over_cap", "min_comment_lines"} & set(out)
