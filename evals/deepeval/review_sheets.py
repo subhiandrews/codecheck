@@ -117,15 +117,21 @@ def sample(items: list[dict], kind: str, n: int, seed: int, per_pr: int = 2, *, 
     random.Random(seed).shuffle(pool)  # noqa: S311  (a reproducible sample, not security)
     chosen, per, seen = [], {}, set()
     for item in pool:
+        if len(chosen) >= n:  # checked before adding, so a count of 0 or less gives an empty sheet
+            break
         key = (item["pr"], item["file"], item["message"][:80])
         if per.get(item["pr"], 0) >= per_pr or key in seen:
             continue
         per[item["pr"]] = per.get(item["pr"], 0) + 1
         seen.add(key)
         chosen.append(item)
-        if len(chosen) == n:
-            break
     return chosen
+
+
+def source_summary(chosen: list[dict]) -> str:
+    """How many distinct PRs or local runs a sheet draws from, and how many of those are local runs (no `#number`)."""
+    sources = {i["pr"] for i in chosen}
+    return f"from {len(sources)} PRs or runs, {sum('#' not in str(s) for s in sources)} of them local runs"
 
 
 def diff_window(diff_text: str, path: str, line: int, radius: int = 12) -> list[dict]:
@@ -252,7 +258,7 @@ def main() -> int:
         (args.out_dir / f"{stem}-key.json").write_text(json.dumps({"seed": args.seed, "reason": args.reason, "items": key}, indent=1))
         every = sum(i["kind"] == "drop" and i["reason"] == args.reason for i in items)
         print(f"{every} {args.reason} drops in the store, {len(labelled)} ids already labelled, {len(chosen)} on the new sheet")
-        print(f"from {len({i['pr'] for i in chosen})} PRs or runs, {sum('#' not in str(i['pr']) for i in chosen)} of them local runs")
+        print(source_summary(chosen))
         return 0
     drops = sample(items, "drop", args.drops, args.seed, args.per_pr)
     kept = sample(items, "kept", args.kept, args.seed, args.per_pr)

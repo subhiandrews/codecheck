@@ -9,6 +9,7 @@ from review_sheets import (
     load_items,
     pr_url,
     sample,
+    source_summary,
 )
 
 DIFF = """diff --git a/a.py b/a.py
@@ -122,3 +123,17 @@ def test_build_html_hides_the_aggregator_reason_until_reveal(tmp_path):
     assert 'value="right"' in html and 'value="wrong"' in html
     kept_html = build_html(items, "kept", "Kept")
     assert 'value="worth"' in kept_html
+
+
+def test_sample_of_zero_or_fewer_items_is_empty(tmp_path):
+    for n in range(3):
+        _write_run(tmp_path, f"r{n}", f"o/r#{n}", [], [_drop(n)])
+    items = load_items(tmp_path)
+    assert sample(items, "drop", 0, seed=1) == []
+    assert sample(items, "drop", -2, seed=1) == []
+    assert len(sample(items, "drop", 2, seed=1)) == 2  # a positive count still stops at n
+
+
+def test_source_summary_counts_distinct_local_runs_not_items():
+    chosen = [{"pr": "abc123def456"}, {"pr": "abc123def456"}, {"pr": "o/r#1"}, {"pr": "o/r#1"}]
+    assert source_summary(chosen) == "from 2 PRs or runs, 1 of them local runs"
