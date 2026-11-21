@@ -22,6 +22,7 @@ python3.14 -m venv ~/.venvs/codecheck-evals       # any venv outside the repo wo
 | `scorecard.py` | Runs those metrics over each run as an `LLMTestCase` in an `EvaluationDataset`. |
 | `f1_baseline.py` | For each human comment a golden case's panel missed, reports the furthest pipeline stage that held a finding at the same place (kept, dropped, raw only, same file, not raised). Location matching only, so a nearby finding is a candidate, not proof. Reads `tests/golden`; no model. |
 | `review_sheets.py` | Builds blind labelling sheets (dropped and kept findings, drawn at random with a seed) from your shadow store, with the diff around each finding and the aggregator's reason hidden until you choose. Sheets and the answer key are written outside the repo because they hold finding text. No model. |
+| `routing_ab.py` | Runs the reviewer routing at a git ref and the checkout's over every distinct stored diff and lists where the decision flipped. No model. See "Routing A/B" below. |
 | `_env.py` | Sets DeepEval's telemetry opt-out before it is imported. |
 | `test_*.py` | Tests for the modules above. |
 
@@ -33,3 +34,7 @@ python3.14 -m venv ~/.venvs/codecheck-evals       # any venv outside the repo wo
 - Versions are not a controlled comparison: the pull requests differ and most versions have few runs.
 - A finding that is not on an added line is not necessarily wrong. A finding about a deletion, or about unchanged code the change breaks, can legitimately sit elsewhere.
 - The scorecard measures format and bookkeeping, not whether a finding is true or worth raising. For that, see the judge results in `FAILURE-MODES.md`: the model judges tried so far were not reliable enough to use as metrics.
+
+## Routing A/B
+
+`routing_ab.py` runs the reviewer routing at a git ref (`--base-ref`, default `origin/main`) and the checkout's routing over every distinct diff in your shadow store, and lists the diffs where the performance decision, the architect or the docs reviewer changed. No model, no tokens; it prints counts, run ids and routing reasons only. It says whether routing changed, not whether the change was right: that needs the reviewers' findings on those runs. On the 1.2.3 routing it reproduced 72 distinct diffs, 14 of them turned off and none turned on for performance.
