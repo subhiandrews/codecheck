@@ -113,6 +113,10 @@ code-check eval --live --no-record      # run without recording
 
 The two charts mean different things. The live score is the share of snippets whose expected finding the real panel produced, so it is the one that follows the skills and agents. The calibration score is the judge's agreement with the human labels: it follows the judge, not the reviewers, and moves only when the judge, its prompt or the labels change. Live results vary from run to run, so read the rolling line and check the models column before crediting a prompt change. Runs with `--only`, a custom `--cases` or `--snippets` directory, a skipped run and a failed recording (a warning on stderr, never a changed result) are not part of the trend; `--only` runs stay in the record but out of the report.
 
+### DeepEval metrics (advisory, developer tooling)
+
+`evals/deepeval/` holds deterministic metrics (line anchoring, message length, process notes in kept messages, comment-cap findings, missing findings files) that run over the golden cases or your own shadow store with no model calls. They are an optional `evals` extra, never a gate, not run in CI and not part of the plugin. See `evals/deepeval/README.md` to run them and `evals/deepeval/FAILURE-MODES.md` for what they were built for and which judges did not work.
+
 ## Hand-off rounds (maintainers)
 
 Hand-off folders pile up in `<shadow.store>`. The project skill `.claude/skills/handoff-round/` turns **one** pending hand-off into a pull request: it analyzes the hand-off, writes failing tests first, fixes the tooling (prompts only when a live snippet fails twice), promotes a golden case when every label is backed by human evidence, runs the tests, a review and the evals, opens the PR, waits for CI, merges it with `gh pr merge --squash --admin`, and marks the hand-off analyzed. With nothing pending it prints that and exits, so it is meant for `claude -p` in a loop you write yourself (`scripts/handoff-loop.example.sh` is a starting point; it sleeps and refreshes the plugin between rounds).
