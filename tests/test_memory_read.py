@@ -378,8 +378,11 @@ def test_forget_refuses_bad_and_unknown_ids(tmp_path):
     seeded_db(tmp_path)
     ctx = local_ctx(tmp_path, memory=memory_cfg(tmp_path))
     for bad in ("-rf", "nothex", "../x"):
-        code, out = call(ctx, "memory", "forget", bad) if not bad.startswith("-") else (1, {"error": "argparse"})
-        assert code != 0
+        try:
+            code, _out = call(ctx, "memory", "forget", bad)
+        except SystemExit as e:  # argparse rejects a leading-dash id itself
+            code = e.code
+        assert code not in (0, None), bad
     code, out = call(ctx, "memory", "forget", "0123456789abcdef")
     assert code != 0 and "no lesson" in out["error"]
 

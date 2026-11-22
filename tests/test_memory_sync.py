@@ -292,7 +292,8 @@ def test_an_unreachable_server_is_reported_and_retried(tmp_path, clone, srv, mon
     flaky = Flaky(sync.build_transport(me.ctx), "down")
     monkeypatch.setattr(sync, "build_transport", lambda *a, **k: flaky)
     out = sync.sync(me.ctx, do_pull=False)
-    assert out["ok"] is False and "down" in out["error"] or "down" in out["push"].get("error", "")
+    assert out["ok"] is False
+    assert "down" in out.get("error", "") or "down" in out["push"].get("error", "")
     assert sync.sync(me.ctx, do_pull=False)["ok"]
 
 
