@@ -37,8 +37,8 @@ THREADS_QUERY = (
     "query($owner:String!,$name:String!,$number:Int!,$after:String){"
     "repository(owner:$owner,name:$name){pullRequest(number:$number){"
     "reviewThreads(first:50,after:$after){pageInfo{hasNextPage endCursor} "
-    "nodes{id isResolved isOutdated path line originalLine "
-    "comments(first:100){nodes{databaseId author{login __typename} body createdAt reactions(first:20){nodes{content}}}}}}}}}"
+    "nodes{id isResolved isOutdated resolvedBy{login} path line originalLine "
+    "comments(first:100){nodes{databaseId author{login __typename} authorAssociation body createdAt reactions(first:20){nodes{content}}}}}}}}}"
 )
 # Slim variant for activity checks: the same query without the reactions selection.
 THREADS_QUERY_SLIM = THREADS_QUERY.replace(" reactions(first:20){nodes{content}}", "")
@@ -95,10 +95,12 @@ def _thread(n: dict) -> Thread:
             created_at=c.get("createdAt") or "",
             reactions=tuple(r["content"] for r in (c.get("reactions") or {}).get("nodes", [])),
             is_bot=(c.get("author") or {}).get("__typename") == "Bot",
+            association=str(c.get("authorAssociation") or ""),
         )
         for c in n["comments"]["nodes"]
     )
-    return Thread(n["id"], n["path"], n.get("line") or n.get("originalLine"), n["isResolved"], n["isOutdated"], comments)
+    return Thread(n["id"], n["path"], n.get("line") or n.get("originalLine"), n["isResolved"], n["isOutdated"], comments,
+                  (n.get("resolvedBy") or {}).get("login"))
 
 
 _ANCHOR_REJECTED = re.compile(r"\b422\b|unprocessable|could not be resolved|pull_request_review_thread", re.IGNORECASE)
@@ -166,6 +168,17 @@ class GitHubProvider:
         except ProviderError:
             return None
         return {"true": True, "false": False}.get(out)
+
+    def can_write(self, repo: str, login: str) -> bool | None:
+        """True when `login` may push to `repo` (permission write, maintain or admin). None on any error or doubt."""
+        try:
+            out = self._gh("api", f"repos/{_repo(repo)}/collaborators/{_login(login)}/permission",
+                           "--jq", ".permission").stdout.strip()
+        except ProviderError:
+            return None
+        if out in ("admin", "maintain", "write"):
+            return True
+        return False if out in ("read", "triage", "none") else None
 
     def repo_license(self, repo: str) -> str | None:
         try:

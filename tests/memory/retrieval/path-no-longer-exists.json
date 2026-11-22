@@ -1,0 +1,20 @@
+{
+  "id": "path-no-longer-exists",
+  "description": "A lesson whose path glob matches nothing at the base commit (the directory was removed) is not shown; one whose directory exists is.",
+  "files_at_base": ["app/core/main.py", "app/utils/text.py"],
+  "lessons": [
+    {"name": "legacy-gone", "kind": "finding", "lean": "dispute", "path_glob": "app/legacy/**", "language": "python", "category": "maintainability",
+     "statement": "Style findings in the legacy package were disputed."},
+    {"name": "legacy-gone-miss", "kind": "miss", "path_glob": "app/legacy/**", "language": "python",
+     "statement": "Humans asked about migration of the legacy package."},
+    {"name": "utils-present", "kind": "finding", "lean": "dispute", "path_glob": "app/utils/**", "language": "python", "category": "maintainability",
+     "statement": "Style findings in utils were disputed."}
+  ],
+  "queries": [
+    {"name": "removed-dir-finding", "mode": "findings", "findings": [{"file": "app/legacy/old.py", "category": "style"}],
+     "expect_absent": ["legacy-gone"]},
+    {"name": "removed-dir-diff", "mode": "diff", "paths": ["app/legacy/old.py"], "expect_absent": ["legacy-gone-miss"]},
+    {"name": "present-dir", "mode": "findings", "findings": [{"file": "app/utils/text.py", "category": "style"}],
+     "expect": ["utils-present"], "expect_absent": ["legacy-gone"]}
+  ]
+}

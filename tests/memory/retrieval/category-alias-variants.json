@@ -1,0 +1,16 @@
+{
+  "id": "category-alias-variants",
+  "description": "test and tests, and the other spellings reviewers use, reach the same lesson; an unrelated category does not.",
+  "files_at_base": ["pkg/parser/lexer.py", "pkg/parser/ast.py"],
+  "lessons": [
+    {"name": "parser-tests", "kind": "finding", "lean": "confirm", "path_glob": "pkg/parser/**", "language": "python", "category": "tests",
+     "statement": "Missing tests for new lexer branches were confirmed."}
+  ],
+  "queries": [
+    {"name": "singular-test", "mode": "findings", "findings": [{"file": "pkg/parser/lexer.py", "category": "test"}], "expect": ["parser-tests"]},
+    {"name": "plural-tests", "mode": "findings", "findings": [{"file": "pkg/parser/lexer.py", "category": "tests"}], "expect": ["parser-tests"]},
+    {"name": "upper-case", "mode": "findings", "findings": [{"file": "pkg/parser/lexer.py", "category": "Test-Coverage"}], "expect": ["parser-tests"]},
+    {"name": "testing", "mode": "findings", "findings": [{"file": "pkg/parser/ast.py", "category": "testing"}], "expect": ["parser-tests"]},
+    {"name": "unrelated-category", "mode": "findings", "findings": [{"file": "pkg/parser/lexer.py", "category": "naming"}], "expect_absent": ["parser-tests"]}
+  ]
+}

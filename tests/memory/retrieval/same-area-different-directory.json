@@ -1,0 +1,13 @@
+{
+  "id": "same-area-different-directory",
+  "description": "A lesson about HTTP retries applies to a sibling directory that does retries too; only a semantic retriever can make that link.",
+  "files_at_base": ["src/http/retry.py", "src/rpc/backoff.py"],
+  "lessons": [
+    {"name": "http-retry-miss", "kind": "miss", "path_glob": "src/http/**", "language": "python",
+     "statement": "Humans asked whether retry backoff has a cap and a jitter."}
+  ],
+  "queries": [
+    {"name": "same-directory", "mode": "diff", "paths": ["src/http/retry.py"], "expect": ["http-retry-miss"]},
+    {"name": "sibling-directory-same-topic", "tier": "semantic", "mode": "diff", "paths": ["src/rpc/backoff.py"], "text": "retry loop doubles the backoff delay with no cap and no jitter", "expect": ["http-retry-miss"]}
+  ]
+}

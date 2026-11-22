@@ -2,6 +2,7 @@ import shutil
 from pathlib import Path
 
 from codecheck.commands._common import load_meta
+from codecheck.memory.autocollect import collect_due
 
 NAME = "cleanup"
 HELP = "Remove a run's temporary worktree and its run directory"
@@ -12,6 +13,14 @@ def add_arguments(p) -> None:
 
 
 def run(args, ctx) -> dict:
+    result = _cleanup(args, ctx)
+    if ctx.config.memory.enabled and ctx.config.memory.collect:
+        # Every review skill ends here. Guarded: collection can never change this command's output or exit status.
+        ctx.guarded(collect_due, ctx)
+    return result
+
+
+def _cleanup(args, ctx) -> dict:
     meta = load_meta(ctx, args.run)
     removed = False
     if meta.get("worktree"):

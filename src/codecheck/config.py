@@ -4,11 +4,13 @@ Security-sensitive keys (REPO_FORBIDDEN) cannot come from the repository file: a
 trusted to choose the tools an unattended run gets, where state lives, or whether reviews auto-approve.
 """
 
+import ipaddress
 import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from codecheck.errors import ConfigError
 
@@ -102,6 +104,35 @@ class ShadowConfig:
     handoff: bool = False
 
 
+MEMORY_LEVELS = ("lessons", "evidence", "episodes")
+MEMORY_EMBED_AT = ("client", "server")
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryConfig:
+    """Review memory. Every key is user-only: a reviewed repository cannot choose what is remembered or shared."""
+    enabled: bool = False  # collect evidence and consolidate lessons
+    read: bool = False  # put lessons into reviews (needs enabled)
+    reviewers: bool = False  # also give the reviewers miss lessons (the aggregator gets dispute and confirm lessons)
+    store: str = "~/.local/share/code-check/memory"
+    max_lessons: int = 12
+    max_chars: int = 6000
+    timeout_seconds: int = 3
+    url: str = ""  # shared memory server; "" keeps memory local
+    token_file: str = ""  # file holding the server token
+    ca_file: str = ""  # PEM file of the certificate authority to trust for an https memory.url (a private CA or a self-signed server)
+    share_level: str = "lessons"  # most detail pushed to the server: lessons, evidence or episodes
+    private_level: str = "lessons"  # cap for private repositories
+    share_repos: tuple[str, ...] = ()  # repositories whose memory may be pushed; empty pushes nothing
+    embed_url: str = "http://127.0.0.1:11434"
+    embed_model: str = ""
+    embed_at: str = "client"  # where embeddings are computed: client or server
+    min_similarity: float = 0.60  # least cosine similarity for a semantic match (0 to 1)
+    collect: bool = False  # collect outcomes automatically when a skill finishes
+    half_life_days: int = 90  # evidence weighs half after this many days
+    expire_days: int = 180  # a lesson with no new evidence expires after this many days
+
+
 # Licenses under which a reviewed PR's diff may be committed to the public golden set (lowercase SPDX ids).
 DEFAULT_LICENSES = ("mit", "apache-2.0", "bsd-2-clause", "bsd-3-clause", "isc", "0bsd", "unlicense")
 
@@ -160,6 +191,7 @@ class Config:
     golden: GoldenConfig = field(default_factory=GoldenConfig)
     address: AddressConfig = field(default_factory=AddressConfig)
     run_pr: RunPrConfig = field(default_factory=RunPrConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
 
 
 _FREEFORM = {(table, "per_language") for table in ("models", "codex_models", "codex_reasoning")}
@@ -167,7 +199,7 @@ _FREEFORM = {(table, "per_language") for table in ("models", "codex_models", "co
 _REMOVED = {("review", "routing", "max_comment_percent"), ("review", "routing", "docs_min_comment_lines")}
 # Keys (or whole tables) a repository's .code-check.toml may not set.
 REPO_FORBIDDEN = {
-    ("state_dir",), ("run_pr",), ("shadow",), ("golden",), ("review", "auto_approve"), ("review", "attribution"), ("review", "label"), ("review", "login"), ("loop", "review_forks"),
+    ("state_dir",), ("run_pr",), ("shadow",), ("golden",), ("memory",), ("review", "auto_approve"), ("review", "attribution"), ("review", "label"), ("review", "login"), ("loop", "review_forks"),
     ("address", "test_command"), ("deep_reviewer", "command"),
     ("codex",), ("codex_models",), ("codex_reasoning",),
 }
@@ -217,6 +249,8 @@ def _type_ok(default: object, value: object) -> bool:
         return isinstance(value, bool)
     if isinstance(default, int):
         return isinstance(value, int) and not isinstance(value, bool)
+    if isinstance(default, float):
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
     if isinstance(default, tuple):
         return isinstance(value, list) and all(isinstance(v, str) for v in value)
     return isinstance(value, type(default))
@@ -255,6 +289,11 @@ def _coerce(default: object, raw: str) -> object:
             return int(raw)
         except ValueError as e:
             raise ConfigError(f"cannot read {raw!r} as an integer") from e
+    if isinstance(default, float):
+        try:
+            return float(raw)
+        except ValueError as e:
+            raise ConfigError(f"cannot read {raw!r} as a number") from e
     if isinstance(default, tuple):
         return [p.strip() for p in raw.split(",") if p.strip()]
     return raw
@@ -287,6 +326,8 @@ def _build(cls, data: Mapping):
             kwargs[f.name] = _build(type(dv), value)
         elif isinstance(dv, tuple):
             kwargs[f.name] = tuple(value)
+        elif isinstance(dv, float):
+            kwargs[f.name] = float(value)
         else:
             kwargs[f.name] = value
     return cls(**kwargs)
@@ -333,6 +374,56 @@ def validate_codex(cfg: Config) -> None:
             raise ConfigError(f"config key codex.{key} must be a positive integer")
 
 
+LOOPBACK_NAMES = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def is_loopback_host(host: str) -> bool:
+    """True for localhost or a literal loopback IP address; a name such as 127.evil.com is not loopback."""
+    if host in LOOPBACK_NAMES:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _check_url(key: str, value: str, *, allow_empty: bool) -> None:
+    if not value:
+        if allow_empty:
+            return
+        raise ConfigError(f"config key memory.{key} must not be empty")
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname or ""
+    except ValueError as e:
+        raise ConfigError(f"config key memory.{key} is not a valid URL") from e
+    if parsed.scheme not in ("http", "https") or not host or parsed.username or parsed.password:
+        raise ConfigError(f"config key memory.{key} must be an http(s) URL without credentials")
+    if parsed.scheme == "http" and not is_loopback_host(host):
+        raise ConfigError(f"config key memory.{key} must use https unless it points at the local machine")
+
+
+def validate_memory(m: MemoryConfig) -> None:
+    for key in ("share_level", "private_level"):
+        if getattr(m, key) not in MEMORY_LEVELS:
+            raise ConfigError(f"config key memory.{key} must be one of {', '.join(MEMORY_LEVELS)}")
+    if m.embed_at not in MEMORY_EMBED_AT:
+        raise ConfigError(f"config key memory.embed_at must be one of {', '.join(MEMORY_EMBED_AT)}")
+    for key in ("max_lessons", "max_chars", "timeout_seconds", "half_life_days", "expire_days"):
+        if getattr(m, key) < 1:
+            raise ConfigError(f"config key memory.{key} must be a positive integer")
+    if not 0.0 <= m.min_similarity <= 1.0:
+        raise ConfigError("config key memory.min_similarity must be between 0 and 1")
+    _check_url("url", m.url, allow_empty=True)
+    _check_url("embed_url", m.embed_url, allow_empty=False)
+    for repo in m.share_repos:
+        if not re.fullmatch(r"[A-Za-z0-9_.][A-Za-z0-9_.-]*(/[A-Za-z0-9_.][A-Za-z0-9_.-]*)+", repo):
+            raise ConfigError(f"config key memory.share_repos entries must look like owner/name; got {repo!r}")
+    for key in ("store", "token_file", "ca_file", "embed_model"):
+        if getattr(m, key).startswith("-"):
+            raise ConfigError(f"config key memory.{key} must not start with '-'")
+
+
 def validate(cfg: Config) -> Config:
     for key, value in _role_entries(cfg.models):
         if not isinstance(value, str) or not MODEL_NAME.fullmatch(value):
@@ -353,6 +444,7 @@ def validate(cfg: Config) -> Config:
     for lic in cfg.golden.licenses:
         if not re.fullmatch(r"[a-z0-9.+-]{2,64}", lic):
             raise ConfigError(f"config key golden.licenses must be a list of license ids such as \"mit\"; got {lic!r}")
+    validate_memory(cfg.memory)
     r = cfg.run_pr
     for key in ("review_allowed_tools", "babysit_allowed_tools"):
         for tool in getattr(r, key):

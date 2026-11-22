@@ -219,6 +219,7 @@ def test_gate_paths_patterns_match_expected_files():
         "src/codecheck/commands/ingest.py", "src/codecheck/commands/post.py", "src/codecheck/evals/live.py",
         "src/codecheck/core/panel.py", "src/codecheck/core/chunk.py", "src/codecheck/core/paths.py",
         "src/codecheck/commands/context.py", "src/codecheck/commands/handoff.py", "src/codecheck/commands/eval_run.py",
+        "src/codecheck/memory/server.py",
     ):
         assert matches(path), path
     for path in ("README.md", "tests/test_gates.py", "src/codecheck/cli.py", "src/codecheck/commands/loop.py",

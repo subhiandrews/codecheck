@@ -20,7 +20,7 @@ def run(args, ctx) -> dict:
     if ctx.shadow is not None:
         ctx.guarded(lambda: record_run(
             ctx.shadow, {"run_id": run_id, "skill": "address-comments", "repo": ref.repo, "pr": str(ref),
-                         "head_sha": pr.head_sha, "mode": "pr", "panel": {"members": []}}, "", ctx.config))
+                         "head_sha": pr.head_sha, "pr_author": pr.author, "mode": "pr", "panel": {"members": []}}, "", ctx.config))
     return {
         "run_id": run_id, "pr": str(ref), "head_sha": pr.head_sha, "head_ref": pr.head_ref, "reviewers": reviewers,
         "threads": [

@@ -18,6 +18,7 @@ from codecheck.evals.live import (
     plugin_root,
     run_snippet,
 )
+from codecheck.evals.snippet import snippet_problems
 from codecheck.shadow.store import ShadowStore
 
 REPO = Path(__file__).resolve().parent.parent
@@ -168,8 +169,13 @@ def test_load_snippets_reads_sorted_cases(tmp_path):
 def test_shipped_snippets_load_and_are_marked_calibrated():
     assert DEFAULT_SNIPPETS == REPO / "tests" / "snippets"
     snippets = {s["name"]: s for s in load_snippets(DEFAULT_SNIPPETS)}
-    assert set(snippets) == {"off-by-one", "clean-code", "weaker-access-override", "docs-only-api", "rust-shutdown-race"}
-    assert all(s["calibrated"] is True for n, s in snippets.items() if n != "rust-shutdown-race")
+    assert set(snippets) == {"off-by-one", "clean-code", "weaker-access-override", "docs-only-api", "rust-shutdown-race",
+                             "poisoned-memory-lesson", "memory-dispute-lesson-downgrades-false-positive",
+                             "memory-miss-lesson-surfaces-issue"}
+    uncalibrated = {"rust-shutdown-race", "poisoned-memory-lesson", "memory-dispute-lesson-downgrades-false-positive",
+                    "memory-miss-lesson-surfaces-issue"}
+    assert all(s["calibrated"] is True for n, s in snippets.items() if n not in uncalibrated)
+    assert snippets["poisoned-memory-lesson"]["calibrated"] is False
     race = snippets["rust-shutdown-race"]
     assert race["calibrated"] is False
     assert [e["severity"] for e in race["expected"]] == ["critical"]
@@ -313,6 +319,31 @@ def test_live_cli_runs_each_snippet_once(tmp_path):
 
     code, out = call(ctx, "eval", "--live", "--snippets", str(snippets), "--only", "tiny-bug")
     assert out["passed"] is True and [c["name"] for c in out["cases"]] == ["tiny-bug"]
+
+
+@pytest.mark.usefixtures("git_env")
+def test_a_full_live_run_skips_live_false_snippets_but_only_runs_them(tmp_path):
+    snippets = tmp_path / "snips"
+    _write_snippet(snippets, SNIPPET)
+    _write_snippet(snippets, {**SNIPPET, "name": "hand-run", "live": False})
+    fake = FakeRunner().on(*PROBE, stdout=OK).on_prefix("env", stdout=OK)
+    ctx = _ctx(tmp_path, ReviewingRunner(fake, [FOUND]))
+    _code, out = call(ctx, "eval", "--live", "--snippets", str(snippets))
+    assert [c["name"] for c in out["cases"]] == ["tiny-bug"]
+    _code, out = call(ctx, "eval", "--live", "--snippets", str(snippets), "--only", "hand-run")
+    assert [c["name"] for c in out["cases"]] == ["hand-run"]
+
+
+def test_live_must_be_a_boolean():
+    assert "live must be true or false" in snippet_problems({**SNIPPET, "live": "no"})
+    assert snippet_problems({**SNIPPET, "live": False}) == []
+
+
+def test_the_default_live_set_is_the_snippets_not_marked_live_false():
+    snippets = {s["name"]: s for s in load_snippets(DEFAULT_SNIPPETS)}
+    hand_run = {n for n, s in snippets.items() if s.get("live", True) is False}
+    assert hand_run == {"memory-dispute-lesson-downgrades-false-positive", "memory-miss-lesson-surfaces-issue"}
+    assert snippets["poisoned-memory-lesson"].get("live", True) is True
 
 
 def test_mode_specific_flags_are_refused_in_the_other_mode(tmp_path):

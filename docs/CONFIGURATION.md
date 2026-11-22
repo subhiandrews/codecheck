@@ -4,7 +4,7 @@ Every code-check setting. The README has a minimal example; this is the full ref
 
 Settings are layered, highest precedence first: environment (`CODE_CHECK_<SECTION>__<KEY>`, for example `CODE_CHECK_REVIEW__AUTO_APPROVE=true`), your `~/.config/code-check/config.toml`, the repository's `.code-check.toml`, then the defaults below. Your own settings therefore win over a repository's. Unknown keys and wrong types in files are errors.
 
-A repository's `.code-check.toml` may **not** set the security-sensitive keys `state_dir`, anything under `[run_pr]`, `[shadow]`, `[golden]`, `[codex]`, `[codex_models]` or `[codex_reasoning]`, `review.auto_approve`, `review.attribution`, `review.label`, `review.login`, `loop.review_forks`, `address.test_command` or `deep_reviewer.command`: a repository you review is not trusted to choose what an unattended run may do or execute, where state is written, or whether reviews approve. Such a key in the repository file is an error that names the key; set it in your user file or the environment instead. Model names must match `[A-Za-z0-9._:[\]-]+`, `run_pr.permission_mode` must be one of `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`, and allowed-tool entries and prompts must not start with `-`.
+A repository's `.code-check.toml` may **not** set the security-sensitive keys `state_dir`, anything under `[run_pr]`, `[shadow]`, `[golden]`, `[memory]`, `[codex]`, `[codex_models]` or `[codex_reasoning]`, `review.auto_approve`, `review.attribution`, `review.label`, `review.login`, `loop.review_forks`, `address.test_command` or `deep_reviewer.command`: a repository you review is not trusted to choose what an unattended run may do or execute, where state is written, or whether reviews approve. Such a key in the repository file is an error that names the key; set it in your user file or the environment instead. Model names must match `[A-Za-z0-9._:[\]-]+`, `run_pr.permission_mode` must be one of `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`, and allowed-tool entries and prompts must not start with `-`.
 
 ```toml
 provider = "auto"              # auto (a gitlab.com remote means gitlab, anything else github), "github" or "gitlab"
@@ -59,6 +59,28 @@ handoff = false                # record hand-off data even when shadow.enabled i
 [golden]                       # user config or environment only
 licenses = ["mit", "apache-2.0", "bsd-2-clause", "bsd-3-clause", "isc", "0bsd", "unlicense"]   # `shadow promote --finalize` refuses a repository under any other license
 
+[memory]                       # user config or environment only; `read` and `reviewers` now put lessons into reviews (see MAINTAINING.md, Memory read path)
+enabled = false                # collect evidence and consolidate lessons
+read = false                   # put lessons into reviews (needs enabled; never in a blind hand-off run)
+reviewers = false              # also give the reviewers miss lessons (`context`); the aggregator gets finding lessons (`ingest`) whenever read is on
+store = "~/.local/share/code-check/memory"
+max_lessons = 12               # most lessons shown to one review
+max_chars = 6000               # most characters of lessons shown to one review
+timeout_seconds = 3            # time budget for reading memory; a slow store is skipped, never waited on
+url = ""                       # shared memory server, https unless it is on this machine; "" keeps memory local
+token_file = ""                # file holding the server token
+ca_file = ""                   # PEM file of the authority to trust for an https url (a private CA or a self-signed server); "" uses the system store
+share_level = "lessons"        # most detail pushed to the server: "lessons", "evidence" or "episodes"
+private_level = "lessons"      # the same cap, applied to private repositories
+share_repos = []               # repositories whose memory may be pushed; empty pushes nothing
+embed_url = "http://127.0.0.1:11434"   # Ollama for embeddings, https unless it is on this machine
+embed_model = ""               # an Ollama embedding model; "" keeps retrieval exact-key only (the default)
+embed_at = "client"            # where embeddings are computed: "client" or "server"
+min_similarity = 0.60          # least cosine similarity (0 to 1) for a lesson found by similarity
+collect = false                # collect outcomes automatically when a skill finishes (needs enabled)
+half_life_days = 90            # evidence weighs half after this many days (used by `memory consolidate`)
+expire_days = 180              # evidence counts for nothing after this many days; `memory consolidate` does not store it, `--prune` deletes it
+
 [address]
 test_command = ""              # run before every push; a failure blocks the push
 resolve_fixed_threads = true
@@ -102,3 +124,13 @@ Each posted PR review ends its summary comment with one small line saying it was
 ## Shadow and golden settings (user config or environment only)
 
 `[shadow]` and `[golden]` are listed in the block above. `shadow.enabled` records runs locally, `shadow.store` is where, `shadow.handoff` also records hand-off data (see [MAINTAINING.md](MAINTAINING.md#shadow-mode)), and `golden.licenses` lists the licenses whose diffs may be promoted to golden cases. A repository's `.code-check.toml` cannot set any of them.
+
+## Memory settings (user config or environment only)
+
+`[memory]` is listed in the block above and can only come from your user file or `CODE_CHECK_MEMORY__<KEY>` (for example `CODE_CHECK_MEMORY__ENABLED=1`, `CODE_CHECK_MEMORY__SHARE_REPOS=org/a,org/b`); a repository's `.code-check.toml` containing `[memory]` is an error. `min_similarity` must be between 0 and 1 (a number, not a string). `embed_model`, `embed_at` and `min_similarity` only matter once `embed_model` is set; see [Semantic retrieval](MAINTAINING.md#semantic-retrieval-opt-in-default-off). `share_level` and `private_level` must be `lessons`, `evidence` or `episodes`, `embed_at` must be `client` or `server`, the numeric keys must be positive, and `url` and `embed_url` must be `https` unless they point at `localhost` or `127.x.x.x`. `memory.collect` (with `enabled`, the master switch) makes cleanup collect outcomes and consolidate; `memory.read` (with `reviewers`) puts lessons into reviews as `memory.md`, never in blind runs; with a `url` set, `context` first refreshes the local replica from the server (at most every 10 minutes, within half of `timeout_seconds`, any failure silently keeps the replica), and with `url` and `share_repos` both set, collection pushes after it consolidates. `memory consolidate` is run by hand, works with `enabled = false`, writes `memory.db` inside `store` (directory mode 0700, file 0600) and reads `half_life_days` and `expire_days`.
+
+**Server access keys.** `ca_file` is a PEM file trusted instead of the system store when `url` is `https` (a private CA or a self-signed server); it must not start with `-`, and certificate and host-name verification stay on. `context` pulls the repository being reviewed whenever `url` is set, even when it is not in `share_repos`; that read sends the server only the repository name (`GET /v1/lessons?repo=owner/name`), which its operator can see, and `share_repos` still alone decides what is pushed. The push after a collection is bounded by `timeout_seconds` and abandoned if slower. Server-side settings (token ceilings, `--allow-host`) are in [MAINTAINING.md](MAINTAINING.md#hosting-the-memory-server).
+
+`collect = true` takes effect: when a skill finishes (`cleanup`), reviewed PRs that are due are collected and the shadow store is consolidated into `store`. See "Automatic collection" in MAINTAINING.md.
+
+Shadow records carry who said what: each run records `pr_author`, each reply on a posted finding records a `role`, and each outcome records `resolved_by_role`. A role is `maintainer` (can push to the repository), `author` (the PR author), `contributor`, `self` (code-check's own login) or `unknown`. Write access comes from the host (GitHub: the collaborator permission endpoint; GitLab: project member access level 30 or more); when the host will not say, GitHub's author association is used instead (only OWNER counts as maintainer; COLLABORATOR and MEMBER do not). Shadow collection always resolves roles, even with no `[memory]` setting, which adds a `get_pr` call and one write-access call per distinct commenter to `shadow collect`. Records written before this carry none of these fields and still load.

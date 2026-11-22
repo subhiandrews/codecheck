@@ -25,6 +25,10 @@ def path_ok(rel: object) -> bool:
     return not p.is_absolute() and all(part != ".." and not _is_git_dir_name(part) for part in p.parts)
 
 
+def path_glob_ok(value: object) -> bool:
+    return isinstance(value, str) and (value == "*" or (value.endswith("/**") and path_ok(value[:-3])))
+
+
 def _category_ok(value: object) -> bool:
     if isinstance(value, str):
         return bool(value.strip())
@@ -37,6 +41,19 @@ def _severities_ok(value: object) -> bool:
 
 def _int_line(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 1
+
+
+def _memory_effect_problems(snippet: dict) -> list[str]:
+    """`memory_effect: {off: {expected?, must_not_report?}}`: the memory-off arm's own expectations for `eval --memory-effect`."""
+    effect = snippet["memory_effect"]
+    if not snippet.get("memory"):
+        return ["memory_effect needs memory lessons"]
+    off = effect.get("off") if isinstance(effect, dict) else None
+    if not (isinstance(effect, dict) and set(effect) <= {"off"} and isinstance(off, dict) and set(off) <= {"expected", "must_not_report"}):
+        return ["memory_effect must be {off: {expected?, must_not_report?}}"]
+    arm = {"name": "x", "base": {}, "change": {"x": ""}, "expected": snippet.get("expected", []),
+           "must_not_report": snippet.get("must_not_report", []), **off}
+    return [f"memory_effect.off: {p}" for p in snippet_problems(arm)]
 
 
 def snippet_problems(snippet: object) -> list[str]:
@@ -77,6 +94,19 @@ def snippet_problems(snippet: object) -> list[str]:
                     and (r.get("severity") is None or _severities_ok(r["severity"]))):
                 out.append(f"must_not_report[{i}] needs file, and optionally category, line and severity "
                            f"(a non-empty list of {', '.join(SEVERITIES)})")
+    memory = snippet.get("memory")
+    if memory is not None:
+        lessons = memory.get("lessons") if isinstance(memory, dict) else None
+        if not (isinstance(lessons, list) and lessons and all(
+                isinstance(le, dict) and le.get("kind") in ("miss", "finding") and path_glob_ok(le.get("path_glob"))
+                and isinstance(le.get("statement"), str) and le["statement"].strip()
+                and all(isinstance(le.get(k, ""), str) for k in ("language", "category", "lean"))
+                for le in lessons)):
+            out.append("memory must be {lessons: [{kind, path_glob, statement, language?, category?, lean?}]}")
+    if "memory_effect" in snippet:
+        out += _memory_effect_problems(snippet)
     if "calibrated" in snippet and not isinstance(snippet["calibrated"], bool):
         out.append("calibrated must be true or false")
+    if "live" in snippet and not isinstance(snippet["live"], bool):
+        out.append("live must be true or false")
     return out

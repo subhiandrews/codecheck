@@ -68,7 +68,7 @@ Reviewers run in parallel per chunk of the diff and write findings files. The CL
 
 ## CLI
 
-Every subcommand prints exactly one JSON document, errors included. Run `code-check --help` or `code-check <command> --help` for flags.
+Every subcommand prints exactly one JSON document, errors included, except `memory serve`, which prints one JSON line when it starts listening and then runs until stopped (see [Hosting the memory server](docs/MAINTAINING.md#hosting-the-memory-server)). Run `code-check --help` or `code-check <command> --help` for flags.
 
 | Group | Commands |
 |---|---|
@@ -76,7 +76,7 @@ Every subcommand prints exactly one JSON document, errors included. Run `code-ch
 | Address comments | `status`, `workspace`, `threads`, `commit`, `push`, `reply`, `resolve`, `request-review`, `checks`, `check-log`, `attempt` |
 | Unattended | `list-work`, `mark-done`, `run-pr --mode review\|babysit --pr REF`, `loop --mode review\|babysit` |
 | Setup | `doctor`, `gen-agents --out agents`, `gen-skills --out codex/skills` |
-| Developer | `shadow` (collect, export-golden, record-verdict), `eval --replay\|--live\|--calibrate\|--history` |
+| Developer | `shadow` (collect, export-golden, record-verdict), `memory measure`, `memory report`, `memory consolidate`, `memory collect [--all] [--dry-run]`, `memory list`, `memory forget`, `memory embed [--rebuild]`, `memory serve\|token\|sync\|status`, `eval --replay\|--live\|--calibrate\|--history\|--memory-retrieval\|--memory-effect` |
 
 Loops: `/loop 15m /code-check:review-pr`, `/loop 10m /code-check:babysit-pr`, `/loop 2m /code-check:review-local`. Each iteration handles at most `loop.max_prs_per_iteration` PRs, one headless `claude -p` process each, and retries a failing PR up to 3 attempts per fingerprint.
 
@@ -103,7 +103,7 @@ aggregator = "opus"
 language_experts = "haiku"
 ```
 
-A repository's `.code-check.toml` cannot set `state_dir`, `[run_pr]`, `[shadow]`, `[golden]`, `[codex]`, `[codex_models]`, `[codex_reasoning]`, `review.auto_approve`, `review.attribution`, `review.label`, `review.login`, `loop.review_forks`, `address.test_command` or `deep_reviewer.command`: a repository you review is not trusted to decide what an unattended run may do. Set those in your user file or the environment. After changing `[models]`, re-run the installer or `code-check gen-agents --out agents`. Every key, with defaults: [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+A repository's `.code-check.toml` cannot set `state_dir`, `[run_pr]`, `[shadow]`, `[golden]`, `[memory]`, `[codex]`, `[codex_models]`, `[codex_reasoning]`, `review.auto_approve`, `review.attribution`, `review.label`, `review.login`, `loop.review_forks`, `address.test_command` or `deep_reviewer.command`: a repository you review is not trusted to decide what an unattended run may do. Set those in your user file or the environment. After changing `[models]`, re-run the installer or `code-check gen-agents --out agents`. Every key, with defaults: [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
 ### CODE_CHECK.md
 

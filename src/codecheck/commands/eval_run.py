@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 
 from codecheck.errors import CodeCheckError
-from codecheck.evals import history
+from codecheck.evals import history, memory_retrieval, memory_semantic
 from codecheck.evals.golden import DEFAULT_CASES, run_replay
 from codecheck.evals.judge import run_calibration
 from codecheck.evals.live import (
@@ -17,6 +17,8 @@ from codecheck.evals.live import (
     run_snippet,
     unreachable_reason,
 )
+from codecheck.evals.memory_effect import run_effect
+from codecheck.evals.memory_retrieval import run_retrieval
 
 NAME = "eval"
 HELP = "Evaluate the review pipeline against the golden cases or live snippets (developer tooling)"
@@ -31,6 +33,10 @@ def add_arguments(p) -> None:
     mode.add_argument("--calibrate", action="store_true",
                       help="ask the judge model about every human-labelled golden finding and report its agreement "
                            "with the humans (local only; costs tokens)")
+    mode.add_argument("--memory-retrieval", action="store_true",
+                      help="score memory retrieval (recall@5, MRR) over tests/memory/retrieval; no model; advisory, never a gate")
+    mode.add_argument("--memory-effect", action="store_true",
+                      help="review each memory snippet twice, memory off then on, and report what changed (local only; costs tokens; advisory)")
     mode.add_argument("--history", action="store_true",
                       help="rebuild docs/eval-history.md (the score trend) from docs/eval-history.jsonl; no model, no network")
     p.add_argument("--no-record", action="store_true",
@@ -42,7 +48,9 @@ def add_arguments(p) -> None:
     p.add_argument("--only", default=None, metavar="NAME",
                    help="--live: run just this snippet; --calibrate: just this golden case id")
     p.add_argument("--if-reachable", action="store_true",
-                   help="--live: when no model is reachable, report a skip instead of failing")
+                   help="--live, --memory-effect, --memory-retrieval: when no model (or retriever backend) is reachable, report a skip instead of failing")
+    p.add_argument("--retriever", default=None, metavar="NAME",
+                   help="--memory-retrieval: score just this retriever (default: every registered one)")
 
 
 def _dir(ctx, given: Path | None, default: Path, what: str) -> Path:
@@ -65,7 +73,27 @@ def _record(ctx, mode: str, result: dict, only: str | None) -> None:
         print(f"eval history: appended to {path} and rebuilt {path.with_name(history.REPORT)}; commit both", file=sys.stderr)
 
 
+def _run_memory(args, ctx) -> dict:
+    """The advisory memory evals (decision 0045): nothing here is recorded in the history or gates anything."""
+    if args.memory_retrieval:
+        if (args.snippets, args.only) != (None, None) or args.no_record:
+            raise CodeCheckError("--memory-retrieval takes only --cases, --retriever and --if-reachable")
+        memory_semantic.register(ctx)  # only with memory.embed_model set; available only while the embedder answers
+        directory = _dir(ctx, args.cases, memory_retrieval.DEFAULT_CASES, "cases")
+        if args.cases is None and not any(directory.glob("*.json")):
+            # an installed copy has no tests/ directory: running zero cases and passing would hide that
+            raise CodeCheckError(f"no retrieval cases found in {directory}; run from a checkout or pass --cases DIR")
+        return run_retrieval(directory, args.retriever, args.if_reachable)
+    if args.cases is not None or args.retriever is not None or args.no_record:
+        raise CodeCheckError("--memory-effect takes only --snippets, --only and --if-reachable")
+    return run_effect(ctx, _dir(ctx, args.snippets, DEFAULT_SNIPPETS, "snippets"), args.only, args.if_reachable)
+
+
 def run(args, ctx) -> dict:
+    if args.retriever is not None and not args.memory_retrieval:
+        raise CodeCheckError("--retriever applies to --memory-retrieval only")
+    if args.memory_retrieval or args.memory_effect:
+        return _run_memory(args, ctx)
     if args.history:
         if (args.cases, args.snippets, args.only) != (None, None, None) or args.if_reachable or args.no_record:
             raise CodeCheckError("--history takes no other options")
@@ -104,6 +132,8 @@ def run_live(ctx, directory: Path, only: str | None, if_reachable: bool) -> dict
         if only not in names:
             raise CodeCheckError(f"unknown snippet {only!r}; known: {', '.join(names) or 'none'}")
         snippets = [s for s in snippets if s["name"] == only]
+    else:  # a full run skips snippets marked "live": false; --only and --memory-effect still run them
+        snippets = [s for s in snippets if s.get("live", True)]
     if not snippets:
         return {"passed": True, "cases": []}
     reason = unreachable_reason(ctx)

@@ -1,0 +1,51 @@
+{
+  "name": "memory-dispute-lesson-downgrades-false-positive",
+  "calibrated": false,
+  "live": false,
+  "memory": {
+    "lessons": [
+      {
+        "kind": "finding",
+        "lean": "dispute",
+        "path_glob": "app/worker/**",
+        "language": "python",
+        "category": "performance",
+        "statement": "Findings about a blocking time.sleep in retry helpers under app/worker/ were disputed by maintainers: these helpers only run in dedicated worker threads, where waiting is intended."
+      },
+      {
+        "kind": "finding",
+        "lean": "dispute",
+        "path_glob": "app/worker/**",
+        "language": "python",
+        "category": "concurrency",
+        "statement": "Findings about a blocking time.sleep in retry helpers under app/worker/ were disputed by maintainers: these helpers only run in dedicated worker threads, where waiting is intended."
+      }
+    ]
+  },
+  "memory_effect": {
+    "off": {
+      "must_not_report": []
+    }
+  },
+  "base": {
+    "app/worker/retry.py": "\"\"\"Retry helper for background jobs.\"\"\"\nimport time\n\n\ndef run_once(job):\n    return job()\n"
+  },
+  "change": {
+    "app/worker/retry.py": "\"\"\"Retry helper for background jobs.\"\"\"\nimport time\n\n\ndef run_once(job):\n    return job()\n\n\ndef run_with_retry(job, attempts=3):\n    \"\"\"Run job, pausing between failures; re-raise the last error. `attempts` is the total number of tries.\"\"\"\n    last = None\n    for i in range(attempts - 1):\n        try:\n            return job()\n        except OSError as exc:\n            last = exc\n            time.sleep(2 ** i)\n    raise last\n"
+  },
+  "expected": [
+    {
+      "file": "app/worker/retry.py",
+      "line": 12,
+      "category": ["correctness", "bug", "logic", "off-by-one", "boundary", "error-handling"],
+      "severity": "warning"
+    }
+  ],
+  "must_not_report": [
+    {
+      "file": "app/worker/retry.py",
+      "line": 17,
+      "severity": ["warning", "critical"]
+    }
+  ]
+}

@@ -13,6 +13,7 @@ from codecheck.core.render import render_existing
 from codecheck.core.routing import route
 from codecheck.core.state import ensure_private_dir, local_fingerprint
 from codecheck.errors import CodeCheckError
+from codecheck.memory.inject import REVIEWERS, safe_build
 from codecheck.runids import new_run_id
 from codecheck.shadow.recorder import record_run
 from codecheck.vcs.sync import sync_base
@@ -41,6 +42,15 @@ def run(args, ctx) -> dict:
     except BaseException:
         shutil.rmtree(run_dir, ignore_errors=True)  # no half-built run without context.json
         raise
+
+
+def _memory_queries(cfg, parsed, reviewable) -> list:
+    """Similarity queries (a summary of each file's added lines) for `memory.embed_model`; nothing when it is empty."""
+    if not cfg.memory.embed_model:
+        return []
+    from codecheck.memory.semantic import diff_queries
+
+    return diff_queries(parsed, reviewable)
 
 
 def _build(args, ctx, run_id, run_dir) -> dict:
@@ -96,7 +106,7 @@ def _build(args, ctx, run_id, run_dir) -> dict:
         guidance = from_base(ctx.git, sync.base_ref)  # base branch only: a PR cannot change the rules it is judged by
         root = expand_path(cfg.state_dir) / "worktrees" / run_id
         root.parent.mkdir(parents=True, exist_ok=True)
-        meta.update(root=str(root), head_sha=ctx.git.rev_parse(local_ref), pr=str(ref), repo=ref.repo,
+        meta.update(root=str(root), head_sha=ctx.git.rev_parse(local_ref), pr=str(ref), repo=ref.repo, pr_author=pr.author,
                     title=pr.title, description=(pr.body or "")[:4000], fingerprint=None, local_key=None, worktree=True)
 
     parsed = parse_diff(diff)
@@ -109,6 +119,11 @@ def _build(args, ctx, run_id, run_dir) -> dict:
         (run_dir / "CODE_CHECK.md").write_text(guidance.text, encoding="utf-8")
     meta["guidance"] = guidance.to_meta() if guidance else None
     meta["run_files"] = [n for n in ("CODE_CHECK.md", "existing-comments.md") if (run_dir / n).is_file()]
+    # Lessons for the reviewers: misses keyed on the diff. Off by default, withheld from blind runs, never fatal.
+    meta["memory"] = safe_build(ctx, run_dir, stage=REVIEWERS, repo=meta["repo"], base_ref=sync.base_ref, blind=blind,
+                                paths=reviewable, queries=lambda: _memory_queries(cfg, parsed, reviewable))
+    if meta["memory"].get("file"):
+        meta["run_files"].append(meta["memory"]["file"])
     meta["replies"] = replies
     meta["existing_comments"] = existing_comments
     meta["existing_comments_error"] = existing_comments_error
@@ -168,6 +183,8 @@ def _build(args, ctx, run_id, run_dir) -> dict:
             "base_warning": sync.warning, "files": len(files), "chunks": chunks, "panel": meta["panel"],
             "guidance": meta["guidance"], "run_files": meta["run_files"], "replies": replies, "existing_comments": existing_comments,
             "existing_comments_error": existing_comments_error}
+    if cfg.memory.enabled:
+        out["memory"] = meta["memory"]  # absent with memory off, so every command's output is as it was
     if handoff:
         out.update(handoff=True, blind=blind)
     return out

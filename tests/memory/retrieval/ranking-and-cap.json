@@ -1,0 +1,18 @@
+{
+  "id": "ranking-and-cap",
+  "description": "With many matching lessons the best-supported one comes first and the others still fit in the top five.",
+  "files_at_base": ["a/x/f.py", "b/x/f.py", "c/x/f.py", "d/x/f.py", "e/x/f.py", "f/x/f.py"],
+  "lessons": [
+    {"name": "l-a", "kind": "miss", "path_glob": "a/x/**", "language": "python", "support": 2, "statement": "Humans asked about area a."},
+    {"name": "l-b", "kind": "miss", "path_glob": "b/x/**", "language": "python", "support": 2, "statement": "Humans asked about area b."},
+    {"name": "l-c", "kind": "miss", "path_glob": "c/x/**", "language": "python", "support": 2, "statement": "Humans asked about area c."},
+    {"name": "l-d", "kind": "miss", "path_glob": "d/x/**", "language": "python", "support": 2, "statement": "Humans asked about area d."},
+    {"name": "l-e", "kind": "miss", "path_glob": "e/x/**", "language": "python", "support": 2, "statement": "Humans asked about area e."},
+    {"name": "l-f", "kind": "miss", "path_glob": "f/x/**", "language": "python", "support": 2, "statement": "Humans asked about area f."}
+  ],
+  "queries": [
+    {"name": "five-areas-at-once", "mode": "diff", "paths": ["a/x/f.py", "b/x/f.py", "c/x/f.py", "d/x/f.py", "e/x/f.py"],
+     "expect": ["l-a", "l-b", "l-c", "l-d", "l-e"], "expect_absent": ["l-f"]},
+    {"name": "one-area", "mode": "diff", "paths": ["f/x/f.py"], "expect": ["l-f"], "expect_absent": ["l-a"]}
+  ]
+}

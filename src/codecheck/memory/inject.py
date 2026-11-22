@@ -1,0 +1,176 @@
+"""Build `memory.md` for a review without ever breaking it.
+
+`safe_build` is the only entry point the review commands use. It catches everything, enforces `memory.timeout_seconds`
+and returns a small dict that says what happened (`read`, `reason`, and the lesson ids when a file was written). A
+corrupt store, a missing git ref, a bug or a slow disk costs the review nothing but its memory.
+"""
+
+import threading
+import time
+from collections.abc import Callable, Iterable, Sequence
+from pathlib import Path
+
+from codecheck.config import expand_path
+from codecheck.memory.db import MemoryDB
+from codecheck.memory.render import render_memory
+from codecheck.memory.retrieve import finding_lessons, merge_ranked, miss_lessons
+
+FILE_NAME = "memory.md"
+
+REVIEWERS = "reviewers"
+AGGREGATOR = "aggregator"
+
+
+def _gate(cfg, stage: str, blind: bool) -> str | None:
+    """Why nothing should be read, or None when memory applies to this stage."""
+    if not cfg.enabled:
+        return "disabled"
+    if not cfg.read:
+        return "read off"
+    if blind:
+        return "blind"  # hand-off runs stay independent of everything a human said (decision 0008)
+    if stage == REVIEWERS and not cfg.reviewers:
+        return "reviewers off"
+    return None
+
+
+def _build(ctx, *, stage: str, repo: str, base_ref: str, paths: Iterable[str],
+           findings: Iterable[tuple[str, object]], queries: Sequence = (),
+           sem: dict | None = None, deadline: float | None = None,
+           partial: dict | None = None) -> tuple[str, list[str]] | str:
+    """The text and lesson ids, or a reason nothing is written. Runs in a worker thread under the time budget.
+
+    `sem` receives `semantic` ("ok" or "fallback: <reason>") when a similarity lookup was tried. `deadline` (a
+    `time.monotonic()` value) bounds the semantic stage by what is left of the budget. `partial` receives the exact-key
+    lessons before the semantic stage starts, so a caller that gave up waiting can still use them."""
+    cfg = ctx.config.memory
+    db = MemoryDB(expand_path(cfg.store))
+    if not db.exists():
+        return "no store"
+    files = ctx.git.list_files(base_ref)
+    if stage == REVIEWERS:
+        lessons = miss_lessons(db, repo, paths, files, cfg.max_lessons)
+    else:
+        lessons = finding_lessons(db, repo, findings, files, cfg.max_lessons)
+    if partial is not None:
+        partial["lessons"] = list(lessons)
+    if cfg.embed_model and queries:  # optional second stage: lessons found by similarity, after the exact-key hits
+        from codecheck.memory import semantic
+
+        kind = "miss" if stage == REVIEWERS else "finding"
+        lessons = merge_ranked(db, repo, kind, lessons, semantic.ranked_for(ctx, db, repo, list(queries), kind, sem, deadline=deadline), files,
+                               cfg.max_lessons)
+    return _render(cfg, db, stage, lessons)
+
+
+def _render(cfg, db: MemoryDB, stage: str, lessons: Sequence) -> tuple[str, list[str]] | str:
+    if not lessons:
+        return "no lessons"
+    evidence = {le.id: db.evidence(lesson_id=le.id) for le in lessons}
+    text = render_memory(lessons, evidence, for_aggregator=stage == AGGREGATOR, max_lessons=cfg.max_lessons,
+                         max_chars=cfg.max_chars)
+    return text, [le.id for le in lessons]
+
+
+def _pull_replica(ctx, stage: str, budget: float, repo: str | None = None) -> dict | None:
+    """Refresh the local replica from the shared server before the reviewers read it. Never raises, never waits past
+    half of `memory.timeout_seconds` (the build keeps the rest), and a failure just leaves the replica as it is.
+
+    Only for the reviewers stage (the aggregator runs after `context` pulled), only with a configured `memory.url`.
+    Blind runs never get here: `_gate` returns first (and `safe_build` pulls for a `reviewers off` gate only)."""
+    try:
+        if stage != REVIEWERS or not ctx.config.memory.url:
+            return None
+        from codecheck.memory import sync
+        box: dict = {}
+
+        def work() -> None:
+            try:
+                # the repository under review is pulled even when it is not in memory.share_repos (read-only; the only
+                # thing sent is its name). share_repos still gates every push.
+                box["out"] = sync.pull_if_stale(ctx, repos=[repo]) if repo else sync.pull_if_stale(ctx)
+            except BaseException as e:  # noqa: BLE001 - nothing in the worker may escape
+                box["out"] = {"pulled": False, "error": type(e).__name__}
+
+        t = threading.Thread(target=work, name="code-check-memory-pull", daemon=True)
+        t.start()
+        t.join(budget / 2)
+        if t.is_alive():
+            sync.note_pull_failure(ctx)  # the daemon worker dies with the process: stamp the failure here so the backoff holds
+            return {"pulled": False, "reason": "timeout"}
+        out = box.get("out") or {}
+        return {k: out[k] for k in ("pulled", "reason", "error") if k in out}
+    except Exception as e:  # noqa: BLE001
+        return {"pulled": False, "error": type(e).__name__}
+
+
+def safe_build(ctx, run_dir: Path, *, stage: str, repo: str | None, base_ref: str | None, blind: bool,
+               paths: Iterable[str] = (), findings: Iterable[tuple[str, object]] = (), queries: Sequence | Callable[[], Sequence] = ()) -> dict:
+    """Write `run_dir/memory.md` when there is something to say. Never raises.
+
+    Returns `{"read": False, "reason": ...}` or `{"read": True, "reason": "ok", "stage", "lessons", "ids", "chars"}`;
+    `file` is set exactly when memory.md was written. With `memory.embed_model` set, `semantic` is "ok" or
+    "fallback: <reason>" (timeout, unreachable, model changed, refused, error): why similarity search gave nothing."""
+    try:
+        cfg = ctx.config.memory
+        why = _gate(cfg, stage, blind)
+        if why == "reviewers off" and repo:
+            # The aggregator still reads the replica later in the run, and `context` is the only stage that pulls: refresh it
+            # now, once, under the same budget. Blind runs and disabled or read-off configurations never get here.
+            pulled = _pull_replica(ctx, stage, max(float(cfg.timeout_seconds), 0.0), repo)
+            return {"read": False, "reason": why, **({"pull": pulled} if pulled else {})}
+        if why:
+            return {"read": False, "reason": why}
+        if not repo or not base_ref:
+            return {"read": False, "reason": "no repository or base"}
+        started = time.monotonic()
+        budget = max(float(cfg.timeout_seconds), 0.0)
+        pull = _pull_replica(ctx, stage, budget, repo)
+        box: dict = {}
+        sem: dict = {}
+        partial: dict = {}
+        deadline = started + budget
+
+        def done(result: dict) -> dict:
+            if sem.get("semantic"):
+                result["semantic"] = sem["semantic"]  # only present when memory.embed_model is set and a lookup was tried
+            if pull:
+                result["pull"] = pull  # only present when memory.url is set
+            return result
+
+        def work() -> None:
+            try:
+                qs = queries() if callable(queries) else queries  # a callable runs here, inside the guard and the budget
+                box["out"] = _build(ctx, stage=stage, repo=repo, base_ref=base_ref, paths=list(paths), findings=list(findings),
+                                  queries=list(qs), sem=sem, deadline=deadline, partial=partial)
+            except BaseException as e:  # noqa: BLE001 - nothing in the worker may escape
+                box["error"] = f"{type(e).__name__}: {e}"[:200]
+
+        worker = threading.Thread(target=work, name="code-check-memory", daemon=True)
+        worker.start()
+        worker.join(max(budget - (time.monotonic() - started), 0.0))  # the pull and the build share one budget
+        if worker.is_alive():
+            exact = partial.get("lessons")
+            if exact:  # the semantic stage overran: keep the exact-key lessons already computed, and say why
+                try:
+                    out = _render(cfg, MemoryDB(expand_path(cfg.store)), stage, exact)
+                except Exception:  # noqa: BLE001
+                    out = None
+                if isinstance(out, tuple):
+                    sem["semantic"] = "fallback: timeout"
+                    box["out"] = out
+            if "out" not in box:
+                return done({"read": False, "reason": "timeout"})
+        if "error" in box:
+            return done({"read": False, "reason": "error", "error": box["error"]})
+        out = box.get("out")
+        if isinstance(out, str):
+            return done({"read": False, "reason": out})
+        text, ids = out
+        (run_dir / FILE_NAME).write_text(text, encoding="utf-8")
+        return done({"read": True, "reason": "ok", "stage": stage, "lessons": len(ids), "ids": ids, "chars": len(text),
+                     "file": FILE_NAME})
+    except BaseException as e:
+        if isinstance(e, KeyboardInterrupt):
+            raise
+        return {"read": False, "reason": "error", "error": f"{type(e).__name__}: {e}"[:200]}

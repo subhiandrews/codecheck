@@ -65,6 +65,12 @@ class Git:
         out = self._raw("ls-files", "--others", "--exclude-standard", "-z")
         return [p for p in out.split("\0") if p]
 
+    def list_files(self, ref: str) -> list[str]:
+        """Every path in the tree at `ref` (files, symlinks and submodules alike); an unknown ref gives an empty list."""
+        _safe(ref)
+        res = self._run("ls-tree", "-r", "--name-only", "--full-tree", "-z", ref)
+        return [p for p in res.stdout.split("\0") if p] if res.returncode == 0 else []
+
     def local_diff(self, base_sha: str) -> str:
         _safe(base_sha)
         parts = [self._raw("diff", "--no-color", "--no-ext-diff", base_sha)]

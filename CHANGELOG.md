@@ -2,6 +2,15 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.3.0]
+
+### Added
+- Review memory is off by default. When on, reviews learn from how past findings fared and keep the lessons locally.
+- With `memory.read` on, reviewers see relevant lessons; hand-off runs never do.
+- A team can share lessons through `code-check memory serve`, `memory sync` and `memory status`.
+- Optional smarter lesson matching with a local Ollama model (`memory.embed_model`); it falls back to exact matching if unavailable.
+- Advisory evals to measure memory: `eval --memory-retrieval`, `eval --memory-effect` and `memory report`.
+
 ## [1.2.3]
 
 ### Changed
