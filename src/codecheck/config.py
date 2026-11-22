@@ -126,7 +126,7 @@ class MemoryConfig:
     embed_url: str = "http://127.0.0.1:11434"
     embed_model: str = ""
     embed_at: str = "client"  # where embeddings are computed: client or server
-    min_similarity: float = 0.55  # least cosine similarity for a semantic match (0 to 1)
+    min_similarity: float = 0.60  # least cosine similarity for a semantic match (0 to 1)
     collect: bool = False  # collect outcomes automatically when a skill finishes
     half_life_days: int = 90  # evidence weighs half after this many days
     expire_days: int = 180  # a lesson with no new evidence expires after this many days
