@@ -107,7 +107,7 @@ A repository's `.code-check.toml` cannot set `state_dir`, `[run_pr]`, `[shadow]`
 
 ### CODE_CHECK.md
 
-A `CODE_CHECK.md` at the repository root tells the reviewers, in plain prose, what to look at and what to ignore (max 16,000 characters). PR runs read it from the **base branch**, never the PR head; local runs read your working tree. A missing, empty or symlinked file is ignored. This repository's own file also checks that the docs stay accurate: the README stays short and current, and architecture detail lives under `docs/`.
+A `CODE_CHECK.md` at the repository root tells the reviewers, in plain prose, what to look at and what to ignore (max 16,000 characters). PR runs read it from the **base branch**, never the PR head; local runs read your working tree. A missing, empty or symlinked file is ignored. In a monorepo, a `CODE_CHECK.md` in a directory above a changed file is read too and applies only to files under that directory, where it wins over the root file on a conflict; all files share the one size limit. This repository's own file also checks that the docs stay accurate: the README stays short and current, and architecture detail lives under `docs/`.
 
 ## Safety
 

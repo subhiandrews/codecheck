@@ -320,7 +320,7 @@ def _setup_with_head_guidance(tmp_path, head_files):
     return make_ctx(tmp_path, clone, provider=provider), pr, clone, origin
 
 
-FIX_STYLE = {"source": "base", "text": "fix style only\n", "truncated": False}
+FIX_STYLE = {"source": "base", "text": "fix style only\n", "truncated": False, "files": ["CODE_CHECK.md"]}
 
 
 def test_workspace_guidance_from_base_in_worktree_and_in_place(tmp_path):
@@ -352,6 +352,16 @@ def test_workspace_returns_base_text_when_head_differs(tmp_path):
     assert call(ctx, "workspace", "--pr", str(pr.ref))[1]["guidance"] == FIX_STYLE
     sh(clone, "checkout", "main")
     assert call(ctx, "workspace", "--pr", str(pr.ref))[1]["guidance"] == FIX_STYLE
+
+
+def test_workspace_reads_nested_guidance_above_the_paths_the_pr_changes(tmp_path):
+    ctx, pr, clone, origin = _setup_with_head_guidance(tmp_path, {"svc/api/app.py": "y = 2\n"})
+    _push_to_main(tmp_path, origin, {"svc/api/CODE_CHECK.md": "api rules\n", "web/CODE_CHECK.md": "web rules\n"})
+    want = {"source": "base", "truncated": False, "files": ["svc/api/CODE_CHECK.md"],
+            "text": "[svc/api/CODE_CHECK.md: the rules below apply only to files under `svc/api/`; for those files they win over any rule above that they conflict with]\napi rules\n"}
+    assert call(ctx, "workspace", "--pr", str(pr.ref))[1]["guidance"] == want  # already on the PR branch
+    sh(clone, "checkout", "main")
+    assert call(ctx, "workspace", "--pr", str(pr.ref))[1]["guidance"] == want
 
 
 def test_workspace_survives_option_like_base_ref(tmp_path):
