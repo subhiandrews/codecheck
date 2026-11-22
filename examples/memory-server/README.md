@@ -52,6 +52,7 @@ docker compose exec memory code-check memory token add alice --maintainer --db /
 ## Operating notes
 
 - Back up the store by copying the `/data` volume (SQLite, WAL mode) while the server is stopped, or with `sqlite3 memory.db ".backup copy.db"`.
+- Reads are server-wide: any live token can read any repository's evidence (quotes and finding text included) through `GET /v1/lessons?repo=...` and `/v1/search`; sharing levels only cap what clients push and there are no per-token repository lists, so one server should serve one trust group.
 - Logs hold method, path (no query), status and contributor name, never tokens or text.
 - Roles in evidence are asserted by clients but capped by the token's ceiling (`--maintainer`); otherwise anyone holding a token is trusted. Revoke tokens that should not be.
 - After 10 failed tokens from one address in a minute the server answers 429 with `Retry-After` for a minute. Behind a proxy it reads the last `X-Forwarded-For` entry, so make the proxy set it.
