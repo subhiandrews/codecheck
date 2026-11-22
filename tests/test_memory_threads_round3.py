@@ -3,7 +3,14 @@
 import threading
 
 import pytest
-from test_memory_semantic import DIGEST, DIM, FakeEmbedder, finding_ev, item_for, with_vectors
+from test_memory_semantic import (
+    DIGEST,
+    DIM,
+    FakeEmbedder,
+    finding_ev,
+    item_for,
+    with_vectors,
+)
 from test_memory_server import NOW, Srv
 
 from codecheck.memory import embed, semantic
