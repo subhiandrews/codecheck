@@ -17,6 +17,8 @@ from codecheck.runids import new_run_id
 from codecheck.shadow.store import ShadowStore
 from codecheck.vcs.git import Git
 
+pytestmark = pytest.mark.usefixtures("git_env")  # real `git commit` needs an identity, which CI does not have
+
 REPO = "acme/app"
 SECRET = "ghp_" + "a" * 30
 
