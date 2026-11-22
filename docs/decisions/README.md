@@ -63,3 +63,4 @@ Records dated before 2026-11-20 were reconstructed from the original design spec
 - [0042-a-token-s-role-ceiling-caps-the-evidence-roles-a-client-may-assert.md](0042-a-token-s-role-ceiling-caps-the-evidence-roles-a-client-may-assert.md): A token's role ceiling caps the evidence roles a client may assert
 - [0043-semantic-retrieval-is-optional-local-first-and-falls-back-to-exact-keys.md](0043-semantic-retrieval-is-optional-local-first-and-falls-back-to-exact-keys.md): Semantic retrieval is optional, local-first and falls back to exact keys
 - [0044-memory-evals-are-advisory-and-report-retrieval-and-effect-separately.md](0044-memory-evals-are-advisory-and-report-retrieval-and-effect-separately.md): Memory evals are advisory and report retrieval and effect separately
+- [0045-the-memory-service-ships-before-its-payoff-is-measured.md](0045-the-memory-service-ships-before-its-payoff-is-measured.md): The memory service ships before its payoff is measured

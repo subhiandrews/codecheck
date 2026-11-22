@@ -5,11 +5,11 @@ User-visible changes per release, newest first. Earlier releases: `git log`. The
 ## [1.3.0]
 
 ### Added
-- Opt-in review memory (`memory.*`, off by default): lessons learned from how past reviews fared (human-caught misses, confirmed and disputed findings) are collected at cleanup and consolidated into a local store.
-- With `memory.read` on, reviewers get misses and the aggregator gets confirm and dispute lessons as one framed run file; blind (hand-off) runs never read it, and the live eval runs with memory off except for snippets that carry their own lessons (`poisoned-memory-lesson` runs in every full live eval) and `eval --memory-effect`.
-- A team can share lessons through `code-check memory serve` (stdlib HTTP, per-contributor tokens with a role ceiling, purge on revoke), `memory sync` and `memory status`.
-- Optional semantic retrieval with a local Ollama model (`memory.embed_model`), falling back to exact keys on any failure; the result and `memory status` say why (`semantic: fallback: <reason>`).
-- Advisory evals: `eval --memory-retrieval`, `eval --memory-effect` and `memory report`; none writes the eval history or gates anything.
+- Review memory is off by default. When on, reviews learn from how past findings fared and keep the lessons locally.
+- With `memory.read` on, reviewers see relevant lessons; hand-off runs never do.
+- A team can share lessons through `code-check memory serve`, `memory sync` and `memory status`.
+- Optional smarter lesson matching with a local Ollama model (`memory.embed_model`); it falls back to exact matching if unavailable.
+- Advisory evals to measure memory: `eval --memory-retrieval`, `eval --memory-effect` and `memory report`.
 
 ## [1.2.3]
 

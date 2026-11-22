@@ -109,8 +109,12 @@ def test_a_failing_or_hanging_server_never_fails_or_delays_context(tmp_path, mon
     out, meta = context(ctx)
     assert time.monotonic() - t < 4.0
     assert calls.n == 1
-    # the replica is still read when the pull failed; when it was slow the shared budget may cost the read, never the context
-    assert meta["memory"]["reason"] in ("ok", "timeout")
+    if calls.delay:
+        # a slow pull may eat the shared budget and cost the read, never the context
+        assert meta["memory"]["reason"] in ("ok", "timeout")
+    else:
+        # a failing pull never costs the replica read
+        assert meta["memory"]["reason"] == "ok"
     if meta["memory"]["reason"] == "ok":
         assert "Local replica lesson." in (Path(out["run_dir"]) / "memory.md").read_text()
 
