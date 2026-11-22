@@ -62,6 +62,14 @@ class Recomputed:
     removed: int
 
 
+# Same-ts signals for one thread: the stronger wins, whatever order they arrive in.
+_SIGNAL_RANK = {"reply": 0, "outdated": 1, "resolved": 2, "resolved_outdated": 3}
+
+
+def _signal_rank(signal: str) -> int:
+    return _SIGNAL_RANK.get(signal, 4)
+
+
 def _evidence_row(ev: Evidence) -> tuple:
     s = ev.scope
     return (ev.id, ev.lesson_id, ev.thread_key(), s.host, s.repo, s.path_glob, s.language, s.category, ev.signal,
@@ -197,8 +205,9 @@ class MemoryDB:
                 if ev.lesson_id in forgotten:
                     out["forgotten"] += 1
                     continue
-                newer = conn.execute("SELECT 1 FROM evidence WHERE thread_key = ? AND id != ? AND ts > ?",
-                                     (row[2], ev.id, ev.ts)).fetchone()
+                mine = (ev.ts, _signal_rank(ev.signal), ev.id)
+                newer = any((r["ts"], _signal_rank(r["signal"]), r["id"]) > mine for r in conn.execute(
+                    "SELECT id, ts, signal FROM evidence WHERE thread_key = ? AND id != ? AND ts >= ?", (row[2], ev.id, ev.ts)))
                 if newer:
                     out["stale"] += 1
                     continue

@@ -568,7 +568,7 @@ def attach_vectors(ctx, db: MemoryDB, item: dict, evidence: Sequence[Evidence], 
     limit. Returns how many were attached."""
     if levels.rank(level) < levels.rank("evidence"):
         return 0
-    ordered = sorted(evidence, key=lambda e: (e.ts, e.id))[:levels.MAX_EVIDENCE_PER_ITEM]
+    ordered = sorted(evidence, key=lambda e: (e.ts, e.id))[-levels.MAX_EVIDENCE_PER_ITEM:]
     rows = item.get("evidence") or []
     if len(rows) != len(ordered):
         return 0

@@ -94,7 +94,7 @@ def _lesson(scope: Scope, items: list[Evidence], now: float, params: Params) -> 
     for_w = sum(w for e, w in live if polarity(e.signal) == "for")
     against_w = sum(w for e, w in live if polarity(e.signal) == "against")
     miss_w = sum(w for e, w in live if polarity(e.signal) == "miss")
-    if miss_w:
+    if miss_w or (not live and any(polarity(e.signal) == "miss" for e in items)):
         kind, lean, side, support, contra = "miss", "", "miss", miss_w, 0.0
     elif for_w > against_w:
         kind, lean, side, support, contra = "finding", "confirm", "for", for_w, against_w

@@ -82,7 +82,7 @@ def run(args, ctx) -> dict:
             done = db.revoke_token(args.name)
             if not done:
                 raise CodeCheckError(f"no live token named {args.name!r}")
-            purged = db.purge_contributor(args.name, Service(db).params, db.now()) if args.purge else None
+            purged = db.purge_contributor(args.name, sync.params_of(ctx), db.now()) if args.purge else None
             return {"revoked": args.name, "purged": purged}
         return {"tokens": db.list_tokens()}
     if cmd == "sync":

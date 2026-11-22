@@ -110,7 +110,7 @@ def lesson_item(lid: str, kind: str, evidence: Sequence[Evidence], level: str) -
     allowed = {e.id for e in ordered if e.quote}
     quoted = [e.id for e in ordered if e.id in allowed][:MAX_QUOTES_PER_LESSON]
     rows = [evidence_payload(e, level, quote=e.id in quoted) for e in sorted(evidence, key=lambda e: (e.ts, e.id))]
-    return {"lesson_id": lid, "kind": kind, "evidence": rows[:MAX_EVIDENCE_PER_ITEM]}
+    return {"lesson_id": lid, "kind": kind, "evidence": rows[-MAX_EVIDENCE_PER_ITEM:]}
 
 
 def episode_payload(run_id: str, repo: str, pr: str, records: Sequence[Mapping]) -> dict:
