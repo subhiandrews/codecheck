@@ -1,9 +1,20 @@
+import os
 import subprocess
 from pathlib import Path
 
+# CI runners have no git identity; commits would fail with status 128 for any test
+# that does not use the `git_env` fixture. A value already in the environment wins.
+_IDENTITY = {
+    "GIT_AUTHOR_NAME": "Test",
+    "GIT_AUTHOR_EMAIL": "test@example.com",
+    "GIT_COMMITTER_NAME": "Test",
+    "GIT_COMMITTER_EMAIL": "test@example.com",
+}
+
 
 def sh(cwd: Path, *args: str) -> str:
-    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout
+    env = {**_IDENTITY, **os.environ}
+    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True, env=env).stdout
 
 
 def make_origin_and_clone(tmp_path: Path) -> tuple[Path, Path]:
