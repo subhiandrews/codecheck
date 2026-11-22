@@ -61,7 +61,7 @@ def test_a_purge_removes_the_vectors_on_the_server_and_in_a_teammates_replica(tm
     assert out["pull"]["repos"][0]["purged"] == 1
     assert {e.thread for e in bob.db.evidence()} == {"keep"}
     assert semantic.vector_stats(bob.db)["vectors"] == 1  # and so is the replica's
-    assert DIM  # the fake's dimension is the one stored
+    assert [p["dim"] for p in semantic.vector_stats(bob.db)["pins"]] == [DIM]  # the fake's dimension is the one stored
 
 
 # ---------- the semantic retriever in the retrieval eval ----------

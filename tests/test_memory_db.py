@@ -110,7 +110,8 @@ def test_lessons_are_recomputed_from_evidence_rows_never_from_stored_totals(db):
     conn.close()
     out = db.recompute(Params(), T0 + DAY)
     assert out.changed == 1 and db.lessons()[0].support == 2.0
-    assert dict(db.recompute(Params(), T0 + DAY).__dict__ | {"lessons": 0}) == {"lessons": 0, "added": 0, "changed": 0, "removed": 0}
+    again = db.recompute(Params(), T0 + DAY)
+    assert again.__dict__ == {"lessons": [lesson], "added": 0, "changed": 0, "removed": 0}
 
 
 def test_list_and_get_by_scope(db):
