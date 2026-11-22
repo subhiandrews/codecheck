@@ -63,7 +63,7 @@ def _iterate(args, ctx, lock: FileLock) -> dict:
         lock.touch()
         ref = ctx.parse_ref(item["pr"])
         try:
-            results.append(run_one(ctx, args.mode, ref, item["fingerprint"], args.dry_run))
+            results.append(run_one(ctx, args.mode, ref, item["fingerprint"], args.dry_run, clone=item["clone"] or None))
         except Exception as e:  # noqa: BLE001 - one broken PR must never stop the rest of the iteration
             extra = {} if args.dry_run else loop_bookkeeping(ctx, args.mode, ref, item["fingerprint"], False)
             results.append({"pr": item["pr"], "ok": False, "summary": f"error: {e}", **extra})

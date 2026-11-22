@@ -13,7 +13,7 @@ PANEL = (
     "Otherwise continue and report any failed reviewers."
 )
 QUEUE = "## Without an argument\n\nAsk for a PR reference and stop until one is provided.\n\n"
-QUEUE_RULE = (r"^## Without an argument \(queue mode\)\n\n[^\n]+\n\n", QUEUE)
+QUEUE_RULE = (r"^## Without an argument \(repository mode\)\n\n[^\n]+\n\n", QUEUE)
 PUSH_WAIT = "Allow up to 10 minutes for the push because it runs the configured tests first. Wait for the command to finish."
 REVIEW_RULES = (
     (r"^3\. Dispatch the panel in parallel:.*$", PANEL),
@@ -38,13 +38,13 @@ SUBSTITUTIONS = {
         (r", and `?\(ignored guidance: <reasons>\)`? when any subagent.*\.", "."),
         (r"Ask no questions, except the replies-only question in step 1, and only when run interactively\.",
          "Ask for a missing PR reference or ask the replies-only question in step 1 when run interactively."),
-        (r"^## Without an argument \(repository mode\)\n\n[^\n]+\n\n", QUEUE),
+        QUEUE_RULE,
     ),
     "address-comments": (
         (r"Run it with the Bash tool's maximum timeout .*? wait for it instead\.", PUSH_WAIT),
     ),
     "babysit-pr": (
-        (r" With no argument it works every PR of yours .*? Use under /loop to keep your PRs moving\.", ""),
+        (r" With no argument it works your open PRs .*? Use under /loop to keep your PRs moving\.", ""),
         (r"`code-check:address-comments`", "`$address-comments`"),
         (r"with the Bash tool's maximum timeout of 600000 ms \(tests gate the push; handle a slow test run and a refused push as in address-comments\)",
          "and allow up to 10 minutes for the configured tests to finish, as in address-comments"),

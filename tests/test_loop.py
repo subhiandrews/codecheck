@@ -175,8 +175,8 @@ def test_babysit_loop_uses_babysit_prompt_and_failing_checks(tmp_path):
     assert out["processed"] == 1
     (c,) = claude_calls(fake)
     assert "babysit-pr" in c.argv[2] and "o/r#9" in c.argv[2]
-    # babysit edits code, so the unattended run never starts in the user's own checkout
-    assert c.cwd != clone and c.cwd == tmp_path / "state" / "repos" / "o__r"
+    # the clone found under the working directory is used, and `workspace` is told not to edit it in place
+    assert c.cwd == clone and c.env == {"CODE_CHECK_UNATTENDED": "1"}
 
 
 def test_unattended_babysit_never_uses_the_users_checkout_even_on_the_pr_branch(tmp_path):

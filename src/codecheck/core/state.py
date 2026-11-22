@@ -235,6 +235,7 @@ class WorkItem:
     ref: PRRef
     fingerprint: str
     reason: str
+    clone: str = ""  # local clone of the PR's repository, when one was found
 
 
 def babysit_work(pr: PullRequest, threads: Sequence[Thread], checks: Sequence[Check], me: str) -> WorkItem | None:

@@ -1,6 +1,9 @@
+from dataclasses import replace
+
 from codecheck.commands._common import approval_skip, pr_activity
 from codecheck.core.precheck import review_verdict
 from codecheck.core.state import WorkItem, babysit_work, loop_key, select_work
+from codecheck.errors import CodeCheckError
 
 NAME = "list-work"
 HELP = "List PRs with something new to do (zero LLM tokens); capped per iteration"
@@ -8,35 +11,53 @@ HELP = "List PRs with something new to do (zero LLM tokens); capped per iteratio
 
 def add_arguments(p) -> None:
     p.add_argument("--mode", choices=("review", "babysit"), required=True)
-    p.add_argument("--repos", default="", help="comma-separated OWNER/REPO list (default: config loop.repos)")
+    p.add_argument("--repos", default="", help="comma-separated OWNER/REPO list (default: config loop.repos, else the clones under the working directory)")
 
 
 def run(args, ctx) -> dict:
     cfg = ctx.config
-    repos = [r.strip() for r in args.repos.split(",") if r.strip()] or list(cfg.loop.repos)
-    me = ctx.provider.whoami()
     review = args.mode == "review"
-    if review and not repos:
-        # no queue: review the open PRs of the repository this runs in
-        repos = [ctx.current_repo()]  # raises a clear error outside a clone of a known repository
+    named = [r.strip() for r in args.repos.split(",") if r.strip()] or list(cfg.loop.repos)
+    clones = ctx.clones()  # the clone at, or the clones directly under, the working directory
+    if named:
+        targets = [(repo, clones.get(repo)) for repo in named]
+    elif clones:
+        targets = list(clones.items())
+    else:
+        raise CodeCheckError("run this from a clone, or from a directory that holds clones, or set loop.repos")
     limit = cfg.loop.max_review_prs_per_iteration if review else cfg.loop.max_prs_per_iteration
     items: list[WorkItem] = []
     skipped: list[dict] = []
-    refs = ctx.provider.list_prs("open" if review else "authored", repos)  # newest first, so the newest is reviewed first
-    for ref in refs:
-        if sum(ctx.state.get(loop_key(args.mode, i.ref)) != i.fingerprint for i in items) >= limit:
-            break  # enough new work; older PRs wait for the next iteration and cost no API calls now
+    considered = 0
+
+    def enough() -> bool:
+        return sum(ctx.state.get(loop_key(args.mode, i.ref)) != i.fingerprint for i in items) >= limit
+
+    for repo, clone in targets:
+        if enough():
+            break  # the other clones wait for the next iteration and cost no API calls now
+        sub = clone or ctx
         try:
-            item, skip = _consider(ctx, args.mode, ref, me)
-        except Exception as e:  # noqa: BLE001 - one broken PR must not abort the whole listing
-            item, skip = None, f"error: {type(e).__name__}: {e}"[:300]
-        if skip:
-            skipped.append({"pr": str(ref), "reason": skip})
-        if item:
-            items.append(item)
+            refs = sub.provider.list_prs("open" if review else "authored", [repo])  # newest first
+            me = sub.provider.whoami()
+        except Exception as e:  # noqa: BLE001 - one unreachable repository must not stop the others
+            skipped.append({"pr": repo, "reason": f"error: {type(e).__name__}: {e}"[:300]})
+            continue
+        considered += len(refs)
+        for ref in refs:
+            if enough():
+                break
+            try:
+                item, skip = _consider(sub, args.mode, ref, me)
+            except Exception as e:  # noqa: BLE001 - one broken PR must not abort the whole listing
+                item, skip = None, f"error: {type(e).__name__}: {e}"[:300]
+            if skip:
+                skipped.append({"pr": str(ref), "reason": skip})
+            if item:
+                items.append(replace(item, clone=str(clone.cwd)) if clone else item)
     chosen = select_work(items, ctx.state, args.mode, limit)
-    return {"items": [{"pr": str(i.ref), "fingerprint": i.fingerprint, "reason": i.reason} for i in chosen],
-            "considered": len(refs), "skipped": skipped}
+    return {"items": [{"pr": str(i.ref), "fingerprint": i.fingerprint, "reason": i.reason, "clone": i.clone} for i in chosen],
+            "considered": considered, "skipped": skipped}
 
 
 def _consider(ctx, mode: str, ref, me: str) -> tuple[WorkItem | None, str | None]:

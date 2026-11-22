@@ -46,7 +46,7 @@ def test_status_reports_branch_dirty_and_pushability(tmp_path):
 def test_workspace_in_place_refuses_dirty_and_forks_and_creates_worktree_elsewhere(tmp_path):
     ctx, provider, pr, clone, _origin = own_pr_setup(tmp_path)
     code, out = call(ctx, "workspace", "--pr", str(pr.ref))
-    assert out == {"path": str(clone), "created": False, "guidance": None}
+    assert out == {"path": str(clone), "created": False, "guidance": None, "project_context": None}
 
     (clone / "scratch.txt").write_text("x")
     code, out = call(ctx, "workspace", "--pr", str(pr.ref))
@@ -468,3 +468,30 @@ def test_list_work_review_leaves_reviewed_unchanged_prs_alone_until_something_ne
     assert [i["pr"] for i in call(ctx, "list-work", "--mode", "review")[1]["items"]] == [str(new)]
     provider.prs[old] = replace(provider.prs[old], head_sha="sha1b")  # the author pushed again
     assert [i["pr"] for i in call(ctx, "list-work", "--mode", "review")[1]["items"]] == [str(new), str(old)]
+
+
+def test_workspace_returns_the_base_branch_claude_md_as_project_context(tmp_path):
+    ctx, _provider, pr, clone, origin = own_pr_setup(tmp_path)
+    commit_file(clone, "CLAUDE.md", "build with make\n", "add CLAUDE.md")  # on the PR branch: not what is read
+    sh(clone, "reset", "--hard", "origin/feature")
+    other = tmp_path / "other"
+    sh(tmp_path, "clone", str(origin), str(other))
+    commit_file(other, "CLAUDE.md", "build with make\n", "add CLAUDE.md")
+    sh(other, "push", "origin", "HEAD:main")
+    out = call(ctx, "workspace", "--pr", str(pr.ref))[1]
+    assert out["project_context"]["text"] == "build with make\n" and out["project_context"]["source"] == "base"
+    assert out["guidance"] is None
+
+
+def test_workspace_never_edits_the_checkout_in_place_when_unattended(tmp_path):
+    ctx, _provider, pr, clone, _origin = own_pr_setup(tmp_path)
+    ctx.env = {"CODE_CHECK_UNATTENDED": "1"}  # the user is sitting on the PR branch
+    out = call(ctx, "workspace", "--pr", str(pr.ref))[1]
+    assert out["created"] is True and out["path"] != str(clone)
+
+
+def test_status_ignores_the_checkout_when_unattended(tmp_path):
+    ctx, _provider, pr, _clone, _origin = own_pr_setup(tmp_path)
+    assert call(ctx, "status", "--pr", str(pr.ref))[1]["on_pr_branch"] is True
+    ctx.env = {"CODE_CHECK_UNATTENDED": "1"}
+    assert call(ctx, "status", "--pr", str(pr.ref))[1]["on_pr_branch"] is False

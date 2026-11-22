@@ -58,3 +58,4 @@ Records dated before 2026-11-20 were reconstructed from the original design spec
 - [0037-nested-code-check-md-files-are-chosen-by-the-changed-paths.md](0037-nested-code-check-md-files-are-chosen-by-the-changed-paths.md): Nested CODE_CHECK.md files are chosen by the changed paths
 - [0038-guidance-learning-is-opt-in-local-and-never-commits.md](0038-guidance-learning-is-opt-in-local-and-never-commits.md): Guidance learning is opt-in, local and never commits
 - [0039-review-pr-without-an-argument-reviews-the-repo.md](0039-review-pr-without-an-argument-reviews-the-repo.md): review-pr without an argument reviews the repository's open PRs
+- [0040-loops-discover-clones-under-the-working-directory.md](0040-loops-discover-clones-under-the-working-directory.md): Loops discover clones under the working directory

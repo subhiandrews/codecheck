@@ -11,6 +11,7 @@ class Call:
     argv: tuple[str, ...]
     input: str | None
     cwd: Path | None
+    env: dict | None = None
 
 
 class FakeRunner:
@@ -27,9 +28,9 @@ class FakeRunner:
         self._prefix.append((tuple(prefix), [CommandResult(returncode, stdout, stderr)]))
         return self
 
-    def run(self, args, *, input=None, cwd=None, timeout=None) -> CommandResult:
+    def run(self, args, *, input=None, cwd=None, timeout=None, env=None) -> CommandResult:
         argv = tuple(args)
-        self.calls.append(Call(argv, input, cwd))
+        self.calls.append(Call(argv, input, cwd, env))
         queue = self._exact.get(argv)
         if queue is None:
             for prefix, q in self._prefix:
@@ -168,6 +169,6 @@ class HybridRunner:
         self.fake = fake
         self.real = SubprocessRunner()
 
-    def run(self, args, *, input=None, cwd=None, timeout=None):
+    def run(self, args, *, input=None, cwd=None, timeout=None, env=None):
         target = self.real if args and args[0] == "git" else self.fake
-        return target.run(args, input=input, cwd=cwd, timeout=timeout)
+        return target.run(args, input=input, cwd=cwd, timeout=timeout, env=env)

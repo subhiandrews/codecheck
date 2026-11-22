@@ -4,7 +4,7 @@ from pathlib import Path
 from codecheck.commands._common import contained, safe_repo
 from codecheck.config import expand_path
 from codecheck.core.diffmap import parse_diff
-from codecheck.core.guidance import from_base
+from codecheck.core.guidance import CONTEXT_FILE, GUIDANCE_FILE, from_base
 from codecheck.core.panel import filter_ignored
 from codecheck.core.state import ensure_private_dir
 from codecheck.errors import CodeCheckError
@@ -33,24 +33,28 @@ def managed_clone(ctx, repo: str) -> Git:
     return Git(ctx.runner, dest)
 
 
-def _guidance(git: Git, cfg, pr, head: str) -> dict | None:
-    """CODE_CHECK.md from the PR's base branch (never the PR head, which its author controls), with the nested files
-    above the paths the PR changes.
+def _guidance(git: Git, cfg, pr, head: str) -> dict[str, dict | None]:
+    """`CODE_CHECK.md` (`guidance`) and `CLAUDE.md` (`project_context`) from the PR's base branch (never the PR head,
+    which its author controls), each with the nested files above the paths the PR changes.
 
     Best effort: a lookup failure must never make `workspace` fail."""
     base = f"{cfg.remote}/{pr.base_ref}"
+    found: dict[str, dict | None] = {"guidance": None, "project_context": None}
     try:
         git.fetch(cfg.remote, pr.base_ref)  # a failed fetch just means we use whatever is local
-        notes: tuple[str, ...] = ()
+        paths: list[str] | None
         try:
             paths = filter_ignored(list(parse_diff(git.diff(f"{base}...{head}"))), cfg.review.ignore)  # as `context` does
         except CodeCheckError:
-            paths = []  # the root file alone still beats no guidance, but say what was not looked up
-            notes = ("[CODE_CHECK.md: the changed paths could not be listed, so nested files were not looked up]",)
-        g = from_base(git, base, paths, notes)
+            paths = None  # the root file alone still beats no guidance, but say what was not looked up
+        for key, name in (("guidance", GUIDANCE_FILE), ("project_context", CONTEXT_FILE)):
+            notes = () if paths is not None else (f"[{name}: the changed paths could not be listed, so nested files were not looked up]",)
+            g = from_base(git, base, paths or [], notes, name)
+            if g is not None:
+                found[key] = {"source": g.source, "text": g.text, "truncated": g.truncated, "files": list(g.files), "skipped": list(g.skipped)}
     except CodeCheckError:  # GitError is a CodeCheckError
-        return None
-    return None if g is None else {"source": g.source, "text": g.text, "truncated": g.truncated, "files": list(g.files), "skipped": list(g.skipped)}
+        pass
+    return found
 
 
 def run(args, ctx) -> dict:
@@ -62,10 +66,11 @@ def run(args, ctx) -> dict:
     if pr.state != "open":
         raise CodeCheckError(f"PR is {pr.state}")
     here = safe_repo(ctx)
-    if here == ref.repo and ctx.git.current_branch() == pr.head_ref:
+    # an unattended run never edits the checkout itself, even when it is on the PR branch
+    if here == ref.repo and ctx.env.get("CODE_CHECK_UNATTENDED") != "1" and ctx.git.current_branch() == pr.head_ref:
         if ctx.git.is_dirty():
             raise CodeCheckError("working tree has uncommitted changes; commit or stash them first")
-        return {"path": str(ctx.git.cwd), "created": False, "guidance": _guidance(ctx.git, cfg, pr, "HEAD")}
+        return {"path": str(ctx.git.cwd), "created": False, **_guidance(ctx.git, cfg, pr, "HEAD")}
     base = ctx.git if here == ref.repo else managed_clone(ctx, ref.repo)
     refspec, local_ref = ctx.provider.fetch_refspec(ref)
     if not base.fetch(cfg.remote, refspec):
@@ -96,4 +101,4 @@ def run(args, ctx) -> dict:
     path.parent.mkdir(parents=True, exist_ok=True)
     base.worktree_add_branch(path, branch, local_ref)
     return {"path": str(path), "created": True, "git_dir": str(Path(base.cwd)),
-            "guidance": _guidance(base, cfg, pr, local_ref)}
+            **_guidance(base, cfg, pr, local_ref)}
