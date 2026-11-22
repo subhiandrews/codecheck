@@ -2,9 +2,11 @@
 
 ROLES = ("maintainer", "author", "contributor", "self", "unknown")
 # GitHub author associations. MEMBER only means an organisation member, not write access, so it is left out: a
-# MEMBER falls through to `unknown`. These are a fallback for when `can_write` is unavailable, never a replacement.
-_WRITE_ASSOCIATIONS = frozenset({"OWNER", "COLLABORATOR"})
-_OUTSIDE_ASSOCIATIONS = frozenset({"CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "NONE", "MANNEQUIN"})
+# MEMBER falls through to `unknown`. COLLABORATOR is not write access either (it may be read or triage only), and
+# `maintainer` is the one role that can activate a lesson, so it too falls to `contributor`. These are a fallback for
+# when `can_write` is unavailable, never a replacement.
+_WRITE_ASSOCIATIONS = frozenset({"OWNER"})
+_OUTSIDE_ASSOCIATIONS = frozenset({"COLLABORATOR", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "NONE", "MANNEQUIN"})
 
 
 def derive_role(login: str, *, me: str, pr_author: str | None, can_write: bool | None, association: str = "") -> str:

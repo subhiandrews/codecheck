@@ -40,6 +40,7 @@ from codecheck.shadow.store import ShadowStore, write_private
 STATE_FILE = "sync.json"
 _REPO_NAME = levels._REPO
 RETRY_AFTER_FAILED_PULL = 60.0
+PULL_FAILED_FILE = "sync.pull-failed"  # the failure stamp lives outside sync.json so stamping it never needs sync.json.lock
 MAX_PAGES = 20
 BATCH_BYTES = 200 * 1024
 clock = time.time  # tests replace this
@@ -73,6 +74,28 @@ def save_state(ctx, state: dict, cancel: threading.Event | None = None) -> None:
     try:
         write_private(tmp, json.dumps(state, sort_keys=True))
         os.replace(tmp, d / STATE_FILE)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _failed_stamp(ctx) -> float:
+    """When the last abandoned pull was stamped (0.0 when never or unreadable). Read without any lock."""
+    p = _store_dir(ctx) / PULL_FAILED_FILE
+    try:
+        if p.is_symlink() or not p.is_file():
+            return 0.0
+        return float(p.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return 0.0
+
+
+def _write_failed_stamp(ctx, ts: float) -> None:
+    d = _store_dir(ctx)
+    d.mkdir(parents=True, exist_ok=True, mode=0o700)
+    tmp = d / f"{PULL_FAILED_FILE}.{os.getpid()}.{threading.get_ident()}.tmp"
+    try:
+        write_private(tmp, repr(float(ts)))
+        os.replace(tmp, d / PULL_FAILED_FILE)
     finally:
         tmp.unlink(missing_ok=True)
 
@@ -435,6 +458,8 @@ def pull_if_stale(ctx, max_age_seconds: float = 600.0, repos: Sequence[str] | No
     repository name, so `share_repos` stays the list that gates what is pushed, not what may be read. The read-modify-write
     of `sync.json` holds `sync.json.lock`; a run that cannot get it quickly skips."""
     try:
+        if ctx.config.memory.url and clock() - _failed_stamp(ctx) < RETRY_AFTER_FAILED_PULL:
+            return {"pulled": False, "reason": "a recent pull failed"}  # before the lock: a hung worker may hold it
         with _state_lock(ctx) as held:
             if not held:
                 return {"pulled": False, "reason": "another sync is running"}
@@ -457,7 +482,7 @@ def _pull_if_stale(ctx, max_age_seconds: float = 600.0, repos: Sequence[str] | N
         last = min(float(by_repo.get(r, 0.0)) for r in wanted) if repos is not None else float(state.get("last_pull_ts", 0.0))
         if now - last < max_age_seconds:
             return {"pulled": False, "reason": "replica is fresh"}
-        if now - float(state.get("last_pull_failed_ts", 0.0)) < RETRY_AFTER_FAILED_PULL:
+        if now - max(float(state.get("last_pull_failed_ts", 0.0)), _failed_stamp(ctx)) < RETRY_AFTER_FAILED_PULL:
             return {"pulled": False, "reason": "a recent pull failed"}
         deadline = now + float(m.timeout_seconds)
         try:
@@ -482,12 +507,7 @@ def note_pull_failure(ctx) -> None:
     try:
         if not ctx.config.memory.url:
             return
-        with _state_lock(ctx) as held:
-            if not held:
-                return
-            state = _fresh_state(ctx)
-            state["last_pull_failed_ts"] = clock()
-            save_state(ctx, state)
+        _write_failed_stamp(ctx, clock())  # its own file, no lock: the stuck worker may be holding sync.json.lock
     except Exception:  # noqa: BLE001 - bookkeeping only
         return
 

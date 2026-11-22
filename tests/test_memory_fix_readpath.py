@@ -59,7 +59,7 @@ def test_a_timed_out_pull_stamps_the_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(sync, "pull_if_stale", lambda *a, **k: time.sleep(5) or {"pulled": True})
     out = inject._pull_replica(ctx, inject.REVIEWERS, 0.2, "o/r")
     assert out == {"pulled": False, "reason": "timeout"}
-    stamp = float(sync._fresh_state(ctx).get("last_pull_failed_ts", 0.0))
+    stamp = sync._failed_stamp(ctx)
     assert abs(time.time() - stamp) < 5
 
 

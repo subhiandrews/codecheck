@@ -121,7 +121,7 @@ def _build(args, ctx, run_id, run_dir) -> dict:
     meta["run_files"] = [n for n in ("CODE_CHECK.md", "existing-comments.md") if (run_dir / n).is_file()]
     # Lessons for the reviewers: misses keyed on the diff. Off by default, withheld from blind runs, never fatal.
     meta["memory"] = safe_build(ctx, run_dir, stage=REVIEWERS, repo=meta["repo"], base_ref=sync.base_ref, blind=blind,
-                                paths=reviewable, queries=_memory_queries(cfg, parsed, reviewable))
+                                paths=reviewable, queries=lambda: _memory_queries(cfg, parsed, reviewable))
     if meta["memory"].get("file"):
         meta["run_files"].append(meta["memory"]["file"])
     meta["replies"] = replies
