@@ -9,16 +9,19 @@ into a `MemoryStoreError`, which the CLI prints as one JSON error, never a trace
 import contextlib
 import json
 import os
-import sqlite3
 import time
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from codecheck.errors import CodeCheckError
 from codecheck.memory.consolidate import DAY, Params, consolidate
 from codecheck.memory.model import Evidence, Lesson, Scope, clean_role
+
+if TYPE_CHECKING:
+    import sqlite3
 
 SCHEMA_VERSION = 1
 FILE_NAME = "memory.db"
@@ -60,6 +63,14 @@ class Recomputed:
     added: int
     changed: int
     removed: int
+
+
+# Same-ts signals for one thread: the stronger wins, whatever order they arrive in.
+_SIGNAL_RANK = {"reply": 0, "outdated": 1, "resolved": 2, "resolved_outdated": 3}
+
+
+def _signal_rank(signal: str) -> int:
+    return _SIGNAL_RANK.get(signal, 4)
 
 
 def _evidence_row(ev: Evidence) -> tuple:
@@ -129,6 +140,8 @@ class MemoryDB:
                 self._prepare_file()
             except OSError as e:
                 raise MemoryStoreError(f"cannot create the memory store at {self.directory}: {e.strerror or e}") from e
+        import sqlite3  # lazy: not loaded while memory is off
+
         conn = None
         try:
             conn = sqlite3.connect(self.file, timeout=BUSY_MS / 1000, isolation_level=None)
@@ -197,8 +210,9 @@ class MemoryDB:
                 if ev.lesson_id in forgotten:
                     out["forgotten"] += 1
                     continue
-                newer = conn.execute("SELECT 1 FROM evidence WHERE thread_key = ? AND id != ? AND ts > ?",
-                                     (row[2], ev.id, ev.ts)).fetchone()
+                mine = (ev.ts, _signal_rank(ev.signal), ev.id)
+                newer = any((r["ts"], _signal_rank(r["signal"]), r["id"]) > mine for r in conn.execute(
+                    "SELECT id, ts, signal FROM evidence WHERE thread_key = ? AND id != ? AND ts >= ?", (row[2], ev.id, ev.ts)))
                 if newer:
                     out["stale"] += 1
                     continue

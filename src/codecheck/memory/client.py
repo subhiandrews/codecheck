@@ -7,22 +7,24 @@ dropped connection, a malformed HTTP reply or a body that is not a JSON object. 
 the token from a file only its owner can read, caps what it reads back, and never puts the token in a message.
 """
 
-import http.client
 import json
 import os
 import re
-import ssl
 import stat
-import urllib.error
-import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import quote, urlsplit
 
 from codecheck import __version__
+from codecheck.config import is_loopback_host as is_loopback
 from codecheck.errors import CodeCheckError
-from codecheck.memory.server import Service, is_loopback
 from codecheck.shadow.scrub import scrub_text
+
+if TYPE_CHECKING:
+    import urllib.request
+
+    from codecheck.memory.server import Service
 
 READ_CAP = 1024 * 1024
 _CONTROL = re.compile(r"[\x00-\x1f\x7f\s]")
@@ -75,9 +77,14 @@ def read_token_file(path: str) -> str:
     return token
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *_args, **_kwargs):
-        return None  # a redirect would carry the Authorization header to another host
+def _no_redirect_handler():
+    import urllib.request  # lazy: the HTTP stack is not loaded until a request is made
+
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *_args, **_kwargs):
+            return None  # a redirect would carry the Authorization header to another host
+
+    return _NoRedirect
 
 
 @dataclass(frozen=True)
@@ -91,7 +98,10 @@ class HttpTransport:
         check_url(self.url)
 
     def _opener(self) -> urllib.request.OpenerDirector:
-        handlers: list = [_NoRedirect]
+        import ssl
+        import urllib.request
+
+        handlers: list = [_no_redirect_handler()]
         if self.ca_file and urlsplit(self.url).scheme == "https":
             try:  # verification and host-name checks stay on: this only changes which authority is trusted
                 ctx = ssl.create_default_context(cafile=os.path.expanduser(self.ca_file))
@@ -101,6 +111,10 @@ class HttpTransport:
         return urllib.request.build_opener(*handlers)
 
     def _call(self, method: str, path: str, body: object | None = None) -> Response:
+        import http.client
+        import urllib.error
+        import urllib.request
+
         data = json.dumps(body, separators=(",", ":")).encode("utf-8") if body is not None else None
         req = urllib.request.Request(  # noqa: S310 - scheme and host are checked in check_url
             check_url(self.url) + path, data=data, method=method,

@@ -36,10 +36,13 @@ def _gate(cfg, stage: str, blind: bool) -> str | None:
 
 def _build(ctx, *, stage: str, repo: str, base_ref: str, paths: Iterable[str],
            findings: Iterable[tuple[str, object]], queries: Sequence = (),
-           sem: dict | None = None) -> tuple[str, list[str]] | str:
+           sem: dict | None = None, deadline: float | None = None,
+           partial: dict | None = None) -> tuple[str, list[str]] | str:
     """The text and lesson ids, or a reason nothing is written. Runs in a worker thread under the time budget.
 
-    `sem` receives `semantic` ("ok" or "fallback: <reason>") when a similarity lookup was tried."""
+    `sem` receives `semantic` ("ok" or "fallback: <reason>") when a similarity lookup was tried. `deadline` (a
+    `time.monotonic()` value) bounds the semantic stage by what is left of the budget. `partial` receives the exact-key
+    lessons before the semantic stage starts, so a caller that gave up waiting can still use them."""
     cfg = ctx.config.memory
     db = MemoryDB(expand_path(cfg.store))
     if not db.exists():
@@ -49,12 +52,18 @@ def _build(ctx, *, stage: str, repo: str, base_ref: str, paths: Iterable[str],
         lessons = miss_lessons(db, repo, paths, files, cfg.max_lessons)
     else:
         lessons = finding_lessons(db, repo, findings, files, cfg.max_lessons)
+    if partial is not None:
+        partial["lessons"] = list(lessons)
     if cfg.embed_model and queries:  # optional second stage: lessons found by similarity, after the exact-key hits
         from codecheck.memory import semantic
 
         kind = "miss" if stage == REVIEWERS else "finding"
-        lessons = merge_ranked(db, repo, kind, lessons, semantic.ranked_for(ctx, db, repo, list(queries), kind, sem), files,
+        lessons = merge_ranked(db, repo, kind, lessons, semantic.ranked_for(ctx, db, repo, list(queries), kind, sem, deadline=deadline), files,
                                cfg.max_lessons)
+    return _render(cfg, db, stage, lessons)
+
+
+def _render(cfg, db: MemoryDB, stage: str, lessons: Sequence) -> tuple[str, list[str]] | str:
     if not lessons:
         return "no lessons"
     evidence = {le.id: db.evidence(lesson_id=le.id) for le in lessons}
@@ -87,6 +96,7 @@ def _pull_replica(ctx, stage: str, budget: float, repo: str | None = None) -> di
         t.start()
         t.join(budget / 2)
         if t.is_alive():
+            sync.note_pull_failure(ctx)  # the daemon worker dies with the process: stamp the failure here so the backoff holds
             return {"pulled": False, "reason": "timeout"}
         out = box.get("out") or {}
         return {k: out[k] for k in ("pulled", "reason", "error") if k in out}
@@ -118,6 +128,8 @@ def safe_build(ctx, run_dir: Path, *, stage: str, repo: str | None, base_ref: st
         pull = _pull_replica(ctx, stage, budget, repo)
         box: dict = {}
         sem: dict = {}
+        partial: dict = {}
+        deadline = started + budget
 
         def done(result: dict) -> dict:
             if sem.get("semantic"):
@@ -129,7 +141,7 @@ def safe_build(ctx, run_dir: Path, *, stage: str, repo: str | None, base_ref: st
         def work() -> None:
             try:
                 box["out"] = _build(ctx, stage=stage, repo=repo, base_ref=base_ref, paths=list(paths), findings=list(findings),
-                                  queries=list(queries), sem=sem)
+                                  queries=list(queries), sem=sem, deadline=deadline, partial=partial)
             except BaseException as e:  # noqa: BLE001 - nothing in the worker may escape
                 box["error"] = f"{type(e).__name__}: {e}"[:200]
 
@@ -137,7 +149,17 @@ def safe_build(ctx, run_dir: Path, *, stage: str, repo: str | None, base_ref: st
         worker.start()
         worker.join(max(budget - (time.monotonic() - started), 0.0))  # the pull and the build share one budget
         if worker.is_alive():
-            return done({"read": False, "reason": "timeout"})
+            exact = partial.get("lessons")
+            if exact:  # the semantic stage overran: keep the exact-key lessons already computed, and say why
+                try:
+                    out = _render(cfg, MemoryDB(expand_path(cfg.store)), stage, exact)
+                except Exception:  # noqa: BLE001
+                    out = None
+                if isinstance(out, tuple):
+                    sem["semantic"] = "fallback: timeout"
+                    box["out"] = out
+            if "out" not in box:
+                return done({"read": False, "reason": "timeout"})
         if "error" in box:
             return done({"read": False, "reason": "error", "error": box["error"]})
         out = box.get("out")

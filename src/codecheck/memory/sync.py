@@ -101,7 +101,9 @@ def target_id(ctx, solo_db: str = "") -> str:
 def _fresh_state(ctx, solo_db: str = "") -> dict:
     state = load_state(ctx)
     if state.get("target") != target_id(ctx, solo_db):
-        state = {"target": target_id(ctx, solo_db)}  # another server: what the old one accepted says nothing about this one
+        # another server: what the old one accepted says nothing about this one. Evidence pulled from it is still
+        # somebody else's, so `pulled_ids` survives and is never pushed to the new server as ours.
+        state = {"target": target_id(ctx, solo_db), "pulled_ids": list(state.get("pulled_ids") or [])}
     return state
 
 
@@ -390,6 +392,19 @@ def pull_if_stale(ctx, max_age_seconds: float = 600.0, repos: Sequence[str] | No
         return result
     except Exception as e:  # noqa: BLE001 - reading memory must never break the caller
         return {"pulled": False, "error": type(e).__name__}
+
+
+def note_pull_failure(ctx) -> None:
+    """Stamp a failed pull so the next `RETRY_AFTER_FAILED_PULL` seconds do not try again. For a caller that stopped
+    waiting for `pull_if_stale` (its worker thread dies with the process before it could write the stamp). Never raises."""
+    try:
+        if not ctx.config.memory.url:
+            return
+        state = _fresh_state(ctx)
+        state["last_pull_failed_ts"] = clock()
+        save_state(ctx, state)
+    except Exception:  # noqa: BLE001 - bookkeeping only
+        return
 
 
 # ---------- sync, status ----------

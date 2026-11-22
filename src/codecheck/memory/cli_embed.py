@@ -1,7 +1,5 @@
 """`memory embed [--rebuild]`: compute or refresh the local vectors that semantic retrieval ranks against."""
 
-from codecheck.memory import semantic
-
 COMMANDS = ("embed",)
 BUDGET_SECONDS = 120.0
 
@@ -12,4 +10,6 @@ def add_arguments(sub) -> None:
 
 
 def run(args, ctx) -> dict:
+    from codecheck.memory import semantic
+
     return semantic.refresh_local(ctx, rebuild=args.rebuild, budget=BUDGET_SECONDS)
