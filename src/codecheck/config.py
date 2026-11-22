@@ -31,6 +31,7 @@ class ReviewConfig:
     routing: RoutingConfig = field(default_factory=RoutingConfig)
     attribution: bool = True  # one credit line in the review summary; user-only
     label: str = "code-check"  # label added to reviewed PRs, "" disables; user-only
+    learn_guidance: bool = False  # review-local may write a checked CODE_CHECK.md proposal to the working tree; user-only
     login: str = ""  # act as this login instead of asking `gh api user` (CI tokens cannot); user-only
     max_files: int = 80
     max_chunk_chars: int = 120_000
@@ -41,6 +42,7 @@ class ReviewConfig:
 @dataclass(frozen=True, slots=True)
 class LoopConfig:
     max_prs_per_iteration: int = 5
+    max_review_prs_per_iteration: int = 3  # review mode only: the newest open PRs of the repository come first
     repos: tuple[str, ...] = ()
     review_forks: bool = False  # the unattended review loop skips fork-based PRs unless this is true
 
@@ -167,7 +169,7 @@ _FREEFORM = {(table, "per_language") for table in ("models", "codex_models", "co
 _REMOVED = {("review", "routing", "max_comment_percent"), ("review", "routing", "docs_min_comment_lines")}
 # Keys (or whole tables) a repository's .code-check.toml may not set.
 REPO_FORBIDDEN = {
-    ("state_dir",), ("run_pr",), ("shadow",), ("golden",), ("review", "auto_approve"), ("review", "attribution"), ("review", "label"), ("review", "login"), ("loop", "review_forks"),
+    ("state_dir",), ("run_pr",), ("shadow",), ("golden",), ("review", "auto_approve"), ("review", "attribution"), ("review", "label"), ("review", "login"), ("review", "learn_guidance"), ("loop", "review_forks"),
     ("address", "test_command"), ("deep_reviewer", "command"),
     ("codex",), ("codex_models",), ("codex_reasoning",),
 }

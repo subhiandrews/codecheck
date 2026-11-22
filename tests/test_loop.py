@@ -31,7 +31,7 @@ def setup(tmp_path, n_prs=1, claude=None):
     provider.me = "me"
     provider.clone_argv = lambda repo, dest: ["git", "clone", "-q", str(origin), dest]
     refs = [provider.add_pr(n, head_sha=f"sha{n}").ref for n in range(1, n_prs + 1)]
-    provider.listing["review-requested"] = refs
+    provider.listing["open"] = refs
     fake = claude or FakeRunner().on_prefix("claude", stdout=OK_JSON)
     ctx = make_ctx(tmp_path, clone, provider=provider, runner=HybridRunner(fake))
     return ctx, provider, fake, refs, clone
@@ -129,13 +129,15 @@ def test_one_pr_that_errors_while_listing_does_not_abort_the_iteration(tmp_path)
     assert out["skipped"] == [{"pr": str(refs[1]), "reason": "error: RuntimeError: gh: HTTP 502"}]
 
 
-def test_loop_processes_at_most_five_prs_one_at_a_time_then_the_rest(tmp_path):
+def test_loop_processes_at_most_three_prs_one_at_a_time_then_the_rest(tmp_path):
     ctx, _provider, fake, refs, _ = setup(tmp_path, n_prs=7)
     _code, out = call(ctx, "loop", "--mode", "review")
-    assert out["processed"] == 5 and [r["pr"] for r in out["results"]] == [str(r) for r in refs[:5]]
-    assert len(claude_calls(fake)) == 5
+    assert out["processed"] == 3 and [r["pr"] for r in out["results"]] == [str(r) for r in refs[:3]]
+    assert len(claude_calls(fake)) == 3
     _code, out = call(ctx, "loop", "--mode", "review")
-    assert out["processed"] == 2 and [r["pr"] for r in out["results"]] == [str(r) for r in refs[5:]]
+    assert out["processed"] == 3 and [r["pr"] for r in out["results"]] == [str(r) for r in refs[3:6]]
+    _code, out = call(ctx, "loop", "--mode", "review")
+    assert out["processed"] == 1 and [r["pr"] for r in out["results"]] == [str(r) for r in refs[6:]]
 
 
 def test_idle_loop_spends_nothing(tmp_path):
@@ -173,8 +175,8 @@ def test_babysit_loop_uses_babysit_prompt_and_failing_checks(tmp_path):
     assert out["processed"] == 1
     (c,) = claude_calls(fake)
     assert "babysit-pr" in c.argv[2] and "o/r#9" in c.argv[2]
-    # babysit edits code, so the unattended run never starts in the user's own checkout
-    assert c.cwd != clone and c.cwd == tmp_path / "state" / "repos" / "o__r"
+    # the clone found under the working directory is used, and `workspace` is told not to edit it in place
+    assert c.cwd == clone and c.env == {"CODE_CHECK_UNATTENDED": "1"}
 
 
 def test_unattended_babysit_never_uses_the_users_checkout_even_on_the_pr_branch(tmp_path):
@@ -204,7 +206,7 @@ def test_failed_clone_leaves_nothing_behind_and_has_a_timeout(tmp_path):
 
 def test_loop_config_cap_is_respected(tmp_path):
     ctx, _provider, _fake, _refs, _ = setup(tmp_path, n_prs=4)
-    ctx.config = replace(ctx.config, loop=LoopConfig(max_prs_per_iteration=2))
+    ctx.config = replace(ctx.config, loop=LoopConfig(max_review_prs_per_iteration=2))
     assert call(ctx, "loop", "--mode", "review")[1]["processed"] == 2
 
 
@@ -237,12 +239,12 @@ def test_stale_threshold_covers_a_full_iteration_of_slow_prs(tmp_path):
     assert loop.stale_after(ctx.config) < 5 * 1800
 
 
-def test_a_live_iteration_older_than_two_hours_is_not_reclaimed(tmp_path):
+def test_a_live_review_iteration_older_than_two_hours_is_not_reclaimed(tmp_path):
     ctx, _provider, fake, _refs, _ = setup(tmp_path)
     lock = _lock_path(tmp_path)
     lock.parent.mkdir(parents=True)
     lock.write_text(f"{os.getpid()}:someone-else")  # a live process holds it
-    old = time.time() - 3 * 3600
+    old = time.time() - 2.2 * 3600  # a review iteration may take 3 x (30 + 15 minutes) + 15 minutes
     os.utime(lock, (old, old))
     out = call(ctx, "loop", "--mode", "review")[1]
     assert out["skipped"] is True and claude_calls(fake) == []

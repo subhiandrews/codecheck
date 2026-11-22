@@ -12,7 +12,8 @@ def run(args, ctx) -> dict:
     ref = ctx.resolve_ref(args.pr)
     pr = ctx.provider.get_pr(ref)
     sync = sync_base(ctx.git, ctx.config.remote, pr.base_ref)
-    on_branch = ctx.git.current_branch() == pr.head_ref
+    # an unattended run works in a worktree, so what the checkout has on it does not matter
+    on_branch = ctx.git.current_branch() == pr.head_ref and ctx.env.get("CODE_CHECK_UNATTENDED") != "1"
     return {
         "pr": str(ref), "head_sha": pr.head_sha, "head_ref": pr.head_ref, "state": pr.state, "is_draft": pr.is_draft,
         "is_cross_repo": pr.is_cross_repo, "on_pr_branch": on_branch, "dirty": ctx.git.is_dirty(),

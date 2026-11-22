@@ -296,6 +296,14 @@ def test_list_prs_reads_the_namespace_from_the_reference():
         GitLabProvider(r).list_prs("nope", [])
 
 
+def test_list_prs_open_scope_is_newest_first_and_needs_a_project():
+    body = json.dumps([{"iid": 8, "references": {"full": "g/s/p!8"}}])
+    r = FakeRunner().on("glab", "api", "projects/g%2Fs%2Fp/merge_requests?state=opened&scope=all&per_page=50&order_by=created_at&sort=desc", stdout=body)
+    assert GitLabProvider(r).list_prs("open", ["g/s/p"]) == [PRRef("g/s/p", 8)]
+    with pytest.raises(ProviderError, match="needs a project"):
+        GitLabProvider(r).list_prs("open", [])
+
+
 def test_login_override_skips_the_user_call():
     assert GitLabProvider(FakeRunner(), login="bot").whoami() == "bot"
 

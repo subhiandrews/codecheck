@@ -46,7 +46,7 @@ def test_status_reports_branch_dirty_and_pushability(tmp_path):
 def test_workspace_in_place_refuses_dirty_and_forks_and_creates_worktree_elsewhere(tmp_path):
     ctx, provider, pr, clone, _origin = own_pr_setup(tmp_path)
     code, out = call(ctx, "workspace", "--pr", str(pr.ref))
-    assert out == {"path": str(clone), "created": False, "guidance": None}
+    assert out == {"path": str(clone), "created": False, "guidance": None, "project_context": None}
 
     (clone / "scratch.txt").write_text("x")
     code, out = call(ctx, "workspace", "--pr", str(pr.ref))
@@ -170,15 +170,15 @@ def test_list_work_review_mode_filters_and_caps(tmp_path):
         refs.append(pr.ref)
     provider.prs[refs[0]] = replace(provider.prs[refs[0]], is_draft=True)
     provider.prs[refs[1]] = replace(provider.prs[refs[1]], author="me")
-    provider.listing["review-requested"] = refs
+    provider.listing["open"] = refs
     ctx = make_ctx(tmp_path, clone, provider=provider)
 
     _code, out = call(ctx, "list-work", "--mode", "review")
-    assert [i["pr"] for i in out["items"]] == [str(r) for r in refs[2:7]]  # drafts + own skipped, capped at 5
+    assert [i["pr"] for i in out["items"]] == [str(r) for r in refs[2:5]]  # drafts + own skipped, capped at 3, in listing order
     first = out["items"][0]
     call(ctx, "mark-done", "--mode", "review", "--pr", first["pr"], "--fingerprint", first["fingerprint"])
     _code, out = call(ctx, "list-work", "--mode", "review")
-    assert [i["pr"] for i in out["items"]] == [str(r) for r in refs[3:8]]
+    assert [i["pr"] for i in out["items"]] == [str(r) for r in refs[3:6]]
     provider.prs[refs[2]] = replace(provider.prs[refs[2]], head_sha="new-sha")  # new push -> reappears
     assert str(refs[2]) in [i["pr"] for i in call(ctx, "list-work", "--mode", "review")[1]["items"]]
 
@@ -189,7 +189,7 @@ def test_list_work_skips_approved_pr(tmp_path):
     provider.me = "me"
     pr = provider.add_pr(1, head_sha="sha1")
     provider.reviews[pr.ref] = [Review("bob", "sha1", "2026-01-01T00:00:00Z", "APPROVED")]
-    provider.listing["review-requested"] = [pr.ref]
+    provider.listing["open"] = [pr.ref]
     ctx = make_ctx(tmp_path, clone, provider=provider)
     _code, out = call(ctx, "list-work", "--mode", "review")
     assert out["items"] == []
@@ -203,7 +203,7 @@ def test_list_work_checks_approval_only_for_prs_it_would_review(tmp_path):
     provider.me = "me"
     pr = provider.add_pr(1, head_sha="sha1")
     provider.reviews[pr.ref] = [Review("me", "sha1", "2026-01-01T00:00:00Z", "COMMENTED")]
-    provider.listing["review-requested"] = [pr.ref]
+    provider.listing["open"] = [pr.ref]
     ctx = make_ctx(tmp_path, clone, provider=provider)
     _code, out = call(ctx, "list-work", "--mode", "review")
     assert out["items"] == [] and out["skipped"] == []
@@ -441,3 +441,57 @@ def test_pr_activity_fetches_slim_threads_when_review_is_at_head(tmp_path):
     provider.reviews[pr.ref] = [Review("me", pr.head_sha, "2026-01-01T00:00:00Z", "COMMENTED")]
     pr_activity(ctx, pr.ref, pr, "me")
     assert provider.thread_calls == [(pr.ref, False)]
+
+
+def test_list_work_review_stops_asking_about_older_prs_once_the_cap_is_met(tmp_path):
+    # The listing is newest first; each PR costs API calls, so the PRs after the third new one are never looked at.
+    _origin, clone = make_origin_and_clone(tmp_path)
+    provider = FakeProvider()
+    provider.me = "me"
+    refs = [provider.add_pr(n, head_sha=f"sha{n}").ref for n in range(10, 0, -1)]
+    provider.listing["open"] = refs
+    ctx = make_ctx(tmp_path, clone, provider=provider)
+    _code, out = call(ctx, "list-work", "--mode", "review")
+    assert [i["pr"] for i in out["items"]] == [str(r) for r in refs[:3]]
+    assert out["considered"] == 3  # three were looked at, and only the first batch of three was listed
+    assert set(provider.review_calls) == set(refs[:3])  # nothing was asked about the seven older PRs
+
+
+def test_list_work_review_leaves_reviewed_unchanged_prs_alone_until_something_new(tmp_path):
+    _origin, clone = make_origin_and_clone(tmp_path)
+    provider = FakeProvider()
+    provider.me = "me"
+    old, new = provider.add_pr(1, head_sha="sha1").ref, provider.add_pr(2, head_sha="sha2").ref
+    provider.reviews[old] = [Review("me", "sha1", "2026-01-01T00:00:00Z", "COMMENTED")]
+    provider.listing["open"] = [new, old]
+    ctx = make_ctx(tmp_path, clone, provider=provider)
+    assert [i["pr"] for i in call(ctx, "list-work", "--mode", "review")[1]["items"]] == [str(new)]
+    provider.prs[old] = replace(provider.prs[old], head_sha="sha1b")  # the author pushed again
+    assert [i["pr"] for i in call(ctx, "list-work", "--mode", "review")[1]["items"]] == [str(new), str(old)]
+
+
+def test_workspace_returns_the_base_branch_claude_md_as_project_context(tmp_path):
+    ctx, _provider, pr, clone, origin = own_pr_setup(tmp_path)
+    commit_file(clone, "CLAUDE.md", "build with make\n", "add CLAUDE.md")  # on the PR branch: not what is read
+    sh(clone, "reset", "--hard", "origin/feature")
+    other = tmp_path / "other"
+    sh(tmp_path, "clone", str(origin), str(other))
+    commit_file(other, "CLAUDE.md", "build with make\n", "add CLAUDE.md")
+    sh(other, "push", "origin", "HEAD:main")
+    out = call(ctx, "workspace", "--pr", str(pr.ref))[1]
+    assert out["project_context"]["text"] == "build with make\n" and out["project_context"]["source"] == "base"
+    assert out["guidance"] is None
+
+
+def test_workspace_never_edits_the_checkout_in_place_when_unattended(tmp_path):
+    ctx, _provider, pr, clone, _origin = own_pr_setup(tmp_path)
+    ctx.env = {"CODE_CHECK_UNATTENDED": "1"}  # the user is sitting on the PR branch
+    out = call(ctx, "workspace", "--pr", str(pr.ref))[1]
+    assert out["created"] is True and out["path"] != str(clone)
+
+
+def test_status_ignores_the_checkout_when_unattended(tmp_path):
+    ctx, _provider, pr, _clone, _origin = own_pr_setup(tmp_path)
+    assert call(ctx, "status", "--pr", str(pr.ref))[1]["on_pr_branch"] is True
+    ctx.env = {"CODE_CHECK_UNATTENDED": "1"}
+    assert call(ctx, "status", "--pr", str(pr.ref))[1]["on_pr_branch"] is False

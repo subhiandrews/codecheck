@@ -25,9 +25,10 @@ Without `full`, `code-check context` routes the optional reviewers itself: it dr
 5. Dispatch one Agent call with `subagent_type` `code-check:aggregator` and the prompt `RUN_DIR=<run_dir>`.
 6. Run `code-check post --run <run_id>` and show its `text` field to the user verbatim. If `incomplete` is true, add one line naming `failed_reviewers`. If any subagent's final `done:` line contains `ignored guidance: ...`, add one line relaying those reasons.
 7. If the `context` output contains `handoff: true`, run `code-check handoff --run <run_id>` and ignore its output; otherwise skip this step.
-8. Run `code-check cleanup --run <run_id>` to remove the run directory, even when an earlier step failed.
+8. Run `code-check guidance evidence`. If `enabled`, `proposable` and `changed` are not all true, skip this step. Otherwise improve the guidance for the directory it names, using only its `disputed` categories (findings the author's own verdicts called incorrect in several PRs) and `misses` (human review comments the panel did not match to a finding). Read `current` (null when there is no file yet) and write the whole new `CODE_CHECK.md`: keep every existing rule unless the evidence contradicts it, and add or sharpen at most a few rules, each a plain instruction to the reviewers (for a disputed category, say when it does not apply here; for a miss, say what to look for). Never put code, names, PR numbers, secrets or the evidence itself in the text. Pipe it into `code-check guidance apply --dir <dir> --digest <digest>`, then add one line to your report: `Updated <written> (review the change and commit it yourself)`. If `apply` errors, give its reason in one line and carry on.
+9. Run `code-check cleanup --run <run_id>` to remove the run directory, even when an earlier step failed.
 
 ## Rules
 
-- Never ask the user questions mid-run, never edit files, and never post anywhere.
+- Never ask the user questions mid-run, never edit files (the one exception is `CODE_CHECK.md` through `code-check guidance apply` in step 8), and never post anywhere.
 - Keep your own commentary to the final report. The reviewers' output lives on disk, not in this conversation.

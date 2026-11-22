@@ -15,6 +15,7 @@ from codecheck.errors import GitError
 from codecheck.vcs.git import Git
 
 GUIDANCE_FILE = "CODE_CHECK.md"
+CONTEXT_FILE = "CLAUDE.md"  # the repo's own instructions to coding agents; read the same safe way, as background only
 MAX_GUIDANCE_CHARS = 16_000
 NESTED_RESERVE = 4_000  # of the cap, kept for nested files when there are any
 MIN_NESTED_BODY = 200  # a nested file is cut only when at least this much of it fits
@@ -42,8 +43,8 @@ def _decode(raw: bytes | str | None) -> str | None:
     return raw if raw and raw.strip() else None
 
 
-def _rel(directory: str) -> str:
-    return f"{directory}/{GUIDANCE_FILE}" if directory else GUIDANCE_FILE
+def _rel(directory: str, name: str = GUIDANCE_FILE) -> str:
+    return f"{directory}/{name}" if directory else name
 
 
 def _plain(component: str) -> bool:
@@ -62,23 +63,24 @@ def _ancestor_dirs(paths: Iterable[object]) -> list[str]:
     return sorted(found, key=lambda d: (d.count("/"), d))
 
 
-def guidance_dirs(paths: Iterable[object]) -> tuple[list[str], tuple[str, ...]]:
+def guidance_dirs(paths: Iterable[object], name: str = GUIDANCE_FILE) -> tuple[list[str], tuple[str, ...]]:
     """The directories above the given repo-relative files that may hold a nested file, and a note for the guidance text
     when `MAX_GUIDANCE_DIRS` cut some off. Shallowest first, then by name, without the root. A path that is absolute,
     climbs with `..` or holds control characters contributes nothing."""
     found = _ancestor_dirs(paths)
-    note = (f"[{GUIDANCE_FILE}: only the {MAX_GUIDANCE_DIRS} shallowest directories above the changed files were "
+    note = (f"[{name}: only the {MAX_GUIDANCE_DIRS} shallowest directories above the changed files were "
             "checked for nested files]")
     return found[:MAX_GUIDANCE_DIRS], (note,) if len(found) > MAX_GUIDANCE_DIRS else ()
 
 
-def _header(directory: str) -> str:
+def _header(directory: str, name: str = GUIDANCE_FILE) -> str:
     # files come root first then shallowest first, so "above" is always a less specific file
-    return (f"[{_rel(directory)}: the rules below apply only to files under `{directory}/`; "
+    return (f"[{_rel(directory, name)}: the rules below apply only to files under `{directory}/`; "
             "for those files they win over any rule above that they conflict with]\n")
 
 
-def _combine(source: str, sections: Iterable[tuple[str, bytes | str | None]], notes: tuple[str, ...] = ()) -> Guidance | None:
+def _combine(source: str, sections: Iterable[tuple[str, bytes | str | None]], notes: tuple[str, ...] = (),
+             name: str = GUIDANCE_FILE) -> Guidance | None:
     """One text from (directory, raw content) pairs given root first. A lone root file is passed through unchanged.
 
     Nested files keep up to `NESTED_RESERVE` characters of the cap (or what they need, if less) so a large root file
@@ -87,12 +89,12 @@ def _combine(source: str, sections: Iterable[tuple[str, bytes | str | None]], no
     parts = [(d, body) for d, raw in sections if (body := _decode(raw)) is not None]
     if not parts:
         return None
-    nested_size = sum(len(_header(d)) + len(body) + 2 for d, body in parts if d)
+    nested_size = sum(len(_header(d, name)) + len(body) + 2 for d, body in parts if d)
     root_cap = MAX_GUIDANCE_CHARS - min(NESTED_RESERVE, nested_size)
     text, files, skipped, truncated = "", [], [], False
     for directory, body in parts:
         sep = "" if not text else ("" if text.endswith("\n") else "\n") + "\n"
-        head = _header(directory) if directory else ""
+        head = _header(directory, name) if directory else ""
         room = (MAX_GUIDANCE_CHARS if directory else root_cap) - len(text) - len(sep)
         if len(head) + len(body) <= room:
             text += sep + head + body
@@ -100,19 +102,19 @@ def _combine(source: str, sections: Iterable[tuple[str, bytes | str | None]], no
             text += sep + (head + body)[:room]
             truncated = True
         else:
-            skipped.append(_rel(directory))
+            skipped.append(_rel(directory, name))
             truncated = True
             continue
-        files.append(_rel(directory))
+        files.append(_rel(directory, name))
     if truncated:
-        text += f"\n[{GUIDANCE_FILE} truncated at {MAX_GUIDANCE_CHARS} characters]"
+        text += f"\n[{name} truncated at {MAX_GUIDANCE_CHARS} characters]"
     for note in notes:  # a lookup that could not be completed: say so rather than look complete
         text += f"\n{note}"
         truncated = True
     return Guidance(source, text, truncated, tuple(files), tuple(skipped))
 
 
-def _read_regular(root: Path, directory: str) -> bytes | None:
+def read_regular(root: Path, directory: str, name: str = GUIDANCE_FILE) -> bytes | None:
     """The file in `directory` of the working tree, or None. Neither it nor any directory on the way may be a symlink."""
     path = root
     try:
@@ -120,7 +122,7 @@ def _read_regular(root: Path, directory: str) -> bytes | None:
             path = path / part
             if not stat.S_ISDIR(os.lstat(path).st_mode):
                 return None
-        path = path / GUIDANCE_FILE
+        path = path / name
         if not stat.S_ISREG(os.lstat(path).st_mode):
             return None
         # O_NOFOLLOW closes the lstat/open race for a swapped-in symlink.
@@ -131,22 +133,24 @@ def _read_regular(root: Path, directory: str) -> bytes | None:
         return None
 
 
-def from_worktree(root: Path | str, paths: Iterable[object] = ()) -> Guidance | None:
+def from_worktree(root: Path | str, paths: Iterable[object] = (), name: str = GUIDANCE_FILE) -> Guidance | None:
     """Guidance from the working tree for a change to `paths`: the root file, then nested ones above those paths."""
     root = Path(root)
-    dirs, notes = guidance_dirs(paths)
-    return _combine("worktree", ((d, _read_regular(root, d)) for d in ("", *dirs)), notes)
+    dirs, notes = guidance_dirs(paths, name)
+    return _combine("worktree", ((d, read_regular(root, d, name)) for d in ("", *dirs)), notes, name)
 
 
-def from_base(git: Git, ref: str, paths: Iterable[object] = (), notes: tuple[str, ...] = ()) -> Guidance | None:
+def from_base(git: Git, ref: str, paths: Iterable[object] = (), notes: tuple[str, ...] = (),
+              name: str = GUIDANCE_FILE) -> Guidance | None:
     """Guidance at `ref` for a change to `paths`: the root file, then nested ones above those paths. `notes` are lookup
     problems the caller already knows of; they are shown in the text and mark it truncated."""
-    dirs, capped = guidance_dirs(paths)
+    dirs, capped = guidance_dirs(paths, name)
     notes += capped
     nested: set[str] = set()
     if dirs:
         try:
-            nested = set(git.regular_files(ref, [_rel(d) for d in dirs]))
+            nested = set(git.regular_files(ref, [_rel(d, name) for d in dirs]))
         except GitError:
-            notes += (f"[{GUIDANCE_FILE}: nested files could not be looked up]",)  # the root file still applies
-    return _combine("base", ((d, git.show_file(ref, _rel(d))) for d in ("", *dirs) if not d or _rel(d) in nested), notes)
+            notes += (f"[{name}: nested files could not be looked up]",)  # the root file still applies
+    return _combine("base", ((d, git.show_file(ref, _rel(d, name))) for d in ("", *dirs) if not d or _rel(d, name) in nested),
+                    notes, name)

@@ -1,7 +1,8 @@
 """Thin subprocess abstraction; every external command goes through a CommandRunner."""
 
+import os
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -31,14 +32,15 @@ class CommandRunner(Protocol):
         input: str | None = None,
         cwd: Path | None = None,
         timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> CommandResult: ...
 
 
 class SubprocessRunner:
-    def run(self, args, *, input=None, cwd=None, timeout=None) -> CommandResult:
+    def run(self, args, *, input=None, cwd=None, timeout=None, env=None) -> CommandResult:
         try:
             p = subprocess.run(
-                list(args), input=input, cwd=cwd, capture_output=True,
+                list(args), input=input, cwd=cwd, env={**os.environ, **env} if env else None, capture_output=True,
                 text=True, encoding="utf-8", errors="replace", timeout=timeout, check=False,
             )
         except FileNotFoundError as e:

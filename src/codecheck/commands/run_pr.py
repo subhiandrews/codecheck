@@ -1,7 +1,8 @@
 import json
 import time
+from pathlib import Path
 
-from codecheck.commands._common import safe_repo
+from codecheck.commands._common import busy_checkout, safe_repo
 from codecheck.commands.workspace import managed_clone
 from codecheck.config import expand_path
 from codecheck.core.state import (
@@ -47,7 +48,7 @@ def parse_result(stdout: str, returncode: int, stderr: str) -> dict:
 
 
 def run_one(ctx, mode: str, ref, fingerprint: str | None = None, dry_run: bool = False,
-            security: bool = False, performance: bool = False, full: bool = False) -> dict:
+            security: bool = False, performance: bool = False, full: bool = False, clone: str | None = None) -> dict:
     if security and mode != "review":
         raise CodeCheckError("--security applies to review mode only")
     if performance and mode != "review":
@@ -81,14 +82,19 @@ def run_one(ctx, mode: str, ref, fingerprint: str | None = None, dry_run: bool =
         return {"pr": str(ref), "argv": argv}
     started = time.time()
     try:
-        # Babysit edits code: never let an unattended run work in the user's own checkout, always in the
-        # managed clone (whose worktrees live under state_dir). A review only reads, so the user's clone is fine.
-        if mode == "review" and safe_repo(ctx) == ref.repo:
+        # The clone found under the working directory serves both modes: a review only reads it, and babysit
+        # edits in a worktree under state_dir (CODE_CHECK_UNATTENDED stops `workspace` from using the checkout
+        # itself). Without a local clone, work in a managed one.
+        if clone:
+            if mode == "babysit" and (why := busy_checkout(ctx, clone)):
+                raise CodeCheckError(why)
+            cwd = Path(clone)
+        elif mode == "review" and safe_repo(ctx) == ref.repo:
             cwd = ctx.git.cwd
         else:
             cwd = managed_clone(ctx, ref.repo).cwd
         # input="" closes stdin: claude -p otherwise waits for it.
-        res = ctx.runner.run(argv, cwd=cwd, timeout=cfg.timeout_seconds, input="")
+        res = ctx.runner.run(argv, cwd=cwd, timeout=cfg.timeout_seconds, input="", env={"CODE_CHECK_UNATTENDED": "1"} if mode == "babysit" else None)
         parsed = parse_result(res.stdout, res.returncode, res.stderr)
     except Exception as e:  # noqa: BLE001 - report, and still do the bookkeeping below
         parsed = {"ok": False, "summary": f"error: {type(e).__name__}: {e}"[:500], "cost": None, "usage": None}

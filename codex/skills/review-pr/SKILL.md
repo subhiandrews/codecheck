@@ -6,7 +6,7 @@ argument-hint: "[PR number | OWNER/REPO#N | URL] [full] [security] [performance]
 
 # review-pr
 
-Reviews a teammate's PR (never your own) and posts a single review with inline comments. Approval is decided by the CLI from your configuration, never by you.
+Reviews a teammate's PR (never your own) and posts a single review with inline comments. Approval is decided by the CLI from your configuration, never by you. Every review is made against the PR's base branch freshly fetched from the remote, and the reviewers get the repository's `CODE_CHECK.md` and `CLAUDE.md` (read from the base branch) and can read its other files.
 
 `code-check` below means `"@CODE_CHECK_BIN@"`. Every subcommand prints one JSON document.
 

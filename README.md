@@ -2,7 +2,7 @@
 
 Review pull requests and deal with review comments from inside Claude Code or Codex, on GitHub or GitLab.
 
-`code-check` is a set of four skills on top of a deterministic Python CLI. The CLI does everything that must be exact: git and host calls, diff parsing, anchoring comments to lines, the approval policy, state. Models do only the judgment: reviewing code, weighing review comments, fixing what is valid.
+`code-check` is a set of four skills (plus two loop aliases for Claude Code) on top of a deterministic Python CLI. The CLI does everything that must be exact: git and host calls, diff parsing, anchoring comments to lines, the approval policy, state. Models do only the judgment: reviewing code, weighing review comments, fixing what is valid.
 
 | | GitHub (`gh`) | GitLab (`glab`) |
 |---|---|---|
@@ -32,9 +32,9 @@ In Claude Code the skills are `/code-check:<skill>`; in Codex they are `$<skill>
 ```text
 /code-check:review-local                 # review the branch you are on (prints, never posts)
 /code-check:review-pr 123                # review PR 123 and post one inline review
-/code-check:review-pr                    # work the queue of PRs awaiting your review (max 5)
+/code-check:review-prs                   # review the open PRs here, newest first (max 3)
 /code-check:address-comments 456         # work through the comments on your PR 456
-/code-check:babysit-pr                   # comments and failing CI on all your PRs
+/code-check:babysit-prs                  # comments and failing CI on all your PRs here
 ```
 
 A PR is `123` (current repository), `OWNER/REPO#123` or a URL; on GitLab a merge request is `7`, `group/subgroup/project#7` or a URL. Add `security` or `performance` after the PR to include that optional reviewer, or `full` to use every reviewer and skip routing.
@@ -47,6 +47,7 @@ A PR is `123` (current repository), `OWNER/REPO#123` or a URL; on GitLab a merge
 | `review-pr` | Reviews a teammate's PR and posts one inline review with Critical, Warning and Suggestion findings. Approves only when `review.auto_approve` is on and nothing Critical or Warning remains. Never posts to drafts or to your own PRs. |
 | `address-comments` | On your own PR: checks each unresolved thread against the code, fixes what is valid, pushes back with evidence on what is not, pushes behind your test gate, replies, resolves fixed threads, re-requests review. |
 | `babysit-pr` | `address-comments` plus failing CI checks, across your PRs. Meant for `/loop`. |
+| `review-prs`, `babysit-prs` | Aliases of `review-pr` and `babysit-pr` with no PR argument: the loop forms. Run them in a clone, or in a directory that holds clones (`~/opensource`): every clone directly under it is covered, found by its remote; nothing depends on a review-request queue. |
 
 If there is nothing new to do, a run stops after the no-LLM `precheck` and spends no tokens.
 
@@ -72,13 +73,13 @@ Every subcommand prints exactly one JSON document, errors included. Run `code-ch
 
 | Group | Commands |
 |---|---|
-| Review | `precheck`, `sync`, `context [--mode local\|pr] [--pr] [--full] [--security] [--performance]`, `panel run` (Codex), `ingest`, `post`, `cleanup` |
+| Review | `precheck`, `sync`, `context [--mode local\|pr] [--pr] [--full] [--security] [--performance]`, `panel run` (Codex), `ingest`, `post`, `cleanup`, `guidance evidence\|apply` |
 | Address comments | `status`, `workspace`, `threads`, `commit`, `push`, `reply`, `resolve`, `request-review`, `checks`, `check-log`, `attempt` |
 | Unattended | `list-work`, `mark-done`, `run-pr --mode review\|babysit --pr REF`, `loop --mode review\|babysit` |
 | Setup | `doctor`, `gen-agents --out agents`, `gen-skills --out codex/skills` |
 | Developer | `shadow` (collect, export-golden, record-verdict), `eval --replay\|--live\|--calibrate\|--history` |
 
-Loops: `/loop 15m /code-check:review-pr`, `/loop 10m /code-check:babysit-pr`, `/loop 2m /code-check:review-local`. Each iteration handles at most `loop.max_prs_per_iteration` PRs, one headless `claude -p` process each, and retries a failing PR up to 3 attempts per fingerprint.
+Loops: `/loop 15m /code-check:review-prs`, `/loop 10m /code-check:babysit-prs`, `/loop 2m /code-check:review-local`. Each PR gets one headless `claude -p` process and a failing PR is retried up to 3 attempts per fingerprint; caps are in [CONFIGURATION.md](docs/CONFIGURATION.md).
 
 ## Configuration
 
@@ -107,7 +108,7 @@ A repository's `.code-check.toml` cannot set `state_dir`, `[run_pr]`, `[shadow]`
 
 ### CODE_CHECK.md
 
-A `CODE_CHECK.md` at the repository root tells the reviewers, in plain prose, what to look at and what to ignore (max 16,000 characters). PR runs read it from the **base branch**, never the PR head; local runs read your working tree. A missing, empty or symlinked file is ignored. In a monorepo, a `CODE_CHECK.md` in a directory above a changed file is read too and applies only to files under that directory, where it wins over the root file on a conflict; all files share the one size limit. This repository's own file also checks that the docs stay accurate: the README stays short and current, and architecture detail lives under `docs/`.
+A `CODE_CHECK.md` at the repository root tells the reviewers, in plain prose, what to look at and what to ignore (max 16,000 characters). PR runs read it from the **base branch**, never the PR head; local runs read your working tree. A missing, empty or symlinked file is ignored. The same way, reviewers also get the repository's `CLAUDE.md` (and nested ones) as background on conventions and how it is built; it cannot give them tasks. In a monorepo, a `CODE_CHECK.md` in a directory above a changed file is read too and applies only to files under that directory, where it wins over the root file on a conflict; all files share the one size limit. Optionally (`review.learn_guidance`, user config only, off by default), `review-local` can propose edits to these files from what past reviews on this machine learned, writing the working tree only and never committing; see [ARCHITECTURE.md](docs/ARCHITECTURE.md#code_checkmd). This repository's own file also checks that the docs stay accurate: the README stays short and current, and architecture detail lives under `docs/`.
 
 ## Safety
 

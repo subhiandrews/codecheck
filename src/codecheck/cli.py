@@ -6,19 +6,20 @@ import os
 import re
 import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from codecheck import __version__, commands
 from codecheck.config import Config, expand_path, load_config
 from codecheck.core.state import StateStore
-from codecheck.errors import CodeCheckError
+from codecheck.errors import CodeCheckError, ConfigError
 from codecheck.models import PRRef
 from codecheck.providers import detect_provider, get_provider
 from codecheck.providers.base import Provider
 from codecheck.runids import check_run_id
 from codecheck.runner import CommandRunner, SubprocessRunner
 from codecheck.shadow.store import ShadowStore
+from codecheck.vcs.discover import candidate_clones
 from codecheck.vcs.git import Git
 
 _PR_URL = re.compile(r"([^/\s]+/[^/\s]+)/pull/(\d+)")
@@ -35,6 +36,32 @@ class AppContext:
     shadow: ShadowStore | None
     cwd: Path
     env: Mapping[str, str]
+    home: Path | None = None  # set by build_context; lets `at` read a clone's own config and provider
+
+    def at(self, path: Path) -> AppContext:
+        """The same tool as seen from another clone."""
+        if self.home is None:  # a hand-built context (tests): keep its config and provider, there is nothing to reload from
+            return replace(self, git=Git(self.runner, path), cwd=path)
+        return build_context(path, self.env, self.home, self.runner)
+
+    def clones(self, only: str | None = None, errors: dict[str, str] | None = None) -> dict[str, AppContext]:
+        """Repository name to a context for each clone at or directly under the working directory; with `only`, stops
+        at that repository. A clone with no usable remote is left out quietly (many directories have none); one whose
+        own configuration is broken is left out and, when `errors` is given, recorded there as path to reason."""
+        found: dict[str, AppContext] = {}
+        for path in candidate_clones(self.cwd, self.runner, expand_path(self.config.state_dir)):
+            try:
+                clone = self.at(path)
+                found.setdefault(clone.current_repo(), clone)
+            except ConfigError as e:
+                if errors is not None:
+                    errors[str(path)] = str(e)[:300]
+                continue
+            except CodeCheckError:
+                continue  # no usable remote: not a repository this tool can name
+            if only in found:
+                break
+        return found
 
     def run_dir(self, run_id: str) -> Path:
         return expand_path(self.config.state_dir) / "runs" / check_run_id(run_id)
@@ -92,7 +119,7 @@ def build_context(
         provider = get_provider(detect_provider(config.provider, remote_url), runner, cwd, config.review.login)
     shadow = ShadowStore(expand_path(config.shadow.store)) if config.shadow.enabled or config.shadow.handoff else None
     state = StateStore(expand_path(config.state_dir) / "state.json")
-    return AppContext(config, runner, provider, git, state, shadow, cwd, env)
+    return AppContext(config, runner, provider, git, state, shadow, cwd, env, home)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -109,11 +136,27 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _route(ctx: AppContext, pr) -> AppContext:
+    """A PR named as OWNER/REPO#N or by URL runs in the clone of that repository found under the working directory."""
+    if not isinstance(pr, str) or pr.strip().isdigit():
+        return ctx
+    try:
+        repo = ctx.resolve_ref(pr).repo
+    except CodeCheckError:
+        return ctx  # malformed: the command reports it
+    try:
+        if repo == ctx.current_repo():
+            return ctx
+    except CodeCheckError:
+        pass  # not inside a repository, which is the case this exists for
+    return ctx.clones(only=repo).get(repo, ctx)
+
+
 def main(argv: Sequence[str] | None = None, *, ctx: AppContext | None = None, out=None) -> int:
     out = out or sys.stdout
     args = build_parser().parse_args(argv)
     try:
-        ctx = ctx or build_context((args.cwd or Path.cwd()).resolve(), os.environ, Path.home())
+        ctx = _route(ctx or build_context((args.cwd or Path.cwd()).resolve(), os.environ, Path.home()), getattr(args, "pr", None))
         result = args.func(args, ctx)
     except CodeCheckError as e:
         print(json.dumps({"error": str(e)}), file=out)

@@ -4,6 +4,7 @@ from pathlib import Path
 from codecheck.core.paths import check_finding_paths, contained, finding_items  # noqa: F401 - re-exported
 from codecheck.core.precheck import approved_by, fetch_activity
 from codecheck.errors import CodeCheckError
+from codecheck.vcs.git import Git
 
 
 def read_json(path: Path):
@@ -21,6 +22,15 @@ def load_meta(ctx, run_id: str) -> dict:
     if not path.exists():
         raise CodeCheckError(f"unknown run {run_id}; run `code-check context` first")
     return read_json(path)
+
+
+def busy_checkout(ctx, clone: str) -> str | None:
+    """Why unattended babysit must not start in `clone` (its process could touch uncommitted work), else None."""
+    try:
+        dirty = Git(ctx.runner, Path(clone)).is_dirty()
+    except CodeCheckError:
+        return "the checkout's state could not be read"
+    return "checkout has uncommitted changes; babysit will not start in it" if dirty else None
 
 
 def local_key(ctx) -> str:

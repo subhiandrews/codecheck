@@ -1,18 +1,18 @@
 ---
 name: review-pr
-description: Review a teammate's pull request with the code-check reviewer panel and post one inline review (Critical, Warning, Suggestion), approving only when configured and clean. With no argument it works the queue of PRs awaiting your review, at most five per run and one at a time. Use for "review PR 123", or under /loop to keep reviewing teammates' PRs.
+description: Review a teammate's pull request with the code-check reviewer panel and post one inline review (Critical, Warning, Suggestion), approving only when configured and clean. With no argument it reviews the open PRs of the repository you are in (or of every clone directly under the current directory), newest first, at most three per run and one at a time, skipping any already reviewed with nothing new. Use for "review PR 123", or under /loop to keep reviewing teammates' PRs.
 argument-hint: "[PR number | OWNER/REPO#N | URL] [full] [security] [performance]"
 ---
 
 # review-pr
 
-Reviews a teammate's PR (never your own) and posts a single review with inline comments. Approval is decided by the CLI from your configuration, never by you.
+Reviews a teammate's PR (never your own) and posts a single review with inline comments. Approval is decided by the CLI from your configuration, never by you. Every review is made against the PR's base branch freshly fetched from the remote, and the reviewers get the repository's `CODE_CHECK.md` and `CLAUDE.md` (read from the base branch) and can read its other files.
 
 `code-check` below means `"${CLAUDE_PLUGIN_ROOT}/bin/code-check"`. Every subcommand prints one JSON document.
 
 ## Arguments
 
-`full`, `security` and `performance` are bare keywords, never PR references. Take them out of the arguments first; whatever remains, if anything, is `<PR>`. A keyword without a PR means queue mode, where it has no effect because configuration controls it. When a prompt says "Pass the full argument", "Pass the security argument" or "Pass the performance argument", that means the keyword `full`, `security` or `performance`.
+`full`, `security` and `performance` are bare keywords, never PR references. Take them out of the arguments first; whatever remains, if anything, is `<PR>`. A keyword without a PR means repository mode, where it has no effect because configuration controls it. When a prompt says "Pass the full argument", "Pass the security argument" or "Pass the performance argument", that means the keyword `full`, `security` or `performance`.
 
 Without `full`, `code-check context` routes the optional reviewers itself: it drops the architect for a clearly small change and adds the performance and docs reviewers when the diff calls for them (`panel.routing` says why). Never decide that yourself. `full` puts every reviewer on the panel, security and performance included, and skips routing.
 
@@ -28,9 +28,9 @@ Without `full`, `code-check context` routes the optional reviewers itself: it dr
 8. Always run `code-check cleanup --run <run_id>`, even when an earlier step failed.
 9. Report ONE line: `<PR>: <decision>, <inline> inline comments, <unlisted> in the summary`, plus `(incomplete: <failed_reviewers>)` when applicable, and `(ignored guidance: <reasons>)` when any subagent's final `done:` line contains `ignored guidance: ...`.
 
-## Without an argument (queue mode)
+## Without an argument (repository mode)
 
-Run `code-check loop --mode review` with the Bash tool's `run_in_background` option: an iteration runs up to `loop.max_prs_per_iteration` headless reviews of up to 30 minutes each, far longer than a foreground Bash call is allowed to take, and a killed iteration would leave work half done. Wait for the background command to finish, then read its JSON output. Never run a second `loop` while one is still running. It reviews each PR awaiting your review in its own headless process, one at a time (the per-iteration cap comes from configuration), so nothing accumulates in this session. If `skipped` is the boolean `true`, say the previous iteration is still running. Otherwise print one compact line per entry of `results` (`pr`, `ok`, `summary`), then one line per entry of the `skipped` list (`pr`, `reason`), which is where PRs with only unanswered replies show up. Do not review anything yourself in this mode. The security and performance reviewers and full mode are controlled by `review.security`, `review.performance` and `review.full` in the configuration here, not by an argument; routing is controlled by `review.routing`.
+Run `code-check loop --mode review` with the Bash tool's `run_in_background` option: an iteration runs up to `loop.max_prs_per_iteration` headless reviews of up to 30 minutes each, far longer than a foreground Bash call is allowed to take, and a killed iteration would leave work half done. Wait for the background command to finish, then read its JSON output. Never run a second `loop` while one is still running. It lists the open PRs of the repository this runs in, or of every clone directly under the current directory (or `loop.repos`), newest first, and reviews at most `loop.max_review_prs_per_iteration` (default 3) of the ones with something new, each in its own headless process, one at a time. A PR that was reviewed and has no new commits since is not reviewed again, and one with only replies shows up under `skipped`, so nothing accumulates in this session. If `skipped` is the boolean `true`, say the previous iteration is still running. Otherwise print one compact line per entry of `results` (`pr`, `ok`, `summary`), then one line per entry of the `skipped` list (`pr`, `reason`), which is where PRs with only unanswered replies and PRs from forks show up. Do not review anything yourself in this mode. The security and performance reviewers and full mode are controlled by `review.security`, `review.performance` and `review.full` in the configuration here, not by an argument; routing is controlled by `review.routing`.
 
 ## Rules
 

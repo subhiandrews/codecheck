@@ -62,8 +62,19 @@ def frontmatter(text: str) -> dict:
 AGENT_NAMES = {frontmatter_of(p)["name"] for p in (REPO / "agents").glob("*.md")}
 
 
-def test_exactly_the_four_skills():
-    assert {p.parent.name for p in SKILLS} == {"review-local", "review-pr", "address-comments", "babysit-pr"}
+ALIASES = {"review-prs": "review-pr", "babysit-prs": "babysit-pr"}  # loop forms that only delegate
+WORKING = [p for p in SKILLS if p.parent.name not in ALIASES]
+
+
+def test_aliases_stay_tiny_and_name_the_skill_they_delegate_to():
+    for alias, target in ALIASES.items():
+        text = (REPO / f"skills/{alias}/SKILL.md").read_text()
+        assert len(text.splitlines()) <= 12 and f"`code-check:{target}`" in text and target in {p.parent.name for p in SKILLS}
+
+
+def test_exactly_the_six_skills():
+    assert {p.parent.name for p in SKILLS} == {
+        "review-local", "review-pr", "review-prs", "address-comments", "babysit-pr", "babysit-prs"}
 
 
 @pytest.mark.parametrize("path", SKILLS, ids=lambda p: p.parent.name)
@@ -73,7 +84,7 @@ def test_skill_frontmatter_is_valid(path):
     assert 40 <= len(fm["description"]) <= 1024
 
 
-@pytest.mark.parametrize("path", SKILLS, ids=lambda p: p.parent.name)
+@pytest.mark.parametrize("path", WORKING, ids=lambda p: p.parent.name)
 def test_skill_only_references_real_subcommands_and_agents(path):
     text = path.read_text()
     used = set(CLI_REF.findall(text))
@@ -139,7 +150,7 @@ def test_ensure_runtime_is_a_noop_when_current(tmp_path):
     assert res.returncode == 0 and res.stdout == "" and res.stderr == ""
 
 
-@pytest.mark.parametrize("path", SKILLS, ids=lambda p: p.parent.name)
+@pytest.mark.parametrize("path", WORKING, ids=lambda p: p.parent.name)
 def test_every_invocation_in_a_skill_uses_real_flags(path):
     spans = SPAN.findall(path.read_text())
     assert spans

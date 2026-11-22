@@ -9,6 +9,7 @@ from codecheck.commands import (
     eval_run,
     gen_agents,
     gen_skills,
+    guidance,
     handoff,
     handoff_queue,
     ingest,
@@ -33,6 +34,6 @@ from codecheck.commands import (
 ALL = [
     doctor, sync, precheck, context, panel, ingest, post, handoff, cleanup,
     status, workspace, threads, commit, push, reply, resolve, request_review,
-    checks, check_log, attempt, list_work, mark_done, shadow, gen_agents, gen_skills, run_pr, loop,
+    checks, check_log, attempt, list_work, mark_done, shadow, gen_agents, gen_skills, guidance, run_pr, loop,
     eval_run, handoff_queue,
 ]

@@ -49,7 +49,7 @@ _JOB_STATE = {
     "manual": "skipped", "running": "pending", "pending": "pending", "created": "pending", "preparing": "pending",
     "waiting_for_resource": "pending", "scheduled": "pending",
 }
-_SCOPES = {"review-requested": "reviewer_username", "authored": "author_username"}
+_SCOPES = {"review-requested": "reviewer_username", "authored": "author_username", "open": None}
 _POSITION_REJECTED = re.compile(r"\b400\b|\b422\b|line_code|position|diff_refs|could not be resolved", re.IGNORECASE)
 
 
@@ -181,10 +181,15 @@ class GitLabProvider:
             url=d["web_url"], is_cross_repo=d.get("source_project_id") != d.get("target_project_id"),
         )
 
-    def list_prs(self, scope: str, repos: Sequence[str]) -> list[PRRef]:
+    def list_prs(self, scope: str, repos: Sequence[str], limit: int = 50) -> list[PRRef]:
         if scope not in _SCOPES:
             raise ProviderError(f"unknown scope {scope!r}; use one of {sorted(_SCOPES)}")
-        query = f"state=opened&scope=all&per_page=50&{_SCOPES[scope]}={quote(_login(self.whoami()), safe='')}"
+        if scope == "open":
+            if not repos:
+                raise ProviderError("listing every open merge request needs a project")
+            query = f"state=opened&scope=all&per_page={limit}&order_by=created_at&sort=desc"  # newest first
+        else:
+            query = f"state=opened&scope=all&per_page={limit}&{_SCOPES[scope]}={quote(_login(self.whoami()), safe='')}"
         endpoints = [f"projects/{_pid(r)}/merge_requests?{query}" for r in repos] or [f"merge_requests?{query}"]
         refs: list[PRRef] = []
         for endpoint in endpoints:
@@ -192,7 +197,7 @@ class GitLabProvider:
                 repo = (item.get("references") or {}).get("full", "").rpartition("!")[0]
                 if repo:
                     refs.append(PRRef(repo, item["iid"]))
-        return refs[:50]
+        return refs[:limit]
 
     def list_changed_files(self, ref: PRRef) -> list[str]:
         diffs = self._get(f"{self._mr(ref)}/diffs?per_page=100", paginate=True)

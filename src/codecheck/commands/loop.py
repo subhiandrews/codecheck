@@ -21,10 +21,11 @@ def add_arguments(p) -> None:
     p.add_argument("--dry-run", action="store_true")
 
 
-def stale_after(config) -> int:
+def stale_after(config, mode: str = "babysit") -> int:
     """Longest a live iteration can legitimately take; a lock older than this (and not refreshed) is stale."""
     per_pr = config.run_pr.timeout_seconds + CLONE_TIMEOUT_SECONDS
-    return config.loop.max_prs_per_iteration * per_pr + STALE_MARGIN_SECONDS
+    limit = config.loop.max_review_prs_per_iteration if mode == "review" else config.loop.max_prs_per_iteration
+    return limit * per_pr + STALE_MARGIN_SECONDS
 
 
 def _on_signal(signum, _frame):
@@ -42,7 +43,7 @@ def _install_signal_handlers() -> dict:
 
 def run(args, ctx) -> dict:
     state_dir = ensure_private_dir(expand_path(ctx.config.state_dir))
-    lock = FileLock(state_dir / "locks" / f"{args.mode}.lock", stale_after=stale_after(ctx.config))
+    lock = FileLock(state_dir / "locks" / f"{args.mode}.lock", stale_after=stale_after(ctx.config, args.mode))
     if not lock.acquire():
         return {"skipped": True, "reason": "previous iteration still running"}
     previous = _install_signal_handlers()
@@ -62,7 +63,7 @@ def _iterate(args, ctx, lock: FileLock) -> dict:
         lock.touch()
         ref = ctx.parse_ref(item["pr"])
         try:
-            results.append(run_one(ctx, args.mode, ref, item["fingerprint"], args.dry_run))
+            results.append(run_one(ctx, args.mode, ref, item["fingerprint"], args.dry_run, clone=item["clone"] or None))
         except Exception as e:  # noqa: BLE001 - one broken PR must never stop the rest of the iteration
             extra = {} if args.dry_run else loop_bookkeeping(ctx, args.mode, ref, item["fingerprint"], False)
             results.append({"pr": item["pr"], "ok": False, "summary": f"error: {e}", **extra})

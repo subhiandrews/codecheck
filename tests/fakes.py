@@ -11,6 +11,7 @@ class Call:
     argv: tuple[str, ...]
     input: str | None
     cwd: Path | None
+    env: dict | None = None
 
 
 class FakeRunner:
@@ -27,9 +28,9 @@ class FakeRunner:
         self._prefix.append((tuple(prefix), [CommandResult(returncode, stdout, stderr)]))
         return self
 
-    def run(self, args, *, input=None, cwd=None, timeout=None) -> CommandResult:
+    def run(self, args, *, input=None, cwd=None, timeout=None, env=None) -> CommandResult:
         argv = tuple(args)
-        self.calls.append(Call(argv, input, cwd))
+        self.calls.append(Call(argv, input, cwd, env))
         queue = self._exact.get(argv)
         if queue is None:
             for prefix, q in self._prefix:
@@ -68,7 +69,7 @@ class FakeProvider:
         self.me = "me"
         self.prs: dict[PRRef, PullRequest] = {}
         self.files: dict[PRRef, list[str]] = {}
-        self.listing: dict[str, list[PRRef]] = {"review-requested": [], "authored": []}
+        self.listing: dict[str, list[PRRef]] = {"review-requested": [], "authored": [], "open": []}
         self.threads: dict[PRRef, list[Thread]] = {}
         self.checks: dict[PRRef, list[Check]] = {}
         self.reviews: dict[PRRef, list[Review]] = {}
@@ -97,8 +98,8 @@ class FakeProvider:
     def whoami(self) -> str:
         return self.me
 
-    def list_prs(self, scope, repos):
-        return list(self.listing[scope])
+    def list_prs(self, scope, repos, limit=50):
+        return list(self.listing[scope])[:limit]
 
     def get_pr(self, ref):
         return self.prs[ref]
@@ -168,6 +169,6 @@ class HybridRunner:
         self.fake = fake
         self.real = SubprocessRunner()
 
-    def run(self, args, *, input=None, cwd=None, timeout=None):
+    def run(self, args, *, input=None, cwd=None, timeout=None, env=None):
         target = self.real if args and args[0] == "git" else self.fake
-        return target.run(args, input=input, cwd=cwd, timeout=timeout)
+        return target.run(args, input=input, cwd=cwd, timeout=timeout, env=env)
