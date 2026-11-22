@@ -12,7 +12,7 @@ requires-python = ">=3.14"
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=9.2.0", "hypothesis>=6.170.15", "ruff>=0.17.4"]
+dev = ["pytest>=9.2.0", "hypothesis>=6.170.15", "ruff>=0.17.5"]
 evals = ["deepeval>=4.3.4,<5"]  # advisory DeepEval metrics in evals/deepeval; not part of the plugin, gates or CI
 
 [project.scripts]
