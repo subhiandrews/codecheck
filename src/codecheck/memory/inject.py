@@ -35,8 +35,11 @@ def _gate(cfg, stage: str, blind: bool) -> str | None:
 
 
 def _build(ctx, *, stage: str, repo: str, base_ref: str, paths: Iterable[str],
-           findings: Iterable[tuple[str, object]], queries: Sequence = ()) -> tuple[str, list[str]] | str:
-    """The text and lesson ids, or a reason nothing is written. Runs in a worker thread under the time budget."""
+           findings: Iterable[tuple[str, object]], queries: Sequence = (),
+           sem: dict | None = None) -> tuple[str, list[str]] | str:
+    """The text and lesson ids, or a reason nothing is written. Runs in a worker thread under the time budget.
+
+    `sem` receives `semantic` ("ok" or "fallback: <reason>") when a similarity lookup was tried."""
     cfg = ctx.config.memory
     db = MemoryDB(expand_path(cfg.store))
     if not db.exists():
@@ -50,7 +53,7 @@ def _build(ctx, *, stage: str, repo: str, base_ref: str, paths: Iterable[str],
         from codecheck.memory import semantic
 
         kind = "miss" if stage == REVIEWERS else "finding"
-        lessons = merge_ranked(db, repo, kind, lessons, semantic.ranked_for(ctx, db, repo, list(queries), kind), files,
+        lessons = merge_ranked(db, repo, kind, lessons, semantic.ranked_for(ctx, db, repo, list(queries), kind, sem), files,
                                cfg.max_lessons)
     if not lessons:
         return "no lessons"
@@ -96,7 +99,8 @@ def safe_build(ctx, run_dir: Path, *, stage: str, repo: str | None, base_ref: st
     """Write `run_dir/memory.md` when there is something to say. Never raises.
 
     Returns `{"read": False, "reason": ...}` or `{"read": True, "reason": "ok", "stage", "lessons", "ids", "chars"}`;
-    `file` is set exactly when memory.md was written."""
+    `file` is set exactly when memory.md was written. With `memory.embed_model` set, `semantic` is "ok" or
+    "fallback: <reason>" (timeout, unreachable, model changed, refused, error): why similarity search gave nothing."""
     try:
         cfg = ctx.config.memory
         why = _gate(cfg, stage, blind)
@@ -113,8 +117,11 @@ def safe_build(ctx, run_dir: Path, *, stage: str, repo: str | None, base_ref: st
         budget = max(float(cfg.timeout_seconds), 0.0)
         pull = _pull_replica(ctx, stage, budget, repo)
         box: dict = {}
+        sem: dict = {}
 
         def done(result: dict) -> dict:
+            if sem.get("semantic"):
+                result["semantic"] = sem["semantic"]  # only present when memory.embed_model is set and a lookup was tried
             if pull:
                 result["pull"] = pull  # only present when memory.url is set
             return result
@@ -122,7 +129,7 @@ def safe_build(ctx, run_dir: Path, *, stage: str, repo: str | None, base_ref: st
         def work() -> None:
             try:
                 box["out"] = _build(ctx, stage=stage, repo=repo, base_ref=base_ref, paths=list(paths), findings=list(findings),
-                                  queries=list(queries))
+                                  queries=list(queries), sem=sem)
             except BaseException as e:  # noqa: BLE001 - nothing in the worker may escape
                 box["error"] = f"{type(e).__name__}: {e}"[:200]
 

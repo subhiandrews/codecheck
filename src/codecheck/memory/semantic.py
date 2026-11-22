@@ -334,8 +334,10 @@ def rank_lessons(db: MemoryDB, repo: str, queries: Sequence[Query], embedder: Em
     return rank_vectors(cands, [embed.normalise(v) for v in vecs], min_similarity, deadline)
 
 
-def _bounded(budget: float, fn):
-    """Run `fn` in a daemon thread for at most `budget` seconds; None when it did not finish or raised."""
+def _bounded(budget: float, fn, why: dict | None = None):
+    """Run `fn` in a daemon thread for at most `budget` seconds; None when it did not finish or raised.
+
+    `why`, when given, gets `why["reason"]` = "timeout" or "error" for those two outcomes."""
     box: dict = {}
 
     def work() -> None:
@@ -347,34 +349,59 @@ def _bounded(budget: float, fn):
     t = threading.Thread(target=work, name="code-check-semantic", daemon=True)
     t.start()
     t.join(max(budget, 0.0))
+    if why is not None:
+        if t.is_alive():
+            why["reason"] = "timeout"
+        elif "error" in box:
+            why["reason"] = "error"
     return None if t.is_alive() else box.get("out")
 
 
-def ranked_for(ctx, db: MemoryDB, repo: str, queries: Sequence[Query], kind: str) -> list[tuple[str, float]]:
+FALLBACK_REASONS = ("timeout", "unreachable", "model changed", "refused", "error")  # the only reasons `semantic` can carry
+
+
+def ranked_for(ctx, db: MemoryDB, repo: str, queries: Sequence[Query], kind: str, report: dict | None = None) -> list[tuple[str, float]]:
     """`(lesson_id, score)` for a review, or `[]` whenever semantic retrieval is off or fails. Never raises, and stays
-    within half of `memory.timeout_seconds` so the exact-key result is always still on time."""
+    within half of `memory.timeout_seconds` so the exact-key result is always still on time.
+
+    `report`, when given, gets `report["semantic"]` = "ok" or "fallback: <reason>" (a fixed reason, never exception text)
+    once a lookup was tried; nothing is set when embed_model is empty or there are no queries."""
     try:
         cfg = ctx.config.memory
         if not cfg.embed_model or not queries:
             return []
         budget = min(embed.BUDGET_SECONDS, max(float(cfg.timeout_seconds) * 0.5, 0.1))
+        why: dict = {}
         if cfg.embed_at == "server":
-            out = _bounded(budget, lambda: server_ranked(ctx, repo, queries, kind, budget))
+            out = _bounded(budget, lambda: server_ranked(ctx, repo, queries, kind, budget, why), why)
         else:
-            out = _bounded(budget, lambda: client_ranked(ctx, db, repo, queries, kind, budget))
+            out = _bounded(budget, lambda: client_ranked(ctx, db, repo, queries, kind, budget, why), why)
+        if report is not None:
+            reason = why.get("reason")
+            report["semantic"] = f"fallback: {reason}" if reason in FALLBACK_REASONS else "ok"
         return out or []
     except Exception:  # noqa: BLE001
+        if report is not None:
+            report["semantic"] = "fallback: error"
         return []
 
 
-def client_ranked(ctx, db: MemoryDB, repo: str, queries: Sequence[Query], kind: str, budget: float) -> list[tuple[str, float]]:
+def client_ranked(ctx, db: MemoryDB, repo: str, queries: Sequence[Query], kind: str, budget: float,
+                  why: dict | None = None) -> list[tuple[str, float]]:
     cfg = ctx.config.memory
+    why = why if why is not None else {}
     embedder = make_embedder(cfg)
     if embedder is None:
+        why["reason"] = "unreachable"
         return []
     if pin_mismatch(ctx, embedder):
+        why["reason"] = "model changed"
         return []  # the team's model differs from this machine's: exact-key only
-    return rank_lessons(db, repo, queries, embedder, min_similarity=cfg.min_similarity, budget=budget, kind=kind) or []
+    ranked = rank_lessons(db, repo, queries, embedder, min_similarity=cfg.min_similarity, budget=budget, kind=kind)
+    if ranked is None:
+        why["reason"] = "unreachable"
+        return []
+    return ranked
 
 
 def pin_mismatch(ctx, embedder: Embedder) -> bool:
@@ -415,7 +442,9 @@ def server_mode_refusal(ctx, repo: str, transport) -> str | None:
     return None
 
 
-def server_ranked(ctx, repo: str, queries: Sequence[Query], kind: str, budget: float) -> list[tuple[str, float]]:
+def server_ranked(ctx, repo: str, queries: Sequence[Query], kind: str, budget: float,
+                  why: dict | None = None) -> list[tuple[str, float]]:
+    why = why if why is not None else {}
     from codecheck.memory import sync
 
     m = ctx.config.memory
@@ -424,11 +453,13 @@ def server_ranked(ctx, repo: str, queries: Sequence[Query], kind: str, budget: f
         return []
     transport = sync.build_transport(ctx, timeout=budget)
     if server_mode_refusal(ctx, repo, transport):
+        why["reason"] = "refused"
         return []
     body = {"repo": repo, "kind": kind, "limit": min(MAX_SEARCH_LIMIT, max(m.max_lessons * 3, 1)),
             "queries": [{"text": q.text, "path": q.path, "category": q.category, "language": q.language} for q in qs]}
     resp = transport.search(body)
     if resp.status != 200:
+        why["reason"] = "unreachable"
         return []  # 404 (the server does not search), 409, 503: exact-key
     out = []
     for r in resp.body.get("results") or []:
@@ -602,9 +633,13 @@ def status_info(ctx, *, offline: bool = False, server_meta: dict | None = None) 
     mine = [p for p in stats["pins"] if p["model"] == cfg.embed_model and p["digest"] == digest]
     out["local"]["current"] = sum(p["vectors"] for p in mine)
     out["digest_matches_vectors"] = bool(mine) if stats["pins"] else None
+    if cfg.embed_at == "client":  # what a review would do right now, from the checks above (no model call)
+        out["semantic"] = "fallback: unreachable" if digest is None else "ok"
     if server_pin and digest:
         match = (server_pin.model, server_pin.digest) == (cfg.embed_model, digest)
         out["server"]["match"] = match
         if not match:
+            if cfg.embed_at == "client":
+                out["semantic"] = "fallback: model changed"
             out["note"] = "this machine's model differs from the server's: no vectors are sent and retrieval is exact-key"
     return out

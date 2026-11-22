@@ -347,7 +347,7 @@ def test_candidates_and_expired_lessons_are_never_shown_by_similarity(tmp_path, 
     semantic.refresh_local(ctx)
     write_b(ctx)
     _out, meta = context(ctx)
-    assert meta["memory"] == {"read": False, "reason": "no lessons"}
+    assert meta["memory"] == {"read": False, "reason": "no lessons", "semantic": "ok"}
 
 
 def test_exact_hits_come_first_and_the_cap_holds(tmp_path):
@@ -682,7 +682,7 @@ def test_the_embedding_section_is_minimal_when_embeddings_are_off(tmp_path, clon
     ctx = make_ctx(tmp_path, clone, memory=MemoryConfig(store=str(tmp_path / "mem")))
     code, st = call(ctx, "memory", "status", "--offline")
     assert code == 0 and st["embedding"] == {"enabled": False, "model": None, "url": "http://127.0.0.1:11434", "at": "client",
-                                             "min_similarity": 0.55}
+                                             "min_similarity": 0.60}
     assert call(ctx, "memory", "embed")[1]["embedded"] == 0
 
 
