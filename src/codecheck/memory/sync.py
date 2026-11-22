@@ -12,6 +12,7 @@ resent at all. Evidence that came from a pull is never pushed back under this ma
 
 import contextlib
 import json
+import math
 import os
 import re
 import threading
@@ -109,6 +110,38 @@ def _fresh_state(ctx, solo_db: str = "") -> dict:
     return state
 
 
+_PULLED_META = "pulled_ids"
+
+
+def _mirror_ids(db: MemoryDB) -> list[str]:
+    """The pulled-evidence ids recorded in the store itself, so they survive a lost or corrupt `sync.json`."""
+    try:
+        raw = json.loads(db.meta_get(_PULLED_META) or "[]")
+    except ValueError:
+        return []
+    return [i for i in raw if isinstance(i, str)] if isinstance(raw, list) else []
+
+
+def _restore_pulled(db: MemoryDB, state: dict) -> list:
+    """Merge the store's record of pulled ids into `state["pulled_ids"]` (ids only in `sync.json` from before the record
+    existed are written back to it on `_store_pulled`). Returns the list held by `state`."""
+    pulled = state.get("pulled_ids")
+    if not isinstance(pulled, list):
+        pulled = state["pulled_ids"] = []
+    seen = set(pulled)
+    for i in _mirror_ids(db):
+        if i not in seen:
+            seen.add(i)
+            pulled.append(i)
+    return pulled
+
+
+def _store_pulled(db: MemoryDB, pulled: list) -> None:
+    want = sorted({i for i in pulled if isinstance(i, str)})
+    if want != sorted(set(_mirror_ids(db))) and (want or db.exists()):
+        db.meta_set(_PULLED_META, json.dumps(want))
+
+
 def repo_private(ctx, repo: str) -> bool | None:
     try:
         v = ctx.provider.repo_is_private(repo)
@@ -180,7 +213,9 @@ def push(ctx, transport, state: dict, *, now: float, solo_db: str = "", cancel: 
     server_max = meta.body["max_level"]
     db = MemoryDB(_store_dir(ctx), now=lambda: now)
     shadow = ctx.shadow or ShadowStore(expand_path(ctx.config.shadow.store))
-    pulled = set(state.get("pulled_ids", []))
+    pulled = set(_restore_pulled(db, state))
+    if pulled and db.exists():
+        _store_pulled(db, state["pulled_ids"])  # records ids that so far lived only in sync.json
     out, error = [], None
     vec_pin, vec_note = _vector_pin(ctx, db, state, meta.body)
     for repo in m.share_repos:
@@ -322,7 +357,7 @@ def _apply_purged(db: MemoryDB, state: dict, pulled: list, known_pulled: set[str
 def pull(ctx, transport, repos: Sequence[str], state: dict, *, now: float, deadline: float | None = None) -> dict:
     db = MemoryDB(_store_dir(ctx), now=lambda: now)
     params = params_of(ctx)
-    pulled = state.setdefault("pulled_ids", [])
+    pulled = _restore_pulled(db, state)
     known_pulled = set(pulled)
     out, error = [], None
     since_map = state.setdefault("pull_since", {})
@@ -365,7 +400,8 @@ def pull(ctx, transport, repos: Sequence[str], state: dict, *, now: float, deadl
                 if ev.scope.repo != repo:
                     rep["skipped"] += 1  # a server answering for another repository is not believed
                     continue
-                newest = max(newest, ts if isinstance(ts, (int, float)) else 0.0)
+                newest = max(newest, ts if isinstance(ts, (int, float)) and not isinstance(ts, bool)
+                             and math.isfinite(ts) and ts >= 0 else 0.0)
                 items.append(ev)
             cursor = resp.body.get("next_cursor") or ""
             if not cursor:
@@ -384,6 +420,7 @@ def pull(ctx, transport, repos: Sequence[str], state: dict, *, now: float, deadl
                     pulled.append(e.id)
             rep["evidence"] = counts["new"] + counts["updated"]
             db.recompute(params, now)
+        _store_pulled(db, pulled)
         if newest:
             since_map[repo] = max(float(since_map.get(repo, 0.0)), newest - 60.0)  # overlap is safe: writes are idempotent
     return {"pulled": error is None, "repos": out, **({"error": error} if error else {})}

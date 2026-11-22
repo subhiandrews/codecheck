@@ -317,6 +317,17 @@ class MemoryDB:
             conn.execute("INSERT OR REPLACE INTO forgotten (lesson_id, ts) VALUES (?, ?)", (lesson_id, self.now()))
         return {"lesson": bool(gone), "evidence": n}
 
+    def meta_get(self, key: str) -> str | None:
+        with self._use(write=False) as conn:
+            if not self._ready(conn):
+                return None
+            row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+            return row[0] if row else None
+
+    def meta_set(self, key: str, value: str) -> None:
+        with self._use(write=True) as conn, self._tx(conn):
+            conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
+
     def delete_evidence_ids(self, ids: Iterable[str]) -> int:
         """Delete evidence rows by id (a server told us they were purged). Returns rows removed; the caller recomputes."""
         wanted = list(dict.fromkeys(ids))
