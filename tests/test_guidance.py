@@ -5,11 +5,13 @@ from gitutil import make_origin_and_clone, sh
 
 from codecheck.core.guidance import (
     MAX_GUIDANCE_CHARS,
+    MAX_GUIDANCE_DIRS,
     Guidance,
     from_base,
     from_worktree,
     guidance_dirs,
 )
+from codecheck.errors import GitError
 from codecheck.runner import SubprocessRunner
 from codecheck.vcs.git import Git
 
@@ -172,3 +174,31 @@ def test_from_base_reads_nested_blobs_above_changed_paths_only(tmp_path):
     assert from_base(git, "HEAD", ["docs/x.md"]) == Guidance("base", "root rules\n", False)
     assert from_base(git, "no-such-ref", ["services/api/x.py"]) is None
     assert git.regular_files("HEAD", ["web/CODE_CHECK.md", "linked/CODE_CHECK.md", "services", "nope/CODE_CHECK.md"]) == ["web/CODE_CHECK.md"]
+
+
+def test_a_cap_on_the_directories_checked_is_noted_and_marks_the_result_truncated(tmp_path):
+    _write(tmp_path, "CODE_CHECK.md", "root rules\n")
+    within = [f"d{i}/x.py" for i in range(MAX_GUIDANCE_DIRS)]
+    assert from_worktree(tmp_path, within) == Guidance("worktree", "root rules\n", False)
+    g = from_worktree(tmp_path, [*within, "one/more.py"])
+    assert g.truncated is True and g.files == ("CODE_CHECK.md",)
+    assert g.text.startswith("root rules\n") and "only the 500 shallowest directories" in g.text
+
+
+def test_from_base_marks_a_failed_nested_lookup_instead_of_looking_complete(tmp_path, monkeypatch):
+    _, clone = make_origin_and_clone(_sub(tmp_path, "lookup"))
+    _write(clone, "CODE_CHECK.md", "root rules\n")
+    _write(clone, "a/CODE_CHECK.md", "a rules\n")
+    sh(clone, "add", "-A")
+    sh(clone, "commit", "-m", "guidance")
+    git = Git(SubprocessRunner(), clone)
+    with pytest.raises(GitError):
+        git.regular_files("no-such-ref", ["a/CODE_CHECK.md"])
+
+    def broken(*_a, **_k):
+        raise GitError("ls-tree failed")
+
+    monkeypatch.setattr(git, "regular_files", broken)
+    g = from_base(git, "HEAD", ["a/x.py"])
+    assert g.truncated is True and g.files == ("CODE_CHECK.md",)
+    assert g.text.startswith("root rules\n") and "nested files could not be looked up" in g.text
