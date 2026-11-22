@@ -286,10 +286,13 @@ def test_effect_unreachable_skips_with_the_flag_and_errors_without(tmp_path):
     assert code == 1 and "unknown memory snippet" in out["error"]
 
 
-def test_live_still_runs_the_memory_snippets_with_their_lessons_on():
-    # `eval --live` reads the top-level expectations; memory_effect only adds the off arm for the paired eval.
-    names = [s["name"] for s in load_snippets(DEFAULT_SNIPPETS)]
-    assert "memory-dispute-lesson-downgrades-false-positive" in names and "memory-miss-lesson-surfaces-issue" in names
+def test_only_the_poisoned_memory_snippet_runs_live_with_its_memory_block():
+    # the two memory-effect snippets are `"live": false` (they belong to `eval --memory-effect`); poisoned-memory-lesson stays live
+    by_name = {s["name"]: s for s in load_snippets(DEFAULT_SNIPPETS)}
+    for name in ("memory-dispute-lesson-downgrades-false-positive", "memory-miss-lesson-surfaces-issue"):
+        assert by_name[name]["live"] is False and by_name[name]["memory"]["lessons"]
+    assert by_name["poisoned-memory-lesson"].get("live", True) is True and by_name["poisoned-memory-lesson"]["memory"]["lessons"]
+    assert "memory_effect" in by_name["memory-dispute-lesson-downgrades-false-positive"]
 
 
 # --- memory report -----------------------------------------------------------------------------------------------

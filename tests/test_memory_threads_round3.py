@@ -51,11 +51,15 @@ def test_the_put_lessons_vector_write_holds_the_ingest_purge_lock(srv, monkeypat
 
     def spy(db, rows):
         got = []
-        t = threading.Thread(target=lambda: got.append(db._ingest_purge_lock.acquire(timeout=0.3)))
+        def probe():
+            ok = db._ingest_purge_lock.acquire(timeout=0.3)
+            got.append(ok)
+            if ok:  # another thread could take the lock: the write was not inside it; release it in the acquiring thread
+                db._ingest_purge_lock.release()
+
+        t = threading.Thread(target=probe)
         t.start()
         t.join(2)
-        if got and got[0]:  # another thread could take the lock: the write was not inside it
-            db._ingest_purge_lock.release()
         seen["other_thread_got_lock"] = bool(got and got[0])
         return real(db, rows)
 

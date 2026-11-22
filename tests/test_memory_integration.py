@@ -136,7 +136,8 @@ def test_a_teammates_lesson_is_pulled_over_http_and_reaches_memory_md(tmp_path):
         assert meta["memory"]["pull"]["pulled"] is True, meta["memory"]
         # teammate evidence arrives at level `lessons` with no quote, so memory.md shows roles and counts only
         assert meta["memory"]["read"] is True, meta["memory"]
-        assert "lesson" in (Path(out["run_dir"]) / "memory.md").read_text().lower()
+        text = (Path(out["run_dir"]) / "memory.md").read_text()
+        assert f"## Lesson 1: {evs[0].lesson_id}" in text and "maintainer x3" in text
     finally:
         srv.close()
 
