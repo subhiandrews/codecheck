@@ -36,8 +36,9 @@ class Srv:
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.admin = self.db.add_token("admin", "admin")
-        self.alice = self.db.add_token("alice")
-        self.bob = self.db.add_token("bob")
+        self.alice = self.db.add_token("alice", ceiling="maintainer")  # may assert maintainer evidence
+        self.bob = self.db.add_token("bob", ceiling="maintainer")
+        self.carol = self.db.add_token("carol")  # the default ceiling: contributor
 
     def req(self, method, path, body=None, token=None, headers=None, raw=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
@@ -84,7 +85,7 @@ def test_a_revoked_token_stops_working_and_tokens_are_stored_hashed(srv):
     assert srv.req("GET", "/v1/meta", token=srv.alice)[0] == 401
     raw = (srv.db.file).read_bytes() + b"".join(p.read_bytes() for p in srv.db.directory.glob("memory.db-*"))
     assert srv.bob.encode() not in raw and srv.alice.encode() not in raw
-    assert {t["name"] for t in srv.db.list_tokens()} == {"admin", "alice", "bob"}
+    assert {t["name"] for t in srv.db.list_tokens()} == {"admin", "alice", "bob", "carol"}
 
 
 def test_a_token_name_is_unique_while_live(srv):
@@ -289,7 +290,7 @@ def test_a_non_loopback_bind_is_refused_without_tls_or_a_proxy(tmp_path, host):
 
 def test_a_non_loopback_bind_is_allowed_behind_a_proxy(tmp_path):
     svc = Service(ServerDB(tmp_path / "s").init())
-    server =make_server(svc, "0.0.0.0", 0, behind_proxy=True)
+    server = make_server(svc, "0.0.0.0", 0, behind_proxy=True, allow_hosts=["memory.example.com"])
     server.server_close()
 
 

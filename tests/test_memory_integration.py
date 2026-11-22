@@ -136,7 +136,8 @@ def test_collection_pushes_after_consolidating_and_a_failing_server_is_only_repo
     ctx = _world_with_pr(world)
     ctx.config = replace(ctx.config, memory=replace(ctx.config.memory, url=URL, share_repos=("o/r",)))
     out = collect_due(ctx, now=Clock(T0 + 2 * DAY))
-    assert out["pushed"] == {"ok": True} and sent == [{"do_pull": False}]
+    assert out["pushed"] == {"ok": True}
+    assert len(sent) == 1 and sent[0]["do_pull"] is False and sent[0]["http_timeout"] > 0 and not sent[0]["cancel"].is_set()
 
     def boom(ctx, **k):
         raise RuntimeError("server down")

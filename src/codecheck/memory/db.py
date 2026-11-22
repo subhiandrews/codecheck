@@ -280,6 +280,16 @@ class MemoryDB:
             conn.execute("INSERT OR REPLACE INTO forgotten (lesson_id, ts) VALUES (?, ?)", (lesson_id, self.now()))
         return {"lesson": bool(gone), "evidence": n}
 
+    def delete_evidence_ids(self, ids: Iterable[str]) -> int:
+        """Delete evidence rows by id (a server told us they were purged). Returns rows removed; the caller recomputes."""
+        wanted = list(dict.fromkeys(ids))
+        gone = 0
+        with self._use(write=True) as conn, self._tx(conn):
+            for i in range(0, len(wanted), 500):
+                chunk = wanted[i:i + 500]
+                gone += conn.execute(f"DELETE FROM evidence WHERE id IN ({', '.join('?' * len(chunk))})", chunk).rowcount  # noqa: S608 - placeholders only
+        return gone
+
     def expire(self, params: Params | None = None, now: float | None = None) -> int:
         """Delete evidence older than `expire_days` (it no longer counts for anything) and recompute. Returns rows removed."""
         params = params or Params()

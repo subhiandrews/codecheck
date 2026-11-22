@@ -11,6 +11,9 @@ resent at all. Evidence that came from a pull is never pushed back under this ma
 """
 
 import json
+import os
+import re
+import threading
 import time
 from collections import defaultdict
 from collections.abc import Sequence
@@ -32,6 +35,7 @@ from codecheck.shadow.scrub import scrub_text
 from codecheck.shadow.store import ShadowStore, write_private
 
 STATE_FILE = "sync.json"
+_REPO_NAME = levels._REPO
 RETRY_AFTER_FAILED_PULL = 60.0
 MAX_PAGES = 20
 BATCH_BYTES = 200 * 1024
@@ -55,10 +59,19 @@ def load_state(ctx) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def save_state(ctx, state: dict) -> None:
+def save_state(ctx, state: dict, cancel: threading.Event | None = None) -> None:
+    """Write `sync.json` whole or not at all (temp file, then rename), so a reader or a second writer never sees half of it.
+    A sync whose caller gave up on it (`cancel` set) must not write at all: its view of the state is out of date."""
+    if cancel is not None and cancel.is_set():
+        return
     d = _store_dir(ctx)
     d.mkdir(parents=True, exist_ok=True, mode=0o700)
-    write_private(d / STATE_FILE, json.dumps(state, sort_keys=True))
+    tmp = d / f"{STATE_FILE}.{os.getpid()}.{threading.get_ident()}.tmp"
+    try:
+        write_private(tmp, json.dumps(state, sort_keys=True))
+        os.replace(tmp, d / STATE_FILE)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def default_solo_db(ctx) -> Path:
@@ -69,7 +82,8 @@ def build_transport(ctx, *, solo_db: str = "", timeout: float | None = None):
     """HTTP when `memory.url` is set; otherwise (solo) the local file through the same `Service` the server runs."""
     m = ctx.config.memory
     if m.url and not solo_db:
-        return HttpTransport(m.url, read_token_file(m.token_file), timeout if timeout is not None else float(max(m.timeout_seconds, 10)))
+        return HttpTransport(m.url, read_token_file(m.token_file), timeout if timeout is not None else float(max(m.timeout_seconds, 10)),
+                             m.ca_file)
     path = expand_path(solo_db) if solo_db else default_solo_db(ctx)
     return LocalTransport(Service(ServerDB(path, now=lambda: clock()).init(), params=params_of(ctx), now=lambda: clock()))
 
@@ -152,7 +166,7 @@ def _eligible_evidence(ctx, db: MemoryDB, repo: str, pulled: set[str]):
     return groups
 
 
-def push(ctx, transport, state: dict, *, now: float, solo_db: str = "") -> dict:
+def push(ctx, transport, state: dict, *, now: float, solo_db: str = "", cancel: threading.Event | None = None) -> dict:
     m = ctx.config.memory
     if not m.share_repos:
         return {"pushed": False, "reason": "memory.share_repos is empty: nothing is pushed", "repos": []}
@@ -195,7 +209,7 @@ def push(ctx, transport, state: dict, *, now: float, solo_db: str = "") -> dict:
                 _push_episodes(shadow, transport, state, repo, server_max, rep["episodes"])
         except _Stop as e:
             error = str(e)
-        save_state(ctx, state)
+        save_state(ctx, state, cancel)
     return {"pushed": error is None, "repos": out, **({"error": error} if error else {})}
 
 
@@ -227,6 +241,36 @@ def _push_episodes(shadow: ShadowStore, transport, state: dict, repo: str, serve
 
 # ---------- pull ----------
 
+MAX_PURGED_IDS = 5000  # what one response may make us delete: a hostile server cannot name more than this per pull
+_EVIDENCE_ID = re.compile(r"[0-9a-f]{16}")
+
+
+def _purge_seq(state: dict, repo: str) -> int:
+    v = (state.get("purge_seq") or {}).get(repo, 0)
+    return v if isinstance(v, int) and not isinstance(v, bool) and v > 0 else 0
+
+
+def _parse_purged(body: dict) -> tuple[list[str], int | None]:
+    """(evidence ids the server says were purged, the new watermark), or ([], None) when the answer carries none or is malformed.
+    Nothing here is believed beyond shape: `_apply_purged` only ever removes rows this machine pulled."""
+    raw, seq = body.get("purged"), body.get("purged_seq")
+    if not isinstance(raw, list) or isinstance(seq, bool) or not isinstance(seq, int) or seq < 0:
+        return [], None
+    ids = [i for i in raw[:MAX_PURGED_IDS] if isinstance(i, str) and _EVIDENCE_ID.fullmatch(i)]
+    return ids, seq
+
+
+def _apply_purged(db: MemoryDB, state: dict, pulled: list, known_pulled: set[str], ids: Sequence[str]) -> int:
+    """Delete from the local replica the purged evidence that came from a pull. Local-origin evidence is never touched,
+    whatever the server says: only ids recorded in `pulled_ids` qualify."""
+    doomed = [i for i in ids if i in known_pulled]
+    if not doomed:
+        return 0
+    gone = db.delete_evidence_ids(doomed)
+    known_pulled.difference_update(doomed)
+    pulled[:] = [i for i in pulled if i not in set(doomed)]
+    return gone
+
 def pull(ctx, transport, repos: Sequence[str], state: dict, *, now: float, deadline: float | None = None) -> dict:
     db = MemoryDB(_store_dir(ctx), now=lambda: now)
     params = params_of(ctx)
@@ -240,12 +284,15 @@ def pull(ctx, transport, repos: Sequence[str], state: dict, *, now: float, deadl
         if error:
             continue
         since, cursor, newest = float(since_map.get(repo, 0.0)), "", 0.0
-        items = []
+        items, purge_ids, purge_seq = [], [], None
+        purge_start = _purge_seq(state, repo)
         for _ in range(MAX_PAGES):
             if deadline is not None and clock() >= deadline:
                 error = "timed out"
                 break
-            resp = transport.get_lessons(repo, since, cursor)
+            resp = transport.get_lessons(repo, since, cursor, **({"purged_since": purge_start} if purge_start and not cursor else {}))
+            if not cursor:
+                purge_ids, purge_seq = _parse_purged(resp.body) if resp.status == 200 else ([], None)
             if resp.status in (401, 403, 408, 429) or resp.status >= 500:
                 error = f"HTTP {resp.status}"
                 break
@@ -267,6 +314,11 @@ def pull(ctx, transport, repos: Sequence[str], state: dict, *, now: float, deadl
             cursor = resp.body.get("next_cursor") or ""
             if not cursor:
                 break
+        if purge_seq is not None:
+            rep["purged"] = _apply_purged(db, state, pulled, known_pulled, purge_ids)
+            state.setdefault("purge_seq", {})[repo] = purge_seq
+            if rep["purged"] and not items:
+                db.recompute(params, now)
         if items:
             have = {e.id for e in db.evidence(repo=repo)}
             counts = db.upsert_evidence([e for e in items if (now - e.ts) / 86400.0 < params.expire_days])
@@ -285,28 +337,33 @@ def pull_if_stale(ctx, max_age_seconds: float = 600.0, repos: Sequence[str] | No
     """Refresh the local replica from the server when it is older than `max_age_seconds`, within `memory.timeout_seconds`.
 
     Never raises and never blocks past the budget: on any failure the replica is left as it is. Only a configured
-    `memory.url` is ever contacted."""
+    `memory.url` is ever contacted. Without `repos` the repositories are `memory.share_repos`. With `repos` (the one being
+    reviewed) they are pulled whether or not they are listed there: a pull is read-only and sends the server nothing but the
+    repository name, so `share_repos` stays the list that gates what is pushed, not what may be read."""
     try:
         m = ctx.config.memory
         if not m.url:
             return {"pulled": False, "reason": "no memory.url"}
-        wanted = list(repos if repos is not None else m.share_repos)
+        wanted = [r for r in dict.fromkeys(repos if repos is not None else m.share_repos) if _REPO_NAME.fullmatch(r)]
         if not wanted:
             return {"pulled": False, "reason": "no repositories to pull"}
         now = clock()
         state = _fresh_state(ctx)
-        if now - float(state.get("last_pull_ts", 0.0)) < max_age_seconds:
+        by_repo = state.get("last_pull_repo") if isinstance(state.get("last_pull_repo"), dict) else {}
+        last = min(float(by_repo.get(r, 0.0)) for r in wanted) if repos is not None else float(state.get("last_pull_ts", 0.0))
+        if now - last < max_age_seconds:
             return {"pulled": False, "reason": "replica is fresh"}
         if now - float(state.get("last_pull_failed_ts", 0.0)) < RETRY_AFTER_FAILED_PULL:
             return {"pulled": False, "reason": "a recent pull failed"}
         deadline = now + float(m.timeout_seconds)
         try:
-            result = pull(ctx, HttpTransport(m.url, read_token_file(m.token_file), float(m.timeout_seconds)), wanted, state,
+            result = pull(ctx, HttpTransport(m.url, read_token_file(m.token_file), float(m.timeout_seconds), m.ca_file), wanted, state,
                           now=now, deadline=deadline)
         except CodeCheckError as e:
             result = {"pulled": False, "error": type(e).__name__}
         if result["pulled"]:
             state["last_pull_ts"] = now
+            state["last_pull_repo"] = {**by_repo, **dict.fromkeys(wanted, now)}
         else:
             state["last_pull_failed_ts"] = now
         save_state(ctx, state)
@@ -317,15 +374,17 @@ def pull_if_stale(ctx, max_age_seconds: float = 600.0, repos: Sequence[str] | No
 
 # ---------- sync, status ----------
 
-def sync(ctx, *, do_push: bool = True, do_pull: bool = True, solo_db: str = "", extra_repos: Sequence[str] = ()) -> dict:
+def sync(ctx, *, do_push: bool = True, do_pull: bool = True, solo_db: str = "", extra_repos: Sequence[str] = (),
+         http_timeout: float | None = None, cancel: threading.Event | None = None) -> dict:
+    """`http_timeout` bounds each HTTP call; `cancel`, once set by a caller that stopped waiting, stops every state write."""
     m = ctx.config.memory
     now = clock()
     state = _fresh_state(ctx, solo_db)
-    transport = build_transport(ctx, solo_db=solo_db)
+    transport = build_transport(ctx, solo_db=solo_db, timeout=http_timeout)
     out: dict = {"mode": "server" if m.url and not solo_db else "solo", "ok": True}
     try:
         if do_push:
-            out["push"] = push(ctx, transport, state, now=now, solo_db=solo_db)
+            out["push"] = push(ctx, transport, state, now=now, solo_db=solo_db, cancel=cancel)
             out["ok"] &= out["push"]["pushed"] or "reason" in out["push"]
             if "error" in out["push"]:
                 state["last_error"] = out["push"]["error"]
@@ -349,7 +408,7 @@ def sync(ctx, *, do_push: bool = True, do_pull: bool = True, solo_db: str = "", 
     state["last_ok"] = bool(out["ok"])
     if out["ok"]:
         state.pop("last_error", None)
-    save_state(ctx, state)
+    save_state(ctx, state, cancel)
     return out
 
 

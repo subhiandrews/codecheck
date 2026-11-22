@@ -54,7 +54,7 @@ def _build(ctx, *, stage: str, repo: str, base_ref: str, paths: Iterable[str],
     return text, [le.id for le in lessons]
 
 
-def _pull_replica(ctx, stage: str, budget: float) -> dict | None:
+def _pull_replica(ctx, stage: str, budget: float, repo: str | None = None) -> dict | None:
     """Refresh the local replica from the shared server before the reviewers read it. Never raises, never waits past
     half of `memory.timeout_seconds` (the build keeps the rest), and a failure just leaves the replica as it is.
 
@@ -68,7 +68,9 @@ def _pull_replica(ctx, stage: str, budget: float) -> dict | None:
 
         def work() -> None:
             try:
-                box["out"] = sync.pull_if_stale(ctx)
+                # the repository under review is pulled even when it is not in memory.share_repos (read-only; the only
+                # thing sent is its name). share_repos still gates every push.
+                box["out"] = sync.pull_if_stale(ctx, repos=[repo]) if repo else sync.pull_if_stale(ctx)
             except BaseException as e:  # noqa: BLE001 - nothing in the worker may escape
                 box["out"] = {"pulled": False, "error": type(e).__name__}
 
@@ -98,7 +100,7 @@ def safe_build(ctx, run_dir: Path, *, stage: str, repo: str | None, base_ref: st
             return {"read": False, "reason": "no repository or base"}
         started = time.monotonic()
         budget = max(float(cfg.timeout_seconds), 0.0)
-        pull = _pull_replica(ctx, stage, budget)
+        pull = _pull_replica(ctx, stage, budget, repo)
         box: dict = {}
 
         def done(result: dict) -> dict:

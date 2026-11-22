@@ -7,7 +7,7 @@ from codecheck.errors import ConfigError
 
 MEMORY_DEFAULTS = {
     "enabled": False, "read": False, "reviewers": False, "store": "~/.local/share/code-check/memory",
-    "max_lessons": 12, "max_chars": 6000, "timeout_seconds": 3, "url": "", "token_file": "",
+    "max_lessons": 12, "max_chars": 6000, "timeout_seconds": 3, "url": "", "token_file": "", "ca_file": "",
     "share_level": "lessons", "private_level": "lessons", "share_repos": (), "embed_url": "http://127.0.0.1:11434",
     "embed_model": "", "embed_at": "client", "collect": False, "half_life_days": 90, "expire_days": 180,
 }
