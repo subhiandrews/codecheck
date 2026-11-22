@@ -364,12 +364,13 @@ def test_exact_hits_come_first_and_the_cap_holds(tmp_path):
 def test_the_aggregator_stage_uses_the_finding_messages(tmp_path, fake):
     _seeded_db, s, _ = seeded(tmp_path, 3, text="unchecked null input in strip call", signal="verdict_valid")
     le = Lesson_for(s)
-    db = store(tmp_path, le)
+    store(tmp_path, le)
     ctx = local_ctx(tmp_path, memory=cfg_for(tmp_path))
     semantic.refresh_local(ctx)
     write_b(ctx)
     out, meta = context(ctx)
     run = out["run_id"]
+    assert not (Path(out["run_dir"]) / "memory.md").exists()  # nothing for the aggregator until ingest has the findings
     from clihelp import write_findings
 
     write_findings(Path(out["run_dir"]), {m: [] for m in meta["panel"]["members"]})
@@ -378,7 +379,8 @@ def test_the_aggregator_stage_uses_the_finding_messages(tmp_path, fake):
                                                     "message": "unchecked null input reaches the strip call"}]})
     code, res = call(ctx, "ingest", "--run", run)
     assert code == 0 and res["memory"]["read"] is True and res["memory"]["lessons"] == 1, res
-    assert db.lesson(le.id) is not None
+    memory_md = Path(out["run_dir"]) / "memory.md"
+    assert memory_md.is_file() and le.id in memory_md.read_text() and "null inputs are real" in memory_md.read_text()  # written by ingest
 
 
 def Lesson_for(scope):
@@ -624,8 +626,12 @@ def test_no_query_is_sent_when_server_mode_is_refused(tmp_path, clone, srv, monk
 
 
 def test_a_server_without_search_makes_the_client_fall_back(tmp_path, clone, srv):
+    ev = finding_ev(msg="null input reaches strip")
+    assert srv.req("PUT", "/v1/lessons", {"items": [item_for([ev], "evidence")]}, srv.alice)[0] == 200  # the server holds a match
     ctx, db = machine(tmp_path, clone, srv, "m", srv.alice, embed_at="server")
-    assert semantic.ranked_for(ctx, db, "o/r", [semantic.Query("null input")], "finding") == []
+    report: dict = {}
+    assert semantic.ranked_for(ctx, db, "o/r", [semantic.Query("null input reaches strip")], "finding", report) == []
+    assert report["semantic"] == "fallback: refused"
 
 
 def test_client_and_server_mode_rank_the_same(tmp_path, clone, srv, monkeypatch):
