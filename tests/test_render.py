@@ -50,6 +50,12 @@ def test_render_local():
     assert "base may be stale" in text and "y" in text
 
 
+def test_attribution_names_the_running_version():
+    from codecheck import __version__
+
+    assert f"v{__version__} · Apache-2.0" in ATTRIBUTION
+
+
 def test_summary_footer_present_when_attribution_on():
     body = summary_body("abcdef012345", [], [], Decision("COMMENT", "r"), attribution=True)
     assert ATTRIBUTION in body

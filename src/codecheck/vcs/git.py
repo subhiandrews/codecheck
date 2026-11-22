@@ -113,6 +113,23 @@ class Git:
         # treat such a blob as non-text rather than hand lossy content on.
         return None if "\ufffd" in shown.stdout else shown.stdout
 
+    def regular_files(self, ref: str, paths: Sequence[str]) -> list[str]:
+        """Which of `paths` are regular-file blobs at `ref`. Paths are taken literally (no pathspec magic); a symlink,
+        a submodule or a tree is not one. Raises GitError when git fails (for example a missing ref), so a lookup that
+        did not finish is never mistaken for one that found nothing."""
+        _safe(ref)
+        found: list[str] = []
+        for i in range(0, len(paths), 200):
+            res = self._run("--literal-pathspecs", "ls-tree", "--full-tree", "-z", ref, "--", *paths[i:i + 200])
+            if res.returncode != 0:
+                raise GitError(f"git ls-tree failed: {res.stderr.strip()}")
+            for entry in res.stdout.split("\0"):
+                meta, _, name = entry.partition("\t")
+                fields = meta.split()
+                if len(fields) == 3 and fields[0] in ("100644", "100755") and fields[1] == "blob":
+                    found.append(name)
+        return found
+
     def toplevel(self) -> Path:
         return Path(self._out("rev-parse", "--show-toplevel"))
 

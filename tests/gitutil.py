@@ -22,6 +22,7 @@ def make_origin_and_clone(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def commit_file(repo: Path, name: str, text: str, message: str) -> None:
+    (repo / name).parent.mkdir(parents=True, exist_ok=True)
     (repo / name).write_text(text)
     sh(repo, "add", name)
     sh(repo, "commit", "-m", message)
@@ -33,6 +34,7 @@ def push_branch(tmp_path: Path, origin: Path, branch: str, files: dict[str, str]
     sh(tmp_path, "clone", str(origin), str(work))
     sh(work, "checkout", "-b", branch)
     for name, text in files.items():
+        (work / name).parent.mkdir(parents=True, exist_ok=True)
         (work / name).write_text(text)
         sh(work, "add", name)
     sh(work, "commit", "-m", f"work on {branch}")
