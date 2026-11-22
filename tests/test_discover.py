@@ -6,6 +6,7 @@ from fakes import FakeProvider
 from gitutil import sh
 
 from codecheck.cli import _route
+from codecheck.errors import ConfigError
 from codecheck.models import PRRef
 from codecheck.runner import SubprocessRunner
 from codecheck.vcs.discover import candidate_clones
@@ -132,3 +133,25 @@ def test_clones_after_the_cap_is_met_are_not_asked_about(work):
     ctx = make_ctx(parent.parent, parent, provider=provider)
     call(ctx, "list-work", "--mode", "review")
     assert asked == ["o/a"]  # three new PRs in the first clone: o/b is never listed
+
+
+def test_a_clone_with_a_broken_config_is_reported_but_one_without_a_remote_is_not(work, monkeypatch):
+    parent, _a, b = work
+    ctx = make_ctx(parent.parent, parent, provider=ByUrl())
+    original = type(ctx).at
+
+    def at(self, path):
+        if path == b:
+            raise ConfigError("unknown config key: nope")
+        return original(self, path)
+
+    monkeypatch.setattr(type(ctx), "at", at)
+    errors: dict[str, str] = {}
+    assert sorted(ctx.clones(errors=errors)) == ["o/a"]
+    assert errors == {str(b): "unknown config key: nope"}  # `noremote` and `elsewhere` stay out of it
+    provider = ctx.provider
+    provider.repo = "o/a"
+    provider.listing["open"] = [provider.add_pr(1, head_sha="s").ref]
+    _code, out = call(ctx, "list-work", "--mode", "review")
+    assert [i["pr"] for i in out["items"]] == ["o/a#1"]
+    assert out["skipped"] == [{"pr": str(b), "reason": "not a usable clone: unknown config key: nope"}]

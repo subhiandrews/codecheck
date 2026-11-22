@@ -18,7 +18,8 @@ def run(args, ctx) -> dict:
     cfg = ctx.config
     review = args.mode == "review"
     named = [r.strip() for r in args.repos.split(",") if r.strip()] or list(cfg.loop.repos)
-    clones = ctx.clones()  # the clone at, or the clones directly under, the working directory
+    unusable: dict[str, str] = {}
+    clones = ctx.clones(errors=unusable)  # the clone at, or the clones directly under, the working directory
     if named:
         targets = [(repo, clones.get(repo)) for repo in named]
     elif clones:
@@ -28,10 +29,12 @@ def run(args, ctx) -> dict:
     limit = cfg.loop.max_review_prs_per_iteration if review else cfg.loop.max_prs_per_iteration
     items: list[WorkItem] = []
     skipped: list[dict] = []
+    skipped.extend({"pr": path, "reason": f"not a usable clone: {why}"} for path, why in unusable.items())
     considered = 0
+    fresh = 0  # items not yet handled at their current fingerprint; one state read per item, not per check
 
     def enough() -> bool:
-        return sum(ctx.state.get(loop_key(args.mode, i.ref)) != i.fingerprint for i in items) >= limit
+        return fresh >= limit
 
     for repo, clone in targets:
         if enough():
@@ -55,6 +58,7 @@ def run(args, ctx) -> dict:
                 skipped.append({"pr": str(ref), "reason": skip})
             if item:
                 items.append(replace(item, clone=str(clone.cwd)) if clone else item)
+                fresh += ctx.state.get(loop_key(args.mode, item.ref)) != item.fingerprint
     chosen = select_work(items, ctx.state, args.mode, limit)
     return {"items": [{"pr": str(i.ref), "fingerprint": i.fingerprint, "reason": i.reason, "clone": i.clone} for i in chosen],
             "considered": considered, "skipped": skipped}

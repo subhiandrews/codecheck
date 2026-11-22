@@ -12,7 +12,7 @@ from pathlib import Path
 from codecheck import __version__, commands
 from codecheck.config import Config, expand_path, load_config
 from codecheck.core.state import StateStore
-from codecheck.errors import CodeCheckError
+from codecheck.errors import CodeCheckError, ConfigError
 from codecheck.models import PRRef
 from codecheck.providers import detect_provider, get_provider
 from codecheck.providers.base import Provider
@@ -44,16 +44,21 @@ class AppContext:
             return replace(self, git=Git(self.runner, path), cwd=path)
         return build_context(path, self.env, self.home, self.runner)
 
-    def clones(self, only: str | None = None) -> dict[str, AppContext]:
+    def clones(self, only: str | None = None, errors: dict[str, str] | None = None) -> dict[str, AppContext]:
         """Repository name to a context for each clone at or directly under the working directory; with `only`, stops
-        at that repository."""
+        at that repository. A clone with no usable remote is left out quietly (many directories have none); one whose
+        own configuration is broken is left out and, when `errors` is given, recorded there as path to reason."""
         found: dict[str, AppContext] = {}
         for path in candidate_clones(self.cwd, self.runner, expand_path(self.config.state_dir)):
             try:
                 clone = self.at(path)
                 found.setdefault(clone.current_repo(), clone)
+            except ConfigError as e:
+                if errors is not None:
+                    errors[str(path)] = str(e)[:300]
+                continue
             except CodeCheckError:
-                continue  # no usable remote or config: not a repository this tool can name
+                continue  # no usable remote: not a repository this tool can name
             if only in found:
                 break
         return found
