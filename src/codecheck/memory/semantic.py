@@ -101,6 +101,13 @@ def put_vectors(db: MemoryDB, rows: Iterable[tuple[str, Pin, bytes]]) -> int:
     rows = list(rows)
     with db._use(write=True) as conn, db._tx(conn):
         conn.execute(_DDL)
+        # a vector for evidence that is gone (purged in between) would outlive the purge: store only existing rows
+        existing: set[str] = set()
+        for i in range(0, len(rows), 500):
+            chunk = [r[0] for r in rows[i:i + 500]]
+            marks = ", ".join("?" * len(chunk))
+            existing.update(r[0] for r in conn.execute(f"SELECT id FROM evidence WHERE id IN ({marks})", chunk))  # noqa: S608 - values bound
+        rows = [r for r in rows if r[0] in existing]
         conn.executemany(f"INSERT OR REPLACE INTO {TABLE} (evidence_id, model, digest, dim, vec) VALUES (?, ?, ?, ?, ?)",  # noqa: S608 - fixed name
                          [(eid, p.model, p.digest, p.dim, blob) for eid, p, blob in rows])
     return len(rows)

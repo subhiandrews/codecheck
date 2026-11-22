@@ -86,7 +86,10 @@ def test_runtime_and_config_share_one_function():
 # 4. lazy imports and cheaper helpers
 
 def test_importing_the_cli_loads_no_http_server_or_ssl():
-    code = ("import sys; sys.path[:0] = ['src']; import codecheck.cli; "
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parent.parent / "src"
+    code = (f"import sys; sys.path[:0] = [{str(src)!r}]; import codecheck.cli; "
             "bad = [m for m in ('http.server', 'ssl') if m in sys.modules]; print(bad); sys.exit(1 if bad else 0)")
     r = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, check=False)
     assert r.returncode == 0, r.stdout + r.stderr

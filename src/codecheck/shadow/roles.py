@@ -1,9 +1,9 @@
 """Who said it: the writer's role on a repository, recorded next to feedback so evidence can be weighted later."""
 
 ROLES = ("maintainer", "author", "contributor", "self", "unknown")
-# GitHub author associations. MEMBER only means an organisation member, not write access, so these are a fallback
-# for when `can_write` is unavailable, never a replacement for it.
-_WRITE_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+# GitHub author associations. MEMBER only means an organisation member, not write access, so it is left out: a
+# MEMBER falls through to `unknown`. These are a fallback for when `can_write` is unavailable, never a replacement.
+_WRITE_ASSOCIATIONS = frozenset({"OWNER", "COLLABORATOR"})
 _OUTSIDE_ASSOCIATIONS = frozenset({"CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "NONE", "MANNEQUIN"})
 
 

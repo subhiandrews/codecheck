@@ -29,7 +29,7 @@ MARK = f"**Warning**\n<!-- code-check:finding:{FID} -->"
     ("maya", True, "NONE", "maintainer"),  # can_write beats the association
     ("maya", False, "OWNER", "contributor"),
     ("maya", None, "OWNER", "maintainer"),
-    ("maya", None, "MEMBER", "maintainer"),
+    ("maya", None, "MEMBER", "unknown"),  # an org member is not known to have write access
     ("maya", None, "COLLABORATOR", "maintainer"),
     ("maya", None, "CONTRIBUTOR", "contributor"),
     ("maya", None, "FIRST_TIME_CONTRIBUTOR", "contributor"),

@@ -130,7 +130,8 @@ def test_ingest_does_not_import_the_semantic_stack():
     src = Path(__file__).resolve().parent.parent / "src" / "codecheck" / "commands" / "ingest.py"
     imported = [n.module for n in ast.walk(ast.parse(src.read_text())) if isinstance(n, ast.ImportFrom) and n.module]
     assert "codecheck.memory.semantic" not in imported and "codecheck.memory.embed" not in imported
-    code = ("import sys; sys.path[:0] = ['src']; import codecheck.memory.inject, codecheck.memory.model; "
+    root = Path(__file__).resolve().parent.parent / "src"
+    code = (f"import sys; sys.path[:0] = [{str(root)!r}]; import codecheck.memory.inject, codecheck.memory.model; "
             "bad = [m for m in ('codecheck.memory.semantic', 'codecheck.memory.embed') if m in sys.modules]; "
             "print(bad); sys.exit(1 if bad else 0)")
     r = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, check=False)

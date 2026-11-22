@@ -315,7 +315,8 @@ def _apply_purged(db: MemoryDB, state: dict, pulled: list, known_pulled: set[str
         return 0
     gone = db.delete_evidence_ids(doomed)
     known_pulled.difference_update(doomed)
-    pulled[:] = [i for i in pulled if i not in set(doomed)]
+    gone_ids = set(doomed)
+    pulled[:] = [i for i in pulled if i not in gone_ids]
     return gone
 
 def pull(ctx, transport, repos: Sequence[str], state: dict, *, now: float, deadline: float | None = None) -> dict:

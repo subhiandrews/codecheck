@@ -330,7 +330,8 @@ class Service:
         if parsed:
             self.db.recompute(self.params, now)
         if vectors:
-            semantic.put_vectors(self.db, vectors)
+            with self.db._ingest_purge_lock:  # a purge between ingest and this write would leave vectors of purged text
+                semantic.put_vectors(self.db, vectors)
         return 200, {"results": results, "evidence": dict(counts),
                      "downgraded_roles": sum(r.get("downgraded_roles", 0) for r in results)}
 

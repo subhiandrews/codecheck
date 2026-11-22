@@ -45,7 +45,7 @@ def seed_review(shadow, clock, name, number, *, at, repo="o/r", fid=FID, path="s
     return rid
 
 
-def thread(tid, fid=FID, path="src/app/a.py", reply_by="maya", assoc="MEMBER"):
+def thread(tid, fid=FID, path="src/app/a.py", reply_by="maya", assoc="COLLABORATOR"):
     root = ThreadComment(1, "me", f"**Warning**\n<!-- code-check:finding:{fid} -->", "t")
     reply = ThreadComment(2, reply_by, "no, this is wrong", "t", association=assoc)
     return Thread(tid, path, 3, False, False, (root, reply))
