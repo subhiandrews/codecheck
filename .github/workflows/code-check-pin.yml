@@ -1,13 +1,7 @@
 name: code-check-pin
-# Keeps `code-check-ref` in code-check.yml at the latest release tag on main, by opening a bot PR when it falls behind.
-# Never merges anything. Triggers: daily and by hand (`gh workflow run code-check-pin.yml`). It does not use `workflow_run`
-# or `push: tags`: a tag pushed with GITHUB_TOKEN starts no other workflow, and zizmor rejects `workflow_run` as a
-# dangerous trigger, so a new release is picked up by the next daily run.
-#
-# KNOWN LIMIT: a PR or push made with GITHUB_TOKEN does not trigger other workflows, so required checks may not run on the
-# bot PR. Set the optional secret CI_PIN_BOT_TOKEN (fine-grained PAT or app token with contents and pull-requests write)
-# to push and open the PR with it instead. The repo setting "Allow GitHub Actions to create and approve pull requests"
-# must also be on. The bot branch is bot-owned and is force-pushed (with lease) when a newer tag replaces the pin.
+# Opens a bot PR when code-check-ref in code-check.yml is behind the newest release tag on main. See docs/MAINTAINING.md
+# (CI review pin). No workflow_run or push: tags trigger: a tag pushed with GITHUB_TOKEN starts no workflow, and zizmor
+# rejects workflow_run, so the daily run picks up a new release.
 on:
   schedule:
     - cron: "17 6 * * *"
@@ -21,10 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     env:
-      GH_TOKEN: ${{ secrets.CI_PIN_BOT_TOKEN || github.token }}
+      GH_TOKEN: ${{ secrets.CI_PIN_BOT_TOKEN }}
       REPO: ${{ github.repository }}
       BRANCH: bot/code-check-pin
     steps:
@@ -50,11 +43,17 @@ jobs:
           FROM: ${{ steps.bump.outputs.from }}
           TO: ${{ steps.bump.outputs.to }}
         run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::A bump needs the secret CI_PIN_BOT_TOKEN (fine-grained PAT or app token with Contents, Pull requests and Workflows write); GITHUB_TOKEN cannot push changes under .github/workflows."
+            exit 1
+          fi
+          url="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$BRANCH"
           git commit -am "ci: pin code-check to $TO"
-          git push --force-with-lease "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "HEAD:refs/heads/$BRANCH"
+          expect="$(git ls-remote "$url" "refs/heads/$BRANCH" | cut -f1)"
+          git push --force-with-lease="refs/heads/$BRANCH:$expect" "$url" "HEAD:refs/heads/$BRANCH"
           body="Bot-made. CI reviews pull requests with code-check \`$FROM\`; the latest release on main is \`$TO\`, so this moves \`code-check-ref\` in \`.github/workflows/code-check.yml\` from \`$FROM\` to \`$TO\`.
 
           Release: https://github.com/${REPO}/releases/tag/${TO}

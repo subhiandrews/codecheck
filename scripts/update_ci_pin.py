@@ -62,7 +62,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--tags-from-stdin", action="store_true", required=True, help="read tags, one per line, from stdin")
     ap.add_argument("--write", action="store_true", help="rewrite the pin in place when the action is bump")
     args = ap.parse_args(argv)
-    text = args.workflow.read_text(encoding="utf-8")
+    try:
+        text = args.workflow.read_text(encoding="utf-8")
+    except OSError as exc:
+        reason = f"cannot read workflow: {exc}"
+        print(json.dumps({"pin": None, "newest": None, "action": "skip", "reason": reason}))
+        return 0
     result = decide(text, sys.stdin.read().split())
     if result["action"] == "bump" and args.write:
         args.workflow.write_text(bump(text, result["newest"]), encoding="utf-8")

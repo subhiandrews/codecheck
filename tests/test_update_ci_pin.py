@@ -86,3 +86,9 @@ def test_real_workflow_is_pinned_to_a_release_not_ahead_of_version():
     assert value and re.fullmatch(r"v\d+\.\d+\.\d+", value), value
     version = (ROOT / "VERSION").read_text().strip()
     assert pin.parse_tag(value) <= pin.parse_tag("v" + version)
+
+
+def test_cli_unreadable_workflow_is_reported_not_raised(tmp_path, monkeypatch, capsys):
+    r = run_cli(monkeypatch, capsys, tmp_path / "missing.yml", "v1.0.0\n", "--write")
+    assert r["action"] == "skip" and r["pin"] is None
+    assert r["reason"].startswith("cannot read workflow")
