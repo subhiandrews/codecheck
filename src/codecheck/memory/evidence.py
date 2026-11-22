@@ -120,6 +120,11 @@ def load_runs(shadow: ShadowStore) -> list[RunData]:
         run = next((r for r in recs if r.get("type") == "run"), None)
         if not run or not isinstance(run.get("repo"), str) or not isinstance(run.get("pr"), str):
             continue
+        # A run that read review memory is not independent evidence: its findings were shaped by earlier lessons, so
+        # counting them would let lessons confirm themselves. `shadow/promote.draft_case` refuses these runs for the
+        # same reason; consolidate, auto-collect and measure all load through here, so they are all excluded.
+        if (isinstance(run.get("memory"), dict) and run["memory"].get("read")) or any(r.get("type") == "memory" for r in recs):
+            continue
         stamps = [r["ts"] for r in recs if r.get("type") == "run" and isinstance(r.get("ts"), (int, float))]
         if not stamps:
             continue

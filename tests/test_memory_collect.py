@@ -136,7 +136,8 @@ def test_a_provider_error_is_swallowed_and_retried_later(world):
     provider.list_threads = boom
     out = collect_due(ctx, now=Clock(T0 + 2 * DAY))
     assert out["collected"] == [] and "host down" in out["errors"][0]["error"] and out["consolidated"] is False
-    assert ctx.state.get("memory:collect:o/r#1") is None  # not marked: due again next time
+    entry = ctx.state.get("memory:collect:o/r#1")  # not marked collected: due again once the backoff passes
+    assert entry["done"] == -1 and entry["failures"] == 1
     provider.whoami = boom
     assert "errors" in collect_due(ctx, now=Clock(T0 + 2 * DAY))  # even a failing whoami never raises
 
