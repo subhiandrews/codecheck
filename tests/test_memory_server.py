@@ -291,7 +291,12 @@ def test_a_non_loopback_bind_is_refused_without_tls_or_a_proxy(tmp_path, host):
 def test_a_non_loopback_bind_is_allowed_behind_a_proxy(tmp_path):
     svc = Service(ServerDB(tmp_path / "s").init())
     server = make_server(svc, "0.0.0.0", 0, behind_proxy=True, allow_hosts=["memory.example.com"])
-    server.server_close()
+    try:
+        assert server.behind_proxy is True
+        assert server.allowed_hosts == {"0.0.0.0", "memory.example.com"}
+        assert server.server_address[0] == "0.0.0.0"
+    finally:
+        server.server_close()
 
 
 def test_tls_flags_go_together(tmp_path):
