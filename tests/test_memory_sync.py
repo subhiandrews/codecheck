@@ -463,5 +463,9 @@ def test_cli_sync_flags(tmp_path, clone, srv):
 def test_the_default_config_pushes_nothing_and_has_no_network_in_sync(tmp_path, clone):
     me = Env(tmp_path, "a", clone, share=()).evidence(make_ev("T1"))
     out = sync.sync(me.ctx, solo_db=str(tmp_path / "hub"))
-    assert out["push"]["pushed"] is False and not (tmp_path / "hub" / "memory.db").exists() or True
+    assert out["push"]["pushed"] is False and out["push"]["repos"] == []
+    assert "share_repos is empty" in out["push"]["reason"]
+    assert out["ok"] is True and out["mode"] == "solo"
+    # build_transport opens (and so creates) the hub file even when nothing is pushed, but nothing reaches it.
+    assert (tmp_path / "hub" / "memory.db").exists()
     assert ServerDB(tmp_path / "hub").evidence() == []
