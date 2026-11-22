@@ -394,6 +394,19 @@ def pull_if_stale(ctx, max_age_seconds: float = 600.0, repos: Sequence[str] | No
         return {"pulled": False, "error": type(e).__name__}
 
 
+def note_pull_failure(ctx) -> None:
+    """Stamp a failed pull so the next `RETRY_AFTER_FAILED_PULL` seconds do not try again. For a caller that stopped
+    waiting for `pull_if_stale` (its worker thread dies with the process before it could write the stamp). Never raises."""
+    try:
+        if not ctx.config.memory.url:
+            return
+        state = _fresh_state(ctx)
+        state["last_pull_failed_ts"] = clock()
+        save_state(ctx, state)
+    except Exception:  # noqa: BLE001 - bookkeeping only
+        return
+
+
 # ---------- sync, status ----------
 
 def sync(ctx, *, do_push: bool = True, do_pull: bool = True, solo_db: str = "", extra_repos: Sequence[str] = (),

@@ -10,13 +10,13 @@ import threading
 
 from codecheck.config import MEMORY_LEVELS, expand_path
 from codecheck.errors import CodeCheckError
-from codecheck.memory import sync
-from codecheck.memory.server import ServerDB, Service, make_server
 
 COMMANDS = ("serve", "token", "sync", "status")
 
 
 def default_db(ctx) -> str:
+    from codecheck.memory import sync
+
     return str(sync.default_solo_db(ctx))
 
 
@@ -62,11 +62,15 @@ def add_arguments(sub) -> None:
     st.add_argument("--db", default="", help="solo mode only: the local server directory")
 
 
-def _db(ctx, args) -> ServerDB:
+def _db(ctx, args):
+    from codecheck.memory.server import ServerDB
+
     return ServerDB(expand_path(args.db or default_db(ctx))).init()
 
 
 def run(args, ctx) -> dict:
+    from codecheck.memory import sync
+
     cmd = args.memory_cmd
     if cmd == "serve":
         return serve(args, ctx)
@@ -96,7 +100,7 @@ def run(args, ctx) -> dict:
     return out
 
 
-def _configure_search(service: Service, args, ctx) -> None:
+def _configure_search(service, args, ctx) -> None:
     """Semantic search on the server: an embedder for the evidence text it holds, and the search route when asked."""
     if args.allow_search and not args.embed_model:
         raise CodeCheckError("--allow-search needs --embed-model: the server embeds the query and the evidence text")
@@ -112,6 +116,9 @@ def _configure_search(service: Service, args, ctx) -> None:
 
 
 def serve(args, ctx) -> dict:
+    from codecheck.memory import sync
+    from codecheck.memory.server import Service, make_server
+
     db = _db(ctx, args)
     service = Service(db, args.max_level, sync.params_of(ctx))
     _configure_search(service, args, ctx)

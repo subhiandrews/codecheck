@@ -360,17 +360,25 @@ def _bounded(budget: float, fn, why: dict | None = None):
 FALLBACK_REASONS = ("timeout", "unreachable", "model changed", "refused", "error")  # the only reasons `semantic` can carry
 
 
-def ranked_for(ctx, db: MemoryDB, repo: str, queries: Sequence[Query], kind: str, report: dict | None = None) -> list[tuple[str, float]]:
+def ranked_for(ctx, db: MemoryDB, repo: str, queries: Sequence[Query], kind: str, report: dict | None = None,
+               deadline: float | None = None) -> list[tuple[str, float]]:
     """`(lesson_id, score)` for a review, or `[]` whenever semantic retrieval is off or fails. Never raises, and stays
     within half of `memory.timeout_seconds` so the exact-key result is always still on time.
 
     `report`, when given, gets `report["semantic"]` = "ok" or "fallback: <reason>" (a fixed reason, never exception text)
-    once a lookup was tried; nothing is set when embed_model is empty or there are no queries."""
+    once a lookup was tried; nothing is set when embed_model is empty or there are no queries.
+
+    `deadline`, a `time.monotonic()` value, is the end of the caller's whole budget: the lookup then gets what is left of
+    it (less a small reserve for merging and rendering) instead of half of `memory.timeout_seconds`."""
     try:
         cfg = ctx.config.memory
         if not cfg.embed_model or not queries:
             return []
-        budget = min(embed.BUDGET_SECONDS, max(float(cfg.timeout_seconds) * 0.5, 0.1))
+        if deadline is None:
+            budget = min(embed.BUDGET_SECONDS, max(float(cfg.timeout_seconds) * 0.5, 0.1))
+        else:
+            left = deadline - time.monotonic()
+            budget = min(embed.BUDGET_SECONDS, max(left - max(float(cfg.timeout_seconds) * 0.1, 0.05), 0.05))
         why: dict = {}
         if cfg.embed_at == "server":
             out = _bounded(budget, lambda: server_ranked(ctx, repo, queries, kind, budget, why), why)

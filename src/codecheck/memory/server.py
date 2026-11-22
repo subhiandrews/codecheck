@@ -29,6 +29,8 @@ from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
+from codecheck.config import LOOPBACK_NAMES as _LOOPBACK_NAMES
+from codecheck.config import is_loopback_host
 from codecheck.errors import CodeCheckError
 from codecheck.memory import levels
 from codecheck.memory.consolidate import DAY, Params
@@ -53,7 +55,7 @@ CEILINGS = ("contributor", "maintainer")
 PURGE_LOG_MAX = 20000
 PURGED_PER_RESPONSE = 1000
 PAGE_LIMIT = 500
-LOOPBACK_NAMES = {"localhost", "127.0.0.1", "::1"}
+LOOPBACK_NAMES = set(_LOOPBACK_NAMES)
 
 _EXTRA_SCHEMA = """
 CREATE TABLE IF NOT EXISTS tokens (id INTEGER PRIMARY KEY, name TEXT NOT NULL, hash TEXT NOT NULL, role TEXT NOT NULL,
@@ -379,13 +381,7 @@ class Service:
 
 # ---------- HTTP ----------
 
-def is_loopback(host: str) -> bool:
-    if host in LOOPBACK_NAMES:
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
+is_loopback = is_loopback_host  # one definition shared with config validation
 
 
 def check_bind(host: str, *, tls: bool, behind_proxy: bool) -> None:

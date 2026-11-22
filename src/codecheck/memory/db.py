@@ -9,16 +9,19 @@ into a `MemoryStoreError`, which the CLI prints as one JSON error, never a trace
 import contextlib
 import json
 import os
-import sqlite3
 import time
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from codecheck.errors import CodeCheckError
 from codecheck.memory.consolidate import DAY, Params, consolidate
 from codecheck.memory.model import Evidence, Lesson, Scope, clean_role
+
+if TYPE_CHECKING:
+    import sqlite3
 
 SCHEMA_VERSION = 1
 FILE_NAME = "memory.db"
@@ -137,6 +140,8 @@ class MemoryDB:
                 self._prepare_file()
             except OSError as e:
                 raise MemoryStoreError(f"cannot create the memory store at {self.directory}: {e.strerror or e}") from e
+        import sqlite3  # lazy: not loaded while memory is off
+
         conn = None
         try:
             conn = sqlite3.connect(self.file, timeout=BUSY_MS / 1000, isolation_level=None)

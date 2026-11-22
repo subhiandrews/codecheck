@@ -4,6 +4,7 @@ Security-sensitive keys (REPO_FORBIDDEN) cannot come from the repository file: a
 trusted to choose the tools an unattended run gets, where state lives, or whether reviews auto-approve.
 """
 
+import ipaddress
 import re
 import tomllib
 from collections.abc import Mapping
@@ -373,6 +374,19 @@ def validate_codex(cfg: Config) -> None:
             raise ConfigError(f"config key codex.{key} must be a positive integer")
 
 
+LOOPBACK_NAMES = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def is_loopback_host(host: str) -> bool:
+    """True for localhost or a literal loopback IP address; a name such as 127.evil.com is not loopback."""
+    if host in LOOPBACK_NAMES:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def _check_url(key: str, value: str, *, allow_empty: bool) -> None:
     if not value:
         if allow_empty:
@@ -385,7 +399,7 @@ def _check_url(key: str, value: str, *, allow_empty: bool) -> None:
         raise ConfigError(f"config key memory.{key} is not a valid URL") from e
     if parsed.scheme not in ("http", "https") or not host or parsed.username or parsed.password:
         raise ConfigError(f"config key memory.{key} must be an http(s) URL without credentials")
-    if parsed.scheme == "http" and host not in ("localhost", "::1") and not host.startswith("127."):
+    if parsed.scheme == "http" and not is_loopback_host(host):
         raise ConfigError(f"config key memory.{key} must use https unless it points at the local machine")
 
 

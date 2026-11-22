@@ -10,12 +10,9 @@ float32 arrays stored as blobs, so cosine similarity is one dot product in pure 
 """
 
 import base64
-import http.client
 import json
 import math
 import time
-import urllib.error
-import urllib.request
 from array import array
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -64,14 +61,20 @@ class Embedder(Protocol):
     def embed(self, texts: Sequence[str], budget: float = BUDGET_SECONDS) -> list[list[float]] | None: ...
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *_args, **_kwargs):
-        return None
+def _no_redirect_handler():
+    import urllib.request  # lazy: the HTTP stack is not loaded until a request is made
+
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *_args, **_kwargs):
+            return None
+
+    return _NoRedirect
 
 
 class OllamaEmbedder:
     def __init__(self, url: str, model: str, budget: float = BUDGET_SECONDS) -> None:
         self.url, self.model, self.budget = url, model, budget
+        self._digest: str | None = None  # a found digest is kept: one ranking asks for it more than once
 
     def _base(self) -> str | None:
         try:
@@ -83,12 +86,16 @@ class OllamaEmbedder:
         base = self._base()
         if base is None or timeout <= 0:
             return None
+        import http.client
+        import urllib.error
+        import urllib.request
+
         data = json.dumps(body).encode("utf-8") if body is not None else None
         req = urllib.request.Request(  # noqa: S310 - scheme and host are checked in check_url
             base + path, data=data, method=method,
             headers={"Accept": "application/json", **({"Content-Type": "application/json"} if data else {})})
         try:
-            with urllib.request.build_opener(_NoRedirect).open(req, timeout=timeout) as resp:
+            with urllib.request.build_opener(_no_redirect_handler()).open(req, timeout=timeout) as resp:
                 if resp.status != 200:
                     return None
                 raw = resp.read(RESPONSE_CAP + 1)
@@ -101,6 +108,8 @@ class OllamaEmbedder:
 
     def digest(self) -> str | None:
         """The digest Ollama reports for the model, or None when it is unreachable or does not have the model."""
+        if self._digest:
+            return self._digest
         out = self._call("GET", "/api/tags", None, self.budget)
         models = out.get("models") if out else None
         if not isinstance(models, list):
@@ -109,7 +118,10 @@ class OllamaEmbedder:
             names = (self.model, f"{self.model}:latest")
             if isinstance(m, dict) and (m.get("name") in names or m.get("model") in names):
                 d = m.get("digest")
-                return d if isinstance(d, str) and d else None
+                if isinstance(d, str) and d:
+                    self._digest = d
+                    return d
+                return None
         return None
 
     def embed(self, texts: Sequence[str], budget: float | None = None) -> list[list[float]] | None:
@@ -178,7 +190,7 @@ def from_b64(text: object, dim: int) -> bytes | None:
 
 def dot(a: Sequence[float], b: Sequence[float]) -> float:
     """Cosine similarity of two unit vectors (those `normalise` makes)."""
-    return sum(x * y for x, y in zip(a, b, strict=True)) if len(a) == len(b) else 0.0
+    return math.sumprod(a, b) if len(a) == len(b) else 0.0
 
 
 def cosine(a: Sequence[float], b: Sequence[float]) -> float:
