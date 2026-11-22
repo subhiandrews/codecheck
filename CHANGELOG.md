@@ -2,6 +2,11 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.4.0]
+
+### Added
+- `review-local` can propose improvements to `CODE_CHECK.md` from what past reviews learned: findings you disputed in several PRs and human comments the panel missed. Off by default (`review.learn_guidance` in your user config); it writes the working tree only and never commits. New command `guidance evidence|apply`.
+
 ## [1.3.0]
 
 ### Added

@@ -4,7 +4,7 @@ Every code-check setting. The README has a minimal example; this is the full ref
 
 Settings are layered, highest precedence first: environment (`CODE_CHECK_<SECTION>__<KEY>`, for example `CODE_CHECK_REVIEW__AUTO_APPROVE=true`), your `~/.config/code-check/config.toml`, the repository's `.code-check.toml`, then the defaults below. Your own settings therefore win over a repository's. Unknown keys and wrong types in files are errors.
 
-A repository's `.code-check.toml` may **not** set the security-sensitive keys `state_dir`, anything under `[run_pr]`, `[shadow]`, `[golden]`, `[codex]`, `[codex_models]` or `[codex_reasoning]`, `review.auto_approve`, `review.attribution`, `review.label`, `review.login`, `loop.review_forks`, `address.test_command` or `deep_reviewer.command`: a repository you review is not trusted to choose what an unattended run may do or execute, where state is written, or whether reviews approve. Such a key in the repository file is an error that names the key; set it in your user file or the environment instead. Model names must match `[A-Za-z0-9._:[\]-]+`, `run_pr.permission_mode` must be one of `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`, and allowed-tool entries and prompts must not start with `-`.
+A repository's `.code-check.toml` may **not** set the security-sensitive keys `state_dir`, anything under `[run_pr]`, `[shadow]`, `[golden]`, `[codex]`, `[codex_models]` or `[codex_reasoning]`, `review.auto_approve`, `review.attribution`, `review.label`, `review.login`, `review.learn_guidance`, `loop.review_forks`, `address.test_command` or `deep_reviewer.command`: a repository you review is not trusted to choose what an unattended run may do or execute, where state is written, or whether reviews approve. Such a key in the repository file is an error that names the key; set it in your user file or the environment instead. Model names must match `[A-Za-z0-9._:[\]-]+`, `run_pr.permission_mode` must be one of `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`, and allowed-tool entries and prompts must not start with `-`.
 
 ```toml
 provider = "auto"              # auto (a gitlab.com remote means gitlab, anything else github), "github" or "gitlab"
@@ -21,6 +21,7 @@ security = false               # true: always include the security reviewer (see
 performance = false            # true: always include the performance reviewer (see [ARCHITECTURE.md](ARCHITECTURE.md#performance-review))
 full = false                   # true: every reviewer on every review, routing skipped (see [ARCHITECTURE.md](ARCHITECTURE.md#reviewer-routing-and-full-mode))
 attribution = true             # one credit line (tool, version, licence, repo link) in the review summary, never in inline comments
+learn_guidance = false         # true: review-local may write a checked CODE_CHECK.md proposal to the working tree from past review outcomes (user config only)
 label = "code-check"           # label added to reviewed PRs; "" disables it
 login = ""                     # act as this login instead of `gh api user`; set it in CI, where the token cannot call /user (e.g. "github-actions[bot]")
 ignore = ["**/*.lock", "dist/**"]   # plain glob patterns, see below

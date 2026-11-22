@@ -56,3 +56,4 @@ Records dated before 2026-11-20 were reconstructed from the original design spec
 - [0035-missing-findings-files-are-retried-once-not-treated-as-empty.md](0035-missing-findings-files-are-retried-once-not-treated-as-empty.md): Missing findings files are retried once, not treated as empty
 - [0036-a-bot-keeps-the-ci-code-check-pin-current.md](0036-a-bot-keeps-the-ci-code-check-pin-current.md): A bot keeps the CI code-check pin current
 - [0037-nested-code-check-md-files-are-chosen-by-the-changed-paths.md](0037-nested-code-check-md-files-are-chosen-by-the-changed-paths.md): Nested CODE_CHECK.md files are chosen by the changed paths
+- [0038-guidance-learning-is-opt-in-local-and-never-commits.md](0038-guidance-learning-is-opt-in-local-and-never-commits.md): Guidance learning is opt-in, local and never commits

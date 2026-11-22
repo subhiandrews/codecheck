@@ -112,7 +112,7 @@ def _combine(source: str, sections: Iterable[tuple[str, bytes | str | None]], no
     return Guidance(source, text, truncated, tuple(files), tuple(skipped))
 
 
-def _read_regular(root: Path, directory: str) -> bytes | None:
+def read_regular(root: Path, directory: str) -> bytes | None:
     """The file in `directory` of the working tree, or None. Neither it nor any directory on the way may be a symlink."""
     path = root
     try:
@@ -135,7 +135,7 @@ def from_worktree(root: Path | str, paths: Iterable[object] = ()) -> Guidance | 
     """Guidance from the working tree for a change to `paths`: the root file, then nested ones above those paths."""
     root = Path(root)
     dirs, notes = guidance_dirs(paths)
-    return _combine("worktree", ((d, _read_regular(root, d)) for d in ("", *dirs)), notes)
+    return _combine("worktree", ((d, read_regular(root, d)) for d in ("", *dirs)), notes)
 
 
 def from_base(git: Git, ref: str, paths: Iterable[object] = (), notes: tuple[str, ...] = ()) -> Guidance | None:
