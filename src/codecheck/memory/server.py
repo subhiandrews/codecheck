@@ -95,6 +95,10 @@ def clamp_role(role: str, ceiling: str) -> str:
 class ServerDB(MemoryDB):
     """The shared store. Opening it creates the server tables next to the lesson tables."""
 
+    # Ingest writes contribution rows and evidence in two transactions; a purge between them would leave evidence no
+    # purge can reach. One lock makes the two operations exclusive within this process.
+    _ingest_purge_lock = threading.RLock()
+
     def init(self) -> ServerDB:
         with self._use(write=True) as conn, self._tx(conn):
             for stmt in _EXTRA_SCHEMA.split(";"):
@@ -161,13 +165,14 @@ class ServerDB(MemoryDB):
         one could never be revoked."""
         live = [e for e in items if (now - e.ts) / DAY < params.expire_days]
         counts: Counter = Counter(skipped_expired=len(items) - len(live))
-        with self._use(write=True) as conn, self._tx(conn):
-            conn.executemany(
-                "INSERT INTO evidence_contrib (evidence_id, contributor, received_ts, role) VALUES (?, ?, ?, ?) "
-                "ON CONFLICT (evidence_id, contributor) DO UPDATE SET received_ts = excluded.received_ts, role = excluded.role",
-                [(e.id, contributor, now, e.role) for e in live])
-        counts.update(self.upsert_evidence(live))
-        self.resolve_roles([e.id for e in live])
+        with self._ingest_purge_lock:
+            with self._use(write=True) as conn, self._tx(conn):
+                conn.executemany(
+                    "INSERT INTO evidence_contrib (evidence_id, contributor, received_ts, role) VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT (evidence_id, contributor) DO UPDATE SET received_ts = excluded.received_ts, role = excluded.role",
+                    [(e.id, contributor, now, e.role) for e in live])
+            counts.update(self.upsert_evidence(live))
+            self.resolve_roles([e.id for e in live])
         return counts
 
     def resolve_roles(self, ids: Sequence[str], *, touch_ts: float | None = None) -> int:
@@ -199,6 +204,13 @@ class ServerDB(MemoryDB):
                 (repo, after_seq, limit))
             return [(r[0], r[1]) for r in rows]
 
+    def purge_floor(self) -> int:
+        """The oldest purge-log sequence still kept (0 when the log is empty)."""
+        with self._use(write=False) as conn:
+            if not self._ready(conn):
+                return 0
+            return int(conn.execute("SELECT COALESCE(MIN(id), 0) FROM purge_log").fetchone()[0])
+
     def purge_seq(self) -> int:
         with self._use(write=False) as conn:
             if not self._ready(conn):
@@ -217,14 +229,21 @@ class ServerDB(MemoryDB):
 
     def purge_contributor(self, contributor: str, params: Params, now: float) -> dict:
         """Remove what one contributor sent. Evidence another contributor also sent stays, because it is still theirs."""
-        with self._use(write=True) as conn, self._tx(conn):
+        with self._ingest_purge_lock, self._use(write=True) as conn, self._tx(conn):
             theirs = [r[0] for r in conn.execute("SELECT evidence_id FROM evidence_contrib WHERE contributor = ?", (contributor,))]
             conn.execute("DELETE FROM evidence_contrib WHERE contributor = ?", (contributor,))
-            doomed = [(r[0], r[1]) for r in conn.execute(
-                "SELECT id, repo FROM evidence WHERE id NOT IN (SELECT evidence_id FROM evidence_contrib)")]
+            doomed: list[tuple[str, str]] = []
+            for i in range(0, len(theirs), 500):  # only what this contributor sent, and only when nobody else sent it too
+                chunk = theirs[i:i + 500]
+                doomed += [(r[0], r[1]) for r in conn.execute(
+                    f"SELECT id, repo FROM evidence WHERE id IN ({','.join('?' * len(chunk))}) "  # noqa: S608 - placeholders only
+                    "AND id NOT IN (SELECT evidence_id FROM evidence_contrib)", chunk)]
             conn.executemany("INSERT INTO purge_log (evidence_id, repo, ts) VALUES (?, ?, ?)", [(i, repo, now) for i, repo in doomed])
             conn.execute("DELETE FROM purge_log WHERE id <= (SELECT MAX(id) FROM purge_log) - ?", (PURGE_LOG_MAX,))
-            gone = conn.execute("DELETE FROM evidence WHERE id NOT IN (SELECT evidence_id FROM evidence_contrib)").rowcount
+            gone = 0
+            for i in range(0, len(doomed), 500):
+                chunk = [d[0] for d in doomed[i:i + 500]]
+                gone += conn.execute(f"DELETE FROM evidence WHERE id IN ({','.join('?' * len(chunk))})", chunk).rowcount  # noqa: S608 - placeholders only
             eps = conn.execute("DELETE FROM episodes WHERE contributor = ?", (contributor,)).rowcount
             drop_orphan_vectors(conn)  # vectors are derived from the purged evidence text
         reweighed = self.resolve_roles(theirs, touch_ts=now)  # a maintainer's role leaves with the maintainer
@@ -347,10 +366,12 @@ class Service:
             except ValueError:
                 return 422, {"error": "purged_since is malformed"}
             seq_now = self.db.purge_seq()  # read first: a purge landing in between is simply seen by the next pull
+            floor = self.db.purge_floor()
+            gap = after_seq > 0 and floor > after_seq + 1  # entries the client never saw were pruned from the log
             gone = self.db.purged_page(repo, after_seq, PURGED_PER_RESPONSE + 1)
             truncated = len(gone) > PURGED_PER_RESPONSE
             gone = gone[:PURGED_PER_RESPONSE]
-            body.update(purged=[i for _, i in gone], purged_more=truncated,
+            body.update(purged=[i for _, i in gone], purged_more=truncated, purged_gap=gap,
                         purged_seq=gone[-1][0] if truncated else max(seq_now, after_seq))
         return 200, body
 
@@ -512,7 +533,7 @@ class _Handler(BaseHTTPRequestHandler):
         if self.headers.get("Transfer-Encoding"):
             raise levels.PayloadError("chunked bodies are not accepted", 411)
         raw = self.headers.get("Content-Length")
-        if raw is None or not raw.isdigit():
+        if raw is None or not (raw.isascii() and raw.isdigit()):
             raise levels.PayloadError("Content-Length is required", 411)
         size = int(raw)
         if size > levels.MAX_BODY_BYTES:

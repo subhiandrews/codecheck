@@ -10,6 +10,7 @@ permanently refused (4xx other than 429) is remembered and not resent until it c
 resent at all. Evidence that came from a pull is never pushed back under this machine's name.
 """
 
+import contextlib
 import json
 import os
 import re
@@ -20,6 +21,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from codecheck.config import expand_path
+from codecheck.core.state import FileLock
 from codecheck.errors import CodeCheckError
 from codecheck.memory import levels
 from codecheck.memory.client import (
@@ -263,6 +265,29 @@ def _push_episodes(shadow: ShadowStore, transport, state: dict, repo: str, serve
 
 # ---------- pull ----------
 
+LOCK_WAIT_SECONDS = 2.0  # how long a run waits for another run's sync.json read-modify-write before giving up
+
+
+@contextlib.contextmanager
+def _state_lock(ctx, wait: float = LOCK_WAIT_SECONDS):
+    """Yield True while this run holds `sync.json.lock`, False when it could not within `wait` (or the store directory is
+    unusable). Callers fail soft on False: a lost update to the watermarks is worse than a skipped run."""
+    lock = None
+    held = False
+    try:
+        d = _store_dir(ctx)
+        d.mkdir(parents=True, exist_ok=True, mode=0o700)
+        lock = FileLock(d / f"{STATE_FILE}.lock", stale_after=600)
+        held = lock.acquire_wait(wait)
+    except OSError:
+        held = False
+    try:
+        yield held
+    finally:
+        if held and lock is not None:
+            lock.release()
+
+
 MAX_PURGED_IDS = 5000  # what one response may make us delete: a hostile server cannot name more than this per pull
 _EVIDENCE_ID = re.compile(r"[0-9a-f]{16}")
 
@@ -315,6 +340,14 @@ def pull(ctx, transport, repos: Sequence[str], state: dict, *, now: float, deadl
             resp = transport.get_lessons(repo, since, cursor, **({"purged_since": purge_start} if purge_start and not cursor else {}))
             if not cursor:
                 purge_ids, purge_seq = _parse_purged(resp.body) if resp.status == 200 else ([], None)
+                if resp.status == 200 and resp.body.get("purged_gap") is True and purge_start:
+                    # the server pruned purge entries this machine never saw: nothing pulled can be trusted, so drop it and
+                    # pull this repository from scratch (local-origin evidence stays: only `pulled_ids` qualify)
+                    _apply_purged(db, state, pulled, known_pulled, [e.id for e in db.evidence(repo=repo)])
+                    db.recompute(params, now)
+                    since, purge_start, items, newest = 0.0, 0, [], 0.0
+                    since_map.pop(repo, None)
+                    continue
             if resp.status in (401, 403, 408, 429) or resp.status >= 500:
                 error = f"HTTP {resp.status}"
                 break
@@ -361,7 +394,18 @@ def pull_if_stale(ctx, max_age_seconds: float = 600.0, repos: Sequence[str] | No
     Never raises and never blocks past the budget: on any failure the replica is left as it is. Only a configured
     `memory.url` is ever contacted. Without `repos` the repositories are `memory.share_repos`. With `repos` (the one being
     reviewed) they are pulled whether or not they are listed there: a pull is read-only and sends the server nothing but the
-    repository name, so `share_repos` stays the list that gates what is pushed, not what may be read."""
+    repository name, so `share_repos` stays the list that gates what is pushed, not what may be read. The read-modify-write
+    of `sync.json` holds `sync.json.lock`; a run that cannot get it quickly skips."""
+    try:
+        with _state_lock(ctx) as held:
+            if not held:
+                return {"pulled": False, "reason": "another sync is running"}
+            return _pull_if_stale(ctx, max_age_seconds, repos)
+    except Exception as e:  # noqa: BLE001 - reading memory must never break the caller
+        return {"pulled": False, "error": type(e).__name__}
+
+
+def _pull_if_stale(ctx, max_age_seconds: float = 600.0, repos: Sequence[str] | None = None) -> dict:
     try:
         m = ctx.config.memory
         if not m.url:
@@ -400,9 +444,12 @@ def note_pull_failure(ctx) -> None:
     try:
         if not ctx.config.memory.url:
             return
-        state = _fresh_state(ctx)
-        state["last_pull_failed_ts"] = clock()
-        save_state(ctx, state)
+        with _state_lock(ctx) as held:
+            if not held:
+                return
+            state = _fresh_state(ctx)
+            state["last_pull_failed_ts"] = clock()
+            save_state(ctx, state)
     except Exception:  # noqa: BLE001 - bookkeeping only
         return
 
@@ -411,7 +458,17 @@ def note_pull_failure(ctx) -> None:
 
 def sync(ctx, *, do_push: bool = True, do_pull: bool = True, solo_db: str = "", extra_repos: Sequence[str] = (),
          http_timeout: float | None = None, cancel: threading.Event | None = None) -> dict:
-    """`http_timeout` bounds each HTTP call; `cancel`, once set by a caller that stopped waiting, stops every state write."""
+    """`http_timeout` bounds each HTTP call; `cancel`, once set by a caller that stopped waiting, stops every state write.
+    The whole read-modify-write of `sync.json` holds `sync.json.lock`; when another run holds it, this one reports not ok."""
+    with _state_lock(ctx) as held:
+        if not held:
+            return {"mode": "server" if ctx.config.memory.url and not solo_db else "solo", "ok": False,
+                    "error": "another sync is running"}
+        return _sync(ctx, do_push, do_pull, solo_db, extra_repos, http_timeout, cancel)
+
+
+def _sync(ctx, do_push: bool, do_pull: bool, solo_db: str, extra_repos: Sequence[str], http_timeout: float | None,
+          cancel: threading.Event | None) -> dict:
     m = ctx.config.memory
     now = clock()
     state = _fresh_state(ctx, solo_db)

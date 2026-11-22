@@ -124,7 +124,11 @@ class HttpTransport:
             with self._opener().open(req, timeout=self.timeout) as resp:
                 status, raw = resp.status, resp.read(READ_CAP + 1)
         except urllib.error.HTTPError as e:
-            status, raw = e.code, e.read(READ_CAP + 1)
+            try:
+                status, raw = e.code, e.read(READ_CAP + 1)
+            except (OSError, http.client.HTTPException) as err:
+                raise MemoryTransportError(
+                    f"cannot read the memory server {urlsplit(self.url).netloc}'s answer: {type(err).__name__}") from None
         except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError, ValueError) as e:
             raise MemoryTransportError(f"cannot reach the memory server {urlsplit(self.url).netloc}: {type(e).__name__}") from None
         if len(raw) > READ_CAP:
