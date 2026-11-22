@@ -7,7 +7,9 @@ from fakes import FakeProvider
 from gitutil import commit_file, make_origin_and_clone, push_branch, sh
 
 from codecheck.config import AddressConfig
+from codecheck.errors import GitError
 from codecheck.models import Check, Review, Thread, ThreadComment
+from codecheck.vcs.git import Git
 
 pytestmark = pytest.mark.usefixtures("git_env")
 
@@ -368,6 +370,19 @@ def test_workspace_does_not_read_nested_guidance_for_ignored_paths(tmp_path):
     ctx, pr, _clone, origin = _setup_with_head_guidance(tmp_path, {"dist/bundle.js": "y = 2\n"})
     _push_to_main(tmp_path, origin, {"CODE_CHECK.md": "fix style only\n", "dist/CODE_CHECK.md": "dist rules\n"})
     assert call(ctx, "workspace", "--pr", str(pr.ref))[1]["guidance"] == FIX_STYLE
+
+
+def test_workspace_notes_that_nested_guidance_was_not_looked_up_when_the_diff_fails(tmp_path, monkeypatch):
+    ctx, pr, _clone, origin = _setup_with_head_guidance(tmp_path, {"svc/api/app.py": "y = 2\n"})
+    _push_to_main(tmp_path, origin, {"CODE_CHECK.md": "fix style only\n", "svc/api/CODE_CHECK.md": "api rules\n"})
+
+    def boom(*_a, **_k):
+        raise GitError("diff failed")
+
+    monkeypatch.setattr(Git, "diff", boom)
+    g = call(ctx, "workspace", "--pr", str(pr.ref))[1]["guidance"]
+    assert g["truncated"] is True and g["files"] == ["CODE_CHECK.md"]
+    assert g["text"].startswith("fix style only\n") and "changed paths could not be listed" in g["text"]
 
 
 def test_workspace_survives_option_like_base_ref(tmp_path):

@@ -41,11 +41,13 @@ def _guidance(git: Git, cfg, pr, head: str) -> dict | None:
     base = f"{cfg.remote}/{pr.base_ref}"
     try:
         git.fetch(cfg.remote, pr.base_ref)  # a failed fetch just means we use whatever is local
+        notes: tuple[str, ...] = ()
         try:
             paths = filter_ignored(list(parse_diff(git.diff(f"{base}...{head}"))), cfg.review.ignore)  # as `context` does
         except CodeCheckError:
-            paths = []  # the root file alone still beats no guidance
-        g = from_base(git, base, paths)
+            paths = []  # the root file alone still beats no guidance, but say what was not looked up
+            notes = ("[CODE_CHECK.md: the changed paths could not be listed, so nested files were not looked up]",)
+        g = from_base(git, base, paths, notes)
     except CodeCheckError:  # GitError is a CodeCheckError
         return None
     return None if g is None else {"source": g.source, "text": g.text, "truncated": g.truncated, "files": list(g.files), "skipped": list(g.skipped)}

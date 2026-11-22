@@ -62,15 +62,10 @@ def _ancestor_dirs(paths: Iterable[object]) -> list[str]:
     return sorted(found, key=lambda d: (d.count("/"), d))
 
 
-def guidance_dirs(paths: Iterable[object]) -> list[str]:
-    """The directories above the given repo-relative files that may hold a nested file: shallowest first, then by name,
-    without the root, at most `MAX_GUIDANCE_DIRS`. A path that is absolute, climbs with `..` or holds control characters
-    contributes nothing."""
-    return _ancestor_dirs(paths)[:MAX_GUIDANCE_DIRS]
-
-
-def _capped_note(paths: Iterable[object]) -> tuple[list[str], tuple[str, ...]]:
-    """The directories to look in and, when `MAX_GUIDANCE_DIRS` cut some off, a note for the guidance text."""
+def guidance_dirs(paths: Iterable[object]) -> tuple[list[str], tuple[str, ...]]:
+    """The directories above the given repo-relative files that may hold a nested file, and a note for the guidance text
+    when `MAX_GUIDANCE_DIRS` cut some off. Shallowest first, then by name, without the root. A path that is absolute,
+    climbs with `..` or holds control characters contributes nothing."""
     found = _ancestor_dirs(paths)
     note = (f"[{GUIDANCE_FILE}: only the {MAX_GUIDANCE_DIRS} shallowest directories above the changed files were "
             "checked for nested files]")
@@ -139,13 +134,15 @@ def _read_regular(root: Path, directory: str) -> bytes | None:
 def from_worktree(root: Path | str, paths: Iterable[object] = ()) -> Guidance | None:
     """Guidance from the working tree for a change to `paths`: the root file, then nested ones above those paths."""
     root = Path(root)
-    dirs, notes = _capped_note(paths)
+    dirs, notes = guidance_dirs(paths)
     return _combine("worktree", ((d, _read_regular(root, d)) for d in ("", *dirs)), notes)
 
 
-def from_base(git: Git, ref: str, paths: Iterable[object] = ()) -> Guidance | None:
-    """Guidance at `ref` for a change to `paths`: the root file, then nested ones above those paths."""
-    dirs, notes = _capped_note(paths)
+def from_base(git: Git, ref: str, paths: Iterable[object] = (), notes: tuple[str, ...] = ()) -> Guidance | None:
+    """Guidance at `ref` for a change to `paths`: the root file, then nested ones above those paths. `notes` are lookup
+    problems the caller already knows of; they are shown in the text and mark it truncated."""
+    dirs, capped = guidance_dirs(paths)
+    notes += capped
     nested: set[str] = set()
     if dirs:
         try:

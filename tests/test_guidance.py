@@ -94,9 +94,9 @@ def _write(root, rel, text):
 
 
 def test_guidance_dirs_are_the_ancestors_shallowest_first_and_unsafe_paths_give_none():
-    assert guidance_dirs(["services/api/src/x.py", "web/y.js", "top.py"]) == ["services", "web", "services/api", "services/api/src"]
-    assert guidance_dirs(["top.py", None, 3]) == []
-    assert guidance_dirs(["/etc/x/y", "a/../b/c.py", "./a/b.py", "a//b.py", "a\nb/c.py", "a`b/c.py"]) == []
+    assert guidance_dirs(["services/api/src/x.py", "web/y.js", "top.py"])[0] == ["services", "web", "services/api", "services/api/src"]
+    assert guidance_dirs(["top.py", None, 3]) == ([], ())
+    assert guidance_dirs(["/etc/x/y", "a/../b/c.py", "./a/b.py", "a//b.py", "a\nb/c.py", "a`b/c.py"]) == ([], ())
 
 
 def test_worktree_nested_file_applies_only_above_a_changed_path(tmp_path):
