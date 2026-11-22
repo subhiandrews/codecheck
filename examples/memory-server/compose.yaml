@@ -1,6 +1,6 @@
 # Example only. The memory server plus an Ollama container for semantic retrieval (optional).
 # Run from this directory:  docker compose up -d --build
-# Create a token:           docker compose exec memory code-check memory token add alice
+# Create a token:           docker compose exec memory code-check memory token add alice --maintainer --db /data
 services:
   memory:
     build:
