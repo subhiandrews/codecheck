@@ -11,7 +11,7 @@ from codecheck.commands._common import (
 from codecheck.core.findings import validate_findings
 from codecheck.core.panel import detect_language
 from codecheck.memory.inject import AGGREGATOR, FILE_NAME, safe_build
-from codecheck.memory.semantic import Query
+from codecheck.memory.model import Query
 
 NAME = "ingest"
 HELP = "Validate the findings files the reviewers wrote for a run"

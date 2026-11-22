@@ -79,7 +79,11 @@ def _run_memory(args, ctx) -> dict:
         if (args.snippets, args.only) != (None, None) or args.no_record:
             raise CodeCheckError("--memory-retrieval takes only --cases, --retriever and --if-reachable")
         memory_semantic.register(ctx)  # only with memory.embed_model set; available only while the embedder answers
-        return run_retrieval(_dir(ctx, args.cases, memory_retrieval.DEFAULT_CASES, "cases"), args.retriever, args.if_reachable)
+        directory = _dir(ctx, args.cases, memory_retrieval.DEFAULT_CASES, "cases")
+        if args.cases is None and not any(directory.glob("*.json")):
+            # an installed copy has no tests/ directory: running zero cases and passing would hide that
+            raise CodeCheckError(f"no retrieval cases found in {directory}; run from a checkout or pass --cases DIR")
+        return run_retrieval(directory, args.retriever, args.if_reachable)
     if args.cases is not None or args.retriever is not None or args.no_record:
         raise CodeCheckError("--memory-effect takes only --snippets, --only and --if-reachable")
     return run_effect(ctx, _dir(ctx, args.snippets, DEFAULT_SNIPPETS, "snippets"), args.only, args.if_reachable)

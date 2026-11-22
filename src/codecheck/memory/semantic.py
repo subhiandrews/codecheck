@@ -20,7 +20,6 @@ import json
 import threading
 import time
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
 
 from codecheck.config import expand_path
 from codecheck.memory import embed, levels
@@ -33,7 +32,7 @@ from codecheck.memory.embed import (
     OllamaEmbedder,
     Pin,
 )
-from codecheck.memory.model import Evidence
+from codecheck.memory.model import Evidence, Query
 from codecheck.shadow.scrub import scrub_text
 
 TABLE = "evidence_vectors"
@@ -42,14 +41,6 @@ FILL_LIMIT = 64  # evidence a server embeds per search
 MAX_SEARCH_LIMIT = 100
 _DDL = (f"CREATE TABLE IF NOT EXISTS {TABLE} (evidence_id TEXT PRIMARY KEY, model TEXT NOT NULL, digest TEXT NOT NULL, "
         "dim INTEGER NOT NULL, vec BLOB NOT NULL)")
-
-
-@dataclass(frozen=True)
-class Query:
-    text: str
-    path: str = ""
-    category: str = ""
-    language: str = ""
 
 
 def make_embedder(cfg) -> Embedder | None:
@@ -458,6 +449,9 @@ def server_ranked(ctx, repo: str, queries: Sequence[Query], kind: str, budget: f
     m = ctx.config.memory
     qs = clean_queries(queries)
     if not qs:
+        return []
+    if not m.url or repo not in m.share_repos:  # refuse before building a transport: solo mode would create a server dir and DB
+        why["reason"] = "refused"
         return []
     transport = sync.build_transport(ctx, timeout=budget)
     if server_mode_refusal(ctx, repo, transport):

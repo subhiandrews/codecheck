@@ -57,6 +57,14 @@ class MemoryStoreError(CodeCheckError):
     """The memory store cannot be opened or used."""
 
 
+_UNREADABLE = "the memory store {file} is unreadable ({err}); fix or delete it and run `memory consolidate` again"
+
+
+def _is_busy(e: Exception) -> bool:
+    text = str(e).lower()
+    return "locked" in text or "busy" in text
+
+
 @dataclass(frozen=True)
 class Recomputed:
     lessons: list[Lesson]
@@ -144,16 +152,19 @@ class MemoryDB:
 
         conn = None
         try:
-            conn = sqlite3.connect(self.file, timeout=BUSY_MS / 1000, isolation_level=None)
-            conn.row_factory = sqlite3.Row
-            conn.execute(f"PRAGMA busy_timeout = {BUSY_MS}")
-            conn.execute("PRAGMA journal_mode = WAL")
-            self._migrate(conn, write)
-            yield conn
-        except sqlite3.DatabaseError as e:
-            raise MemoryStoreError(
-                f"the memory store {self.file} is unreadable ({e}); fix or delete it and run `memory consolidate` again"
-            ) from e
+            try:
+                conn = sqlite3.connect(self.file, timeout=BUSY_MS / 1000, isolation_level=None)
+                conn.row_factory = sqlite3.Row
+                conn.execute(f"PRAGMA busy_timeout = {BUSY_MS}")
+                conn.execute("PRAGMA journal_mode = WAL")
+                self._migrate(conn, write)
+            except sqlite3.OperationalError as e:
+                if _is_busy(e):
+                    raise MemoryStoreError(f"the memory store {self.file} is busy ({e}); try again shortly") from e
+                raise MemoryStoreError(_UNREADABLE.format(file=self.file, err=e)) from e
+            except sqlite3.DatabaseError as e:
+                raise MemoryStoreError(_UNREADABLE.format(file=self.file, err=e)) from e
+            yield conn  # the caller's own errors are not translated
         finally:
             if conn is not None:
                 conn.close()
@@ -171,6 +182,9 @@ class MemoryDB:
             return
         conn.execute("BEGIN IMMEDIATE")
         try:
+            if conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION:  # another process migrated first
+                conn.execute("ROLLBACK")
+                return
             for stmt in _SCHEMA.split(";"):
                 if stmt.strip():
                     conn.execute(stmt)

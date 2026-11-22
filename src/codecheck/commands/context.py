@@ -181,8 +181,10 @@ def _build(args, ctx, run_id, run_dir) -> dict:
         ctx.guarded(record_run, ctx.shadow, meta, diff, cfg)
     out = {"run_id": run_id, "run_dir": str(run_dir), "root": meta["root"], "mode": args.mode,
             "base_warning": sync.warning, "files": len(files), "chunks": chunks, "panel": meta["panel"],
-            "guidance": meta["guidance"], "run_files": meta["run_files"], "memory": meta["memory"], "replies": replies, "existing_comments": existing_comments,
+            "guidance": meta["guidance"], "run_files": meta["run_files"], "replies": replies, "existing_comments": existing_comments,
             "existing_comments_error": existing_comments_error}
+    if cfg.memory.enabled:
+        out["memory"] = meta["memory"]  # absent with memory off, so every command's output is as it was
     if handoff:
         out.update(handoff=True, blind=blind)
     return out

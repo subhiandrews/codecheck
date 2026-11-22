@@ -173,7 +173,7 @@ def test_no_shadow_store_means_nothing_to_do(world):
 
 
 def _cleanup_world(tmp_path, collect):
-    ctx, provider, pr = pr_setup(tmp_path, memory=MemoryConfig(collect=collect, store=str(tmp_path / "mem")))
+    ctx, provider, pr = pr_setup(tmp_path, memory=MemoryConfig(enabled=collect, collect=collect, store=str(tmp_path / "mem")))
     out = run_pr_context(ctx, pr)
     clock = Clock(time.time() - 3 * DAY)
     ctx.shadow = ShadowStore(tmp_path / "shadow", now=clock)

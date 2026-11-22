@@ -85,3 +85,12 @@ class Lesson:
     expires_ts: float
     maintainer: bool = False  # the leading side has an item from a non-author maintainer
     provenance: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Query:
+    """One piece of query text for similarity lookup, with the context it came from."""
+    text: str
+    path: str = ""
+    category: str = ""
+    language: str = ""
