@@ -15,6 +15,8 @@ from codecheck.vcs.git import Git
 
 GUIDANCE_FILE = "CODE_CHECK.md"
 MAX_GUIDANCE_CHARS = 16_000
+NESTED_RESERVE = 4_000  # of the cap, kept for nested files when there are any
+MIN_NESTED_BODY = 200  # a nested file is cut only when at least this much of it fits
 MAX_GUIDANCE_DIRS = 500  # directories looked at for a nested file, shallowest first
 
 
@@ -24,9 +26,10 @@ class Guidance:
     text: str
     truncated: bool
     files: tuple[str, ...] = (GUIDANCE_FILE,)  # repo-relative, in the order they appear in `text`
+    skipped: tuple[str, ...] = ()  # nested files that found no room under the cap and are not in `text`
 
     def to_meta(self) -> dict:
-        return {"source": self.source, "truncated": self.truncated, "files": list(self.files)}
+        return {"source": self.source, "truncated": self.truncated, "files": list(self.files), "skipped": list(self.skipped)}
 
 
 def _decode(raw: bytes | str | None) -> str | None:
@@ -60,33 +63,41 @@ def guidance_dirs(paths: Iterable[object]) -> list[str]:
     return sorted(found, key=lambda d: (d.count("/"), d))[:MAX_GUIDANCE_DIRS]
 
 
+def _header(directory: str) -> str:
+    # files come root first then shallowest first, so "above" is always a less specific file
+    return (f"[{_rel(directory)}: the rules below apply only to files under `{directory}/`; "
+            "for those files they win over any rule above that they conflict with]\n")
+
+
 def _combine(source: str, sections: Iterable[tuple[str, bytes | str | None]]) -> Guidance | None:
-    """One text from (directory, raw content) pairs given root first. A lone root file is passed through unchanged."""
-    text, files, truncated = "", [], False
-    for directory, raw in sections:
-        body = _decode(raw)
-        if body is None:
-            continue
-        if len(text) >= MAX_GUIDANCE_CHARS:
-            truncated = True  # no room left for this file at all
-            break
-        if directory:
-            if text and not text.endswith("\n"):
-                text += "\n"
-            gap = "\n" if text else ""
-            # files come root first then shallowest first, so "above" is always a less specific file
-            text += (f"{gap}[{_rel(directory)}: the rules below apply only to files under `{directory}/`; "
-                     "for those files they win over any rule above that they conflict with]\n")
-        text += body
-        files.append(_rel(directory))
-    if not files:
+    """One text from (directory, raw content) pairs given root first. A lone root file is passed through unchanged.
+
+    Nested files keep up to `NESTED_RESERVE` characters of the cap (or what they need, if less) so a large root file
+    cannot crowd out the most specific rules. A nested part is added whole, or cut only when it keeps at least
+    `MIN_NESTED_BODY` characters of its body; otherwise it is left out and named in `skipped`, never half-listed."""
+    parts = [(d, body) for d, raw in sections if (body := _decode(raw)) is not None]
+    if not parts:
         return None
-    if len(text) > MAX_GUIDANCE_CHARS:
-        text = text[:MAX_GUIDANCE_CHARS]
-        truncated = True
+    nested_size = sum(len(_header(d)) + len(body) + 2 for d, body in parts if d)
+    root_cap = MAX_GUIDANCE_CHARS - min(NESTED_RESERVE, nested_size)
+    text, files, skipped, truncated = "", [], [], False
+    for directory, body in parts:
+        sep = "" if not text else ("" if text.endswith("\n") else "\n") + "\n"
+        head = _header(directory) if directory else ""
+        room = (MAX_GUIDANCE_CHARS if directory else root_cap) - len(text) - len(sep)
+        if len(head) + len(body) <= room:
+            text += sep + head + body
+        elif room >= len(head) + (MIN_NESTED_BODY if directory else 0):
+            text += sep + (head + body)[:room]
+            truncated = True
+        else:
+            skipped.append(_rel(directory))
+            truncated = True
+            continue
+        files.append(_rel(directory))
     if truncated:
         text += f"\n[{GUIDANCE_FILE} truncated at {MAX_GUIDANCE_CHARS} characters]"
-    return Guidance(source, text, truncated, tuple(files))
+    return Guidance(source, text, truncated, tuple(files), tuple(skipped))
 
 
 def _read_regular(root: Path, directory: str) -> bytes | None:

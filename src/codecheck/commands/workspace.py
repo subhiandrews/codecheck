@@ -5,6 +5,7 @@ from codecheck.commands._common import contained, safe_repo
 from codecheck.config import expand_path
 from codecheck.core.diffmap import parse_diff
 from codecheck.core.guidance import from_base
+from codecheck.core.panel import filter_ignored
 from codecheck.core.state import ensure_private_dir
 from codecheck.errors import CodeCheckError
 from codecheck.vcs.git import Git
@@ -41,13 +42,13 @@ def _guidance(git: Git, cfg, pr, head: str) -> dict | None:
     try:
         git.fetch(cfg.remote, pr.base_ref)  # a failed fetch just means we use whatever is local
         try:
-            paths = list(parse_diff(git.diff(f"{base}...{head}")))
+            paths = filter_ignored(list(parse_diff(git.diff(f"{base}...{head}"))), cfg.review.ignore)  # as `context` does
         except CodeCheckError:
             paths = []  # the root file alone still beats no guidance
         g = from_base(git, base, paths)
     except CodeCheckError:  # GitError is a CodeCheckError
         return None
-    return None if g is None else {"source": g.source, "text": g.text, "truncated": g.truncated, "files": list(g.files)}
+    return None if g is None else {"source": g.source, "text": g.text, "truncated": g.truncated, "files": list(g.files), "skipped": list(g.skipped)}
 
 
 def run(args, ctx) -> dict:

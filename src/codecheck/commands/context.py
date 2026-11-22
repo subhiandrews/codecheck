@@ -101,11 +101,11 @@ def _build(args, ctx, run_id, run_dir) -> dict:
     reviewable = filter_ignored(list(parsed), cfg.review.ignore)
     if not reviewable:
         raise CodeCheckError("no reviewable files; run `code-check precheck` first")
+    # read before the worktree exists, so a failure here leaves nothing behind
+    # base branch only in PR mode: a PR cannot change the rules it is judged by
+    guidance = from_base(ctx.git, sync.base_ref, reviewable) if meta["worktree"] else from_worktree(root, reviewable)
     if meta["worktree"]:
         ctx.git.worktree_add(root, local_ref)
-        guidance = from_base(ctx.git, sync.base_ref, reviewable)  # base branch only: a PR cannot change the rules it is judged by
-    else:
-        guidance = from_worktree(root, reviewable)
     if guidance is not None:
         (run_dir / "CODE_CHECK.md").write_text(guidance.text, encoding="utf-8")
     meta["guidance"] = guidance.to_meta() if guidance else None

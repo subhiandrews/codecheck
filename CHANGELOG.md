@@ -5,7 +5,7 @@ User-visible changes per release, newest first. Earlier releases: `git log`. The
 ## [1.3.0]
 
 ### Added
-- In a monorepo, a `CODE_CHECK.md` in a directory above a changed file is read as well as the root one, and applies only to files under that directory. `guidance` in the `context` and `workspace` output now lists the `files` read.
+- In a monorepo, a `CODE_CHECK.md` in a directory above a changed file is read as well as the root one, and applies only to files under that directory. `guidance` in the `context` and `workspace` output now lists the `files` read and any `skipped` for lack of room.
 
 ## [1.2.3]
 

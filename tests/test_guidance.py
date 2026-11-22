@@ -26,7 +26,7 @@ def test_from_worktree_reads_file(tmp_path):
     (tmp_path / "CODE_CHECK.md").write_text("look at X\n")
     g = from_worktree(tmp_path)
     assert g == Guidance("worktree", "look at X\n", False)
-    assert g.to_meta() == {"source": "worktree", "truncated": False, "files": ["CODE_CHECK.md"]}
+    assert g.to_meta() == {"source": "worktree", "truncated": False, "files": ["CODE_CHECK.md"], "skipped": []}
 
 
 def test_missing_returns_none(tmp_path):
@@ -124,15 +124,35 @@ def test_worktree_nested_file_behind_a_symlinked_directory_is_refused(tmp_path):
     assert from_worktree(root, ["services/api/x.py"]) == Guidance("worktree", "root rules\n", False)
 
 
-def test_nested_files_share_one_budget_root_first(tmp_path):
-    _write(tmp_path, "CODE_CHECK.md", "r" * (MAX_GUIDANCE_CHARS - 10) + "\n")
+def test_a_large_root_file_is_cut_to_leave_room_for_the_nested_ones(tmp_path):
+    _write(tmp_path, "CODE_CHECK.md", "r" * (MAX_GUIDANCE_CHARS + 500))
     _write(tmp_path, "a/CODE_CHECK.md", "n" * 500)
     _write(tmp_path, "a/b/CODE_CHECK.md", "deep rules\n")
     g = from_worktree(tmp_path, ["a/b/x.py"])
     marker = "\n[CODE_CHECK.md truncated at 16000 characters]"
     assert g.truncated is True and g.text.endswith(marker)
-    assert len(g.text) == MAX_GUIDANCE_CHARS + len(marker)
-    assert g.files == ("CODE_CHECK.md", "a/CODE_CHECK.md")  # the deeper file found no room and is not listed
+    assert len(g.text) <= MAX_GUIDANCE_CHARS + len(marker)
+    assert g.files == ("CODE_CHECK.md", "a/CODE_CHECK.md", "a/b/CODE_CHECK.md") and g.skipped == ()
+    assert "n" * 500 in g.text and "deep rules\n" in g.text
+    assert "r" * 100 in g.text and "r" * MAX_GUIDANCE_CHARS not in g.text
+
+
+def test_a_nested_file_with_no_room_is_named_as_skipped_and_never_half_listed(tmp_path):
+    _write(tmp_path, "CODE_CHECK.md", "root\n")
+    _write(tmp_path, "a/CODE_CHECK.md", "x" * (MAX_GUIDANCE_CHARS - 250))
+    _write(tmp_path, "a/b/CODE_CHECK.md", "deep rules\n")
+    g = from_worktree(tmp_path, ["a/b/x.py"])
+    assert g.truncated is True and g.skipped == ("a/b/CODE_CHECK.md",)
+    assert g.files == ("CODE_CHECK.md", "a/CODE_CHECK.md")
+    assert "a/b/CODE_CHECK.md" not in g.text.replace("truncated", "") and "deep rules" not in g.text
+
+
+def test_a_nested_file_that_does_not_fit_is_cut_only_when_enough_of_it_survives(tmp_path):
+    _write(tmp_path, "CODE_CHECK.md", "r" * (MAX_GUIDANCE_CHARS - 10))
+    _write(tmp_path, "a/CODE_CHECK.md", "n" * 8000)
+    g = from_worktree(tmp_path, ["a/x.py"])
+    assert g.truncated is True and g.files == ("CODE_CHECK.md", "a/CODE_CHECK.md") and g.skipped == ()
+    assert "[a/CODE_CHECK.md: the rules below apply only" in g.text and g.text.count("n") >= 200
 
 
 def test_from_base_reads_nested_blobs_above_changed_paths_only(tmp_path):
@@ -148,7 +168,7 @@ def test_from_base_reads_nested_blobs_above_changed_paths_only(tmp_path):
     git = Git(SubprocessRunner(), clone)
     g = from_base(git, "HEAD", ["services/api/src/x.py", "linked/y.py", ":(glob)*/z.py"])
     assert g.text == "root rules\n\n" + API_HEADER + "api rules\n"
-    assert g.to_meta() == {"source": "base", "truncated": False, "files": ["CODE_CHECK.md", "services/api/CODE_CHECK.md"]}
+    assert g.to_meta() == {"source": "base", "truncated": False, "files": ["CODE_CHECK.md", "services/api/CODE_CHECK.md"], "skipped": []}
     assert from_base(git, "HEAD", ["docs/x.md"]) == Guidance("base", "root rules\n", False)
     assert from_base(git, "no-such-ref", ["services/api/x.py"]) is None
     assert git.regular_files("HEAD", ["web/CODE_CHECK.md", "linked/CODE_CHECK.md", "services", "nope/CODE_CHECK.md"]) == ["web/CODE_CHECK.md"]
