@@ -212,7 +212,7 @@ Only `active` and `contested` lessons are shown (candidates never reach a review
 
 ### Memory evals (developer tooling, advisory)
 
-Three tools measure memory, none gates anything and none writes `docs/eval-history.jsonl` (decision 0044; the reasoning of decision 0023 applies). See `docs/Evals.md` for what each answers.
+Three tools measure memory, none gates anything and none writes `docs/eval-history.jsonl` (decision 0045; the reasoning of decision 0023 applies). See `docs/Evals.md` for what each answers.
 
 ```
 code-check eval --memory-retrieval [--retriever NAME] [--cases DIR] [--if-reachable]   # recall@5 and MRR per retriever; `semantic` needs memory.embed_model and Ollama
@@ -283,6 +283,12 @@ code-check handoff-queue check --run ID --claim TOKEN --pr N   # the merge guard
 ```
 
 State lives next to the data: `<run_id>.handoff/analysis.json` (0600). Private repositories, runs of unknown visibility and runs without a hand-off folder are never claimed. A claim older than four hours can be taken again. The guard allows changes under `agents/`, `skills/`, `src/codecheck/`, `tests/`, `docs/` and `README.md`, and a one-step patch version bump; it blocks automation, hooks, the installer, `CLAUDE.md`, the queue and guard code itself, edits to existing golden cases, deleted tests or snippets, and diffs over 2000 lines. `check` reads the PR itself, fetches the base itself and judges the PR head commit, which this checkout must be at, so the caller chooses nothing about the range. It also blocks renames of tests, symlinks, mode changes and binary files, odd or case-variant paths, lines that switch tests off, and changes to the guard's own dependencies, the config loader and the unattended-run code. Every queue command needs the claim token `next` printed. Run it from the installed plugin, never from the branch it judges.
+
+## CI review pin
+
+CI reviews pull requests with `subhiandrews/code-check-action`, which installs the code-check release named by its `code-check-ref` input (default `v0.1.5`). `.github/workflows/code-check.yml` sets it to a release tag. Dependabot cannot update a free-text input, so `.github/workflows/code-check-pin.yml` does: daily (there is no `workflow_run` or tag trigger: a tag pushed with `GITHUB_TOKEN` starts no workflow, and zizmor rejects `workflow_run`) or on demand (`gh workflow run code-check-pin.yml`), it runs `scripts/update_ci_pin.py` over `git tag --merged origin/main`. When a strictly newer `vX.Y.Z` tag exists it pushes `bot/code-check-pin` and opens (or retitles) a PR `ci: pin code-check to vX.Y.Z`. It never merges, never downgrades, and reports without rewriting a pin that is a commit SHA or unparseable.
+
+Setup: the secret `CI_PIN_BOT_TOKEN` is required for a bump (a fine-grained PAT or app token with Contents, Pull requests and Workflows write). `GITHUB_TOKEN` cannot push changes under `.github/workflows`, so without the secret the run fails with an error naming it; a run with nothing to bump needs no token. A token that is not `GITHUB_TOKEN` also lets the required checks run on the bot PR. The repository setting "Allow GitHub Actions to create and approve pull requests" must be on. The bot branch is bot-owned and is force-pushed with an explicit lease when a newer tag replaces the pin. The workflow cannot be run locally; the script and the pin are covered by `tests/test_update_ci_pin.py`.
 
 ## Development
 

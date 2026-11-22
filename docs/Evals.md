@@ -79,7 +79,7 @@ Gates and hand-off rounds pass `--no-record`, because a gate runs after the comm
 
 ## Memory evals
 
-Review memory (`memory.read`) has its own advisory measurements, kept apart from the four above because each answers a different question and none of them gates anything (`docs/decisions/0044-memory-evals-are-advisory-and-report-retrieval-and-effect-separately.md`, and `docs/decisions/0023-the-llm-judge-is-advisory-only.md` for why). They are never written to `docs/eval-history.jsonl`.
+Review memory (`memory.read`) has its own advisory measurements, kept apart from the four above because each answers a different question and none of them gates anything (`docs/decisions/0045-memory-evals-are-advisory-and-report-retrieval-and-effect-separately.md`, and `docs/decisions/0023-the-llm-judge-is-advisory-only.md` for why). They are never written to `docs/eval-history.jsonl`.
 
 | | `eval --memory-retrieval` | `eval --memory-effect` | `memory report` |
 |---|---|---|---|

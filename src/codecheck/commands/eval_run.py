@@ -74,7 +74,7 @@ def _record(ctx, mode: str, result: dict, only: str | None) -> None:
 
 
 def _run_memory(args, ctx) -> dict:
-    """The advisory memory evals (decision 0044): nothing here is recorded in the history or gates anything."""
+    """The advisory memory evals (decision 0045): nothing here is recorded in the history or gates anything."""
     if args.memory_retrieval:
         if (args.snippets, args.only) != (None, None) or args.no_record:
             raise CodeCheckError("--memory-retrieval takes only --cases, --retriever and --if-reachable")

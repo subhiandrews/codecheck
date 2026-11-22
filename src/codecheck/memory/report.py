@@ -7,7 +7,7 @@ confirmed, disputed, replied, no signal. Per repository: counts and the dispute 
 
 This is observational, not an experiment: runs were not assigned to an arm at random, so a gap can come from the
 PRs rather than from memory (use `eval --memory-effect` for the paired answer). An arm with fewer than `MIN_FINDINGS`
-findings is flagged `underpowered`, and nothing here changes any setting. Advisory only (decisions 0023, 0044).
+findings is flagged `underpowered`, and nothing here changes any setting. Advisory only (decisions 0023, 0045).
 """
 
 from collections import Counter

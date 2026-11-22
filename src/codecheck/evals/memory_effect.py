@@ -1,6 +1,6 @@
 """Does memory help a review? `eval --memory-effect` runs each snippet that carries `memory` lessons twice through the live
 runner, once with memory off and once with the seeded lessons on, and reports what changed. Local only and costs
-tokens (two full reviews per snippet); advisory, never a gate (decision 0023, 0044).
+tokens (two full reviews per snippet); advisory, never a gate (decision 0023, 0045).
 
 The snippet's top-level `expected` and `must_not_report` are the memory-on expectations (they are also what
 `eval --live` checks). `memory_effect.off` may override either list for the memory-off arm. For each pair the result says

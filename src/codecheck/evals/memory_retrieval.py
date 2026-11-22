@@ -1,5 +1,5 @@
 """Retrieval-quality eval for review memory: `eval --memory-retrieval`. No model, no network; advisory, never a gate
-(decision 0023, 0044).
+(decision 0023, 0045).
 
 A case (`tests/memory/retrieval/*.json`) seeds a small synthetic lesson store, then asks queries (a diff's paths, or
 candidate findings) and names the lessons that should come back (`expect`) and must not (`expect_absent`). The harness
