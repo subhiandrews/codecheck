@@ -1,7 +1,8 @@
 name: code-check-pin
 # Keeps `code-check-ref` in code-check.yml at the latest release tag on main, by opening a bot PR when it falls behind.
-# Never merges anything. Triggers: daily, by hand (`gh workflow run code-check-pin.yml`), and after tag-release finishes
-# (a tag pushed with GITHUB_TOKEN does not start other workflows, so workflow_run is used instead of on: push: tags).
+# Never merges anything. Triggers: daily and by hand (`gh workflow run code-check-pin.yml`). It does not use `workflow_run`
+# or `push: tags`: a tag pushed with GITHUB_TOKEN starts no other workflow, and zizmor rejects `workflow_run` as a
+# dangerous trigger, so a new release is picked up by the next daily run.
 #
 # KNOWN LIMIT: a PR or push made with GITHUB_TOKEN does not trigger other workflows, so required checks may not run on the
 # bot PR. Set the optional secret CI_PIN_BOT_TOKEN (fine-grained PAT or app token with contents and pull-requests write)
@@ -11,17 +12,12 @@ on:
   schedule:
     - cron: "17 6 * * *"
   workflow_dispatch:
-  workflow_run:
-    workflows: [tag-release]
-    types: [completed]
-    branches: [main]
 permissions: {}
 concurrency:
   group: code-check-pin
   cancel-in-progress: false
 jobs:
   pin:
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
