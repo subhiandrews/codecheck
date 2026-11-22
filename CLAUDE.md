@@ -19,6 +19,7 @@ node --test tests-node/*.test.js                 # installer tests (Node >= 20)
 .venv/bin/python -m codecheck eval --replay      # deterministic golden-set replay (prints JSON with `passed`)
 .venv/bin/python -m codecheck eval --live [--if-reachable]   # live snippet eval (needs a reachable model)
 .venv/bin/python -m codecheck eval --calibrate [--only CASE_ID]   # LLM judge vs the golden labels (local, costs tokens; advisory, never a gate)
+code-check memory measure|consolidate|collect|list|forget|serve|token|sync|status|embed|report   # opt-in review memory (docs/MAINTAINING.md)
 scripts/install-git-hooks.sh                     # opt in: git config core.hooksPath .githooks
 ```
 
@@ -36,6 +37,8 @@ scripts/install-git-hooks.sh                     # opt in: git config core.hooks
 
 **Review flow:** skill calls `precheck`, then `context` (creates a worktree and `state_dir/runs/<run>/`), dispatches reviewer subagents that write `findings/*.json`, then the `code-check:aggregator` agent; `ingest` validates and anchors findings, `post` posts the review, `cleanup` removes the worktree. Project guidance: `core/guidance.py` reads `CODE_CHECK.md` (PR mode from the base branch via `git show`, local mode from the worktree, 16,000 character cap, symlinks and bad files ignored); `context` copies it to the run dir and reports `guidance` metadata, `workspace` returns it with the text, and every reviewer prompt in `agentgen.py` reads it first. The opt-in `security` panel member (`--security` / `review.security`, `models.security`, one agent per chunk) writes category `security` findings whose text `core/findings.py` scrubs. Address/babysit flow uses `workspace`, `threads`, `commit`, `push`, `reply`, `resolve`, `checks`, `attempt`.
 
+**Memory (opt-in, default off):** `memory/` holds shared lessons learned from past reviews: a local SQLite replica, collection at `cleanup`, one framed run file read in `context` (reviewers) and `ingest` (aggregator), an optional stdlib HTTP server plus client (`serve`, `sync`), and optional Ollama retrieval. All `memory.*` config is user-only. Design: `docs/ARCHITECTURE.md`, decisions 0036-0044.
+
 **Unattended path:** `loop` (per-mode `FileLock`) calls `list_work` then `run_pr` per PR, which shells out to `claude -p` with `--permission-mode dontAsk --permission-prompts none --allowedTools ...` and stdin closed. There is no `--max-turns` flag (spike finding).
 
 **Plugin and installer:** `skills/`, `agents/`, `hooks/`, `bin/`, `.claude-plugin/` form the plugin payload. `agents/*.md` are **generated** from `agentgen.py` and committed; a drift test fails if they differ, so rerun `gen-agents` after changing prompts or default models. Subagent types are namespaced `code-check:<agent>`. `hooks/ensure-runtime.sh` (with `bin/code-check`) bootstraps a venv into `CLAUDE_PLUGIN_DATA` (fallback `~/.local/share/code-check`); the wrapper re-runs it on every call. `installer/` (Node) installs either as a Claude plugin or by copying skills/agents, tracking a receipt so uninstall removes only what it created.
@@ -51,7 +54,9 @@ Docs layout: `README.md` is the short guide (capped at 260 lines by `tests/test_
 - Never force-push; never post to draft PRs; the tool does not review its own PRs.
 - Shadow recording side effects only via `ctx.guarded(...)`: recording must never change a command's behaviour.
 - `ShadowStore.run_ids()` is not chronological; use `ordered_run_ids()` / `runs_for_pr`.
-- `StateStore` locks itself (`state.json.lock`); loop bookkeeping keys live under `loop:<mode>:<ref>`, never the `review:<ref>` keys that `precheck`/`post` own. Security-sensitive config keys (`state_dir`, `run_pr.*`, `shadow.*`, `golden.*`, `review.auto_approve`, `review.attribution`, `review.label`, `loop.review_forks`) are rejected in a repo's `.code-check.toml`; user config beats repo config.
+- `StateStore` locks itself (`state.json.lock`); loop bookkeeping keys live under `loop:<mode>:<ref>`, never the `review:<ref>` keys that `precheck`/`post` own. Security-sensitive config keys (`state_dir`, `run_pr.*`, `shadow.*`, `golden.*`, `memory.*`, `review.auto_approve`, `review.attribution`, `review.label`, `loop.review_forks`) are rejected in a repo's `.code-check.toml`; user config beats repo config.
+
+- Memory is advisory data: never read in blind runs, never changes what the shadow store records, and evals run with memory off.
 
 - Unattended hand-off rounds (`.claude/skills/handoff-round/`, `handoff-queue`): the queue and merge guard (`shadow/queue.py`, `commands/handoff_queue.py`, `tests/test_handoff_queue.py`) are protected paths that the guard itself refuses to let a round change, and the skill must run them from the installed plugin, not the branch under test. The owner has authorised that skill, and only that skill, to merge with `gh pr merge --admin` after CI is green and `handoff-queue check` says `ok`; every other merge still needs explicit go-ahead. Golden cases written by it carry `labelled_by: "handoff-round"`.
 
