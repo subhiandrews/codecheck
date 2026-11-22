@@ -13,19 +13,36 @@ from codecheck.config import expand_path
 from codecheck.memory.consolidate import Params
 from codecheck.memory.db import MemoryDB
 from codecheck.memory.pipeline import consolidate_store
-from codecheck.memory.schedule import MAX_PRS, due, mark_collected, run_budgeted
+from codecheck.memory.schedule import (
+    MAX_PRS,
+    due,
+    mark_collected,
+    mark_failed,
+    run_budgeted,
+)
 from codecheck.shadow.collect import collect_outcomes
+from codecheck.shadow.store import ShadowStore
 
 
 def collect_due(ctx, *, everything: bool = False, dry_run: bool = False, now: Callable[[], float] = time.time,
-                mono: Callable[[], float] = time.monotonic, max_prs: int = MAX_PRS) -> dict:
+                mono: Callable[[], float] = time.monotonic, max_prs: int = MAX_PRS,
+                fallback_store: bool = False) -> dict:
     result: dict = {"due": [], "collected": [], "errors": [], "consolidated": False}
     try:
-        if ctx.shadow is None:
+        shadow = ctx.shadow
+        if shadow is None and fallback_store:
+            # The user-invoked `memory collect` reads the configured store even with shadow recording off (a missing
+            # store is empty). The automatic path from `cleanup` leaves this False and honours the shadow settings.
+            shadow = ShadowStore(expand_path(ctx.config.shadow.store))
+        if shadow is None:
+            result["hint"] = ("shadow recording is off, so there is no store to collect for; "
+                              "run `memory collect` to read the configured shadow store")
             return result
         stamp = now()
-        cands = due(ctx.state, ctx.shadow, stamp, everything=everything)
+        cands = due(ctx.state, shadow, stamp, everything=everything)
         result["due"] = [c.pr for c in cands]
+        if not shadow.ordered_run_ids():
+            result["hint"] = f"the shadow store at {shadow.root} holds no reviews yet, so there is nothing to collect"
         if dry_run or not cands:
             return result
         me = ctx.provider.whoami()
@@ -37,17 +54,21 @@ def collect_due(ctx, *, everything: bool = False, dry_run: bool = False, now: Ca
                     pr_state = ctx.provider.get_pr(ref).state
                 except Exception:  # noqa: BLE001 - only needed for the closing time
                     pr_state = None
-                collect_outcomes(ctx.provider, ctx.shadow, ref, me)
+                collect_outcomes(ctx.provider, shadow, ref, me)
                 mark_collected(ctx.state, cand, stamp, pr_state=pr_state)
                 result["collected"].append(cand.pr)
             except Exception as e:  # noqa: BLE001 - one PR failing must not stop the others
+                try:
+                    mark_failed(ctx.state, cand, stamp)  # backoff, then give up: it must not starve the other PRs
+                except Exception:  # noqa: BLE001, S110 - bookkeeping failing must not hide the original error
+                    pass
                 result["errors"].append({"pr": cand.pr, "error": f"{type(e).__name__}: {e}"})
 
         run_budgeted(cands, work, mono, max_prs=max_prs)
         if result["collected"]:
             m = ctx.config.memory
             params = Params(half_days=float(m.half_life_days), expire_days=float(m.expire_days))
-            consolidate_store(ctx.shadow, MemoryDB(expand_path(m.store), now=lambda: stamp), params, stamp)
+            consolidate_store(shadow, MemoryDB(expand_path(m.store), now=lambda: stamp), params, stamp)
             result["consolidated"] = True
             if m.url and m.share_repos:
                 result["pushed"] = _push_shared(ctx)

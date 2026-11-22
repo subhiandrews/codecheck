@@ -12,4 +12,4 @@ def add_arguments(p) -> None:
 
 def run(args, ctx) -> dict:
     # User-invoked, so it works with memory.collect = false. The same 3-PR and 10-second caps apply.
-    return collect_due(ctx, everything=args.all, dry_run=args.dry_run)
+    return collect_due(ctx, everything=args.all, dry_run=args.dry_run, fallback_store=True)
