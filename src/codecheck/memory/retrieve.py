@@ -62,3 +62,25 @@ def finding_lessons(db: MemoryDB, repo: str, findings: Iterable[tuple[str, objec
     found = [le for le in db.lessons(repo=repo, kind="finding")
              if (le.scope.path_glob, le.scope.category, le.scope.language) in keys]
     return _select(found, files_at_base, limit, now())
+
+
+def merge_ranked(db: MemoryDB, repo: str, kind: str, exact: Sequence[Lesson], ranked: Iterable[tuple[str, float]],
+                 files_at_base: Sequence[str], limit: int, now: Callable[[], float] = time.time) -> list[Lesson]:
+    """The exact-key hits first, then lessons found by similarity (`ranked` is `(lesson_id, score)`, best first).
+
+    A similarity hit goes through the same gate as any other (active or contested only, not expired, its path glob still
+    matching a file at the base) and the same cap, so a candidate lesson is never shown."""
+    out = list(exact)
+    ranked = list(ranked)
+    if not ranked or len(out) >= limit:
+        return out[:max(limit, 0)]
+    by_id = {le.id: le for le in db.lessons(repo=repo, kind=kind)}
+    seen = {le.id for le in out}
+    at = now()
+    for lid, _score in ranked:
+        le = by_id.get(lid)
+        if le is None or lid in seen or not _select([le], files_at_base, 1, at):
+            continue
+        seen.add(lid)
+        out.append(le)
+    return out[:max(limit, 0)]

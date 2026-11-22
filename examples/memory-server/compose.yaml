@@ -1,4 +1,4 @@
-# Example only. The memory server plus an Ollama container for the embeddings added in a later phase.
+# Example only. The memory server plus an Ollama container for semantic retrieval (optional).
 # Run from this directory:  docker compose up -d --build
 # Create a token:           docker compose exec memory code-check memory token add alice
 services:
@@ -15,7 +15,13 @@ services:
     command: ["--max-level", "lessons"]
     restart: unless-stopped
 
-  # Used from phase 5 (embeddings). Not needed to store and share lessons.
+  # Optional: semantic retrieval. Not needed to store and share lessons. Pull a model once:
+  #   docker compose exec ollama ollama pull nomic-embed-text
+  # code-check only talks to Ollama over https or on loopback, so for server-side search (--allow-search) the memory
+  # service must see Ollama as 127.0.0.1: give it `network_mode: "service:ollama"` (move its `ports:` entry to the
+  # ollama service) and use
+  #   command: ["--max-level", "evidence", "--embed-model", "nomic-embed-text", "--allow-search"]
+  # Clients that embed themselves (the default, embed_at = "client") need only Ollama on their own machine.
   ollama:
     image: ollama/ollama
     ports:

@@ -7,13 +7,13 @@ corrupt store, a missing git ref, a bug or a slow disk costs the review nothing 
 
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from codecheck.config import expand_path
 from codecheck.memory.db import MemoryDB
 from codecheck.memory.render import render_memory
-from codecheck.memory.retrieve import finding_lessons, miss_lessons
+from codecheck.memory.retrieve import finding_lessons, merge_ranked, miss_lessons
 
 FILE_NAME = "memory.md"
 
@@ -35,7 +35,7 @@ def _gate(cfg, stage: str, blind: bool) -> str | None:
 
 
 def _build(ctx, *, stage: str, repo: str, base_ref: str, paths: Iterable[str],
-           findings: Iterable[tuple[str, object]]) -> tuple[str, list[str]] | str:
+           findings: Iterable[tuple[str, object]], queries: Sequence = ()) -> tuple[str, list[str]] | str:
     """The text and lesson ids, or a reason nothing is written. Runs in a worker thread under the time budget."""
     cfg = ctx.config.memory
     db = MemoryDB(expand_path(cfg.store))
@@ -46,6 +46,12 @@ def _build(ctx, *, stage: str, repo: str, base_ref: str, paths: Iterable[str],
         lessons = miss_lessons(db, repo, paths, files, cfg.max_lessons)
     else:
         lessons = finding_lessons(db, repo, findings, files, cfg.max_lessons)
+    if cfg.embed_model and queries:  # optional second stage: lessons found by similarity, after the exact-key hits
+        from codecheck.memory import semantic
+
+        kind = "miss" if stage == REVIEWERS else "finding"
+        lessons = merge_ranked(db, repo, kind, lessons, semantic.ranked_for(ctx, db, repo, list(queries), kind), files,
+                               cfg.max_lessons)
     if not lessons:
         return "no lessons"
     evidence = {le.id: db.evidence(lesson_id=le.id) for le in lessons}
@@ -84,7 +90,7 @@ def _pull_replica(ctx, stage: str, budget: float) -> dict | None:
 
 
 def safe_build(ctx, run_dir: Path, *, stage: str, repo: str | None, base_ref: str | None, blind: bool,
-               paths: Iterable[str] = (), findings: Iterable[tuple[str, object]] = ()) -> dict:
+               paths: Iterable[str] = (), findings: Iterable[tuple[str, object]] = (), queries: Sequence = ()) -> dict:
     """Write `run_dir/memory.md` when there is something to say. Never raises.
 
     Returns `{"read": False, "reason": ...}` or `{"read": True, "reason": "ok", "stage", "lessons", "ids", "chars"}`;
@@ -108,7 +114,8 @@ def safe_build(ctx, run_dir: Path, *, stage: str, repo: str | None, base_ref: st
 
         def work() -> None:
             try:
-                box["out"] = _build(ctx, stage=stage, repo=repo, base_ref=base_ref, paths=list(paths), findings=list(findings))
+                box["out"] = _build(ctx, stage=stage, repo=repo, base_ref=base_ref, paths=list(paths), findings=list(findings),
+                                  queries=list(queries))
             except BaseException as e:  # noqa: BLE001 - nothing in the worker may escape
                 box["error"] = f"{type(e).__name__}: {e}"[:200]
 

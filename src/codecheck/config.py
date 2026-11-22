@@ -125,6 +125,7 @@ class MemoryConfig:
     embed_url: str = "http://127.0.0.1:11434"
     embed_model: str = ""
     embed_at: str = "client"  # where embeddings are computed: client or server
+    min_similarity: float = 0.55  # least cosine similarity for a semantic match (0 to 1)
     collect: bool = False  # collect outcomes automatically when a skill finishes
     half_life_days: int = 90  # evidence weighs half after this many days
     expire_days: int = 180  # a lesson with no new evidence expires after this many days
@@ -246,6 +247,8 @@ def _type_ok(default: object, value: object) -> bool:
         return isinstance(value, bool)
     if isinstance(default, int):
         return isinstance(value, int) and not isinstance(value, bool)
+    if isinstance(default, float):
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
     if isinstance(default, tuple):
         return isinstance(value, list) and all(isinstance(v, str) for v in value)
     return isinstance(value, type(default))
@@ -284,6 +287,11 @@ def _coerce(default: object, raw: str) -> object:
             return int(raw)
         except ValueError as e:
             raise ConfigError(f"cannot read {raw!r} as an integer") from e
+    if isinstance(default, float):
+        try:
+            return float(raw)
+        except ValueError as e:
+            raise ConfigError(f"cannot read {raw!r} as a number") from e
     if isinstance(default, tuple):
         return [p.strip() for p in raw.split(",") if p.strip()]
     return raw
@@ -316,6 +324,8 @@ def _build(cls, data: Mapping):
             kwargs[f.name] = _build(type(dv), value)
         elif isinstance(dv, tuple):
             kwargs[f.name] = tuple(value)
+        elif isinstance(dv, float):
+            kwargs[f.name] = float(value)
         else:
             kwargs[f.name] = value
     return cls(**kwargs)
@@ -387,6 +397,8 @@ def validate_memory(m: MemoryConfig) -> None:
     for key in ("max_lessons", "max_chars", "timeout_seconds", "half_life_days", "expire_days"):
         if getattr(m, key) < 1:
             raise ConfigError(f"config key memory.{key} must be a positive integer")
+    if not 0.0 <= m.min_similarity <= 1.0:
+        raise ConfigError("config key memory.min_similarity must be between 0 and 1")
     _check_url("url", m.url, allow_empty=True)
     _check_url("embed_url", m.embed_url, allow_empty=False)
     for repo in m.share_repos:

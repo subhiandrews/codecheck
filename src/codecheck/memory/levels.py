@@ -40,8 +40,9 @@ DIFF_KEYS = frozenset({"diff", "patch", "raw_diff", "hunks"})
 # What a client may attach to a lesson that the server ignores: it recomputes every number from the evidence rows.
 IGNORED_LESSON_KEYS = frozenset({"statement", "support", "contra", "n_prs", "confidence", "status", "first_ts", "last_ts",
                                  "expires_ts", "lean", "maintainer", "provenance"})
-_EVIDENCE_KEYS = frozenset({"scope", "signal", "role", "pr", "thread", "ts", "tool_version", "quote", "finding", "id", "lesson_id"})
-_LEVEL_B_KEYS = frozenset({"quote", "finding"})
+_EVIDENCE_KEYS = frozenset({"scope", "signal", "role", "pr", "thread", "ts", "tool_version", "quote", "finding", "id", "lesson_id",
+                            "vector"})
+_LEVEL_B_KEYS = frozenset({"quote", "finding", "vector"})  # a vector is made from text, so it is shared where text is
 _SCOPE_KEYS = ("host", "repo", "path_glob", "language", "category")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _HOST = re.compile(r"[A-Za-z0-9.-]{1,100}")
@@ -176,6 +177,8 @@ def parse_evidence(raw: object, max_level: str, now: float) -> Evidence:
             raise PayloadError("quote must be text")
         quote = _clip(quote, QUOTE_CAP)
     finding = parse_finding(raw.get("finding"))
+    if raw.get("vector") is not None and not (quote or (finding or {}).get("message")):
+        raise PayloadError("a vector needs the evidence text it was made from")
     kind = "miss" if signal == "human_miss" else "finding"
     return Evidence(
         id=evidence_id(scope.host, scope.repo, pr, thread, signal), lesson_id=lesson_id(scope, kind), scope=scope,

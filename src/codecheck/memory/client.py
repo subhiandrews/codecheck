@@ -128,6 +128,9 @@ class HttpTransport:
         q = f"?repo={quote(repo, safe='/')}&since={since!r}" + (f"&cursor={quote(cursor, safe='|.')}" if cursor else "")
         return self._call("GET", "/v1/lessons" + q)
 
+    def search(self, body: dict) -> Response:
+        return self._call("POST", "/v1/search", body)
+
 
 @dataclass(frozen=True)
 class LocalTransport:
@@ -150,3 +153,6 @@ class LocalTransport:
     def get_lessons(self, repo: str, since: float = 0.0, cursor: str = "") -> Response:
         q = {"repo": [repo], "since": [repr(since)], **({"cursor": [cursor]} if cursor else {})}
         return self._wrap(self.service.get_lessons(q))
+
+    def search(self, body: dict) -> Response:
+        return self._wrap(self.service.search(body))
