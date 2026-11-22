@@ -2,7 +2,7 @@ import json
 import time
 from pathlib import Path
 
-from codecheck.commands._common import safe_repo
+from codecheck.commands._common import busy_checkout, safe_repo
 from codecheck.commands.workspace import managed_clone
 from codecheck.config import expand_path
 from codecheck.core.state import (
@@ -86,6 +86,8 @@ def run_one(ctx, mode: str, ref, fingerprint: str | None = None, dry_run: bool =
         # edits in a worktree under state_dir (CODE_CHECK_UNATTENDED stops `workspace` from using the checkout
         # itself). Without a local clone, work in a managed one.
         if clone:
+            if mode == "babysit" and (why := busy_checkout(ctx, clone)):
+                raise CodeCheckError(why)
             cwd = Path(clone)
         elif mode == "review" and safe_repo(ctx) == ref.repo:
             cwd = ctx.git.cwd

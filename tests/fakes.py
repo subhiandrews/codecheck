@@ -98,8 +98,8 @@ class FakeProvider:
     def whoami(self) -> str:
         return self.me
 
-    def list_prs(self, scope, repos):
-        return list(self.listing[scope])
+    def list_prs(self, scope, repos, limit=50):
+        return list(self.listing[scope])[:limit]
 
     def get_pr(self, ref):
         return self.prs[ref]

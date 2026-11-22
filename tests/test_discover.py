@@ -7,7 +7,7 @@ from gitutil import sh
 
 from codecheck.cli import _route
 from codecheck.errors import ConfigError
-from codecheck.models import PRRef
+from codecheck.models import Check, PRRef, Review
 from codecheck.runner import SubprocessRunner
 from codecheck.vcs.discover import candidate_clones
 
@@ -21,8 +21,8 @@ class ByUrl(FakeProvider):
         owner_repo = url.removesuffix(".git").rsplit("/", 2)[-2:]
         return "/".join(owner_repo) if len(owner_repo) == 2 and url.startswith("https://") else None
 
-    def list_prs(self, scope, repos):
-        return [r for r in self.listing[scope] if r.repo in repos]
+    def list_prs(self, scope, repos, limit=50):
+        return [r for r in self.listing[scope] if r.repo in repos][:limit]
 
 
 def _clone(parent, name, remote="https://example.com/o/{}.git"):
@@ -85,7 +85,7 @@ def test_list_work_spans_the_clones_under_the_directory_with_one_global_cap(work
     ctx = make_ctx(parent.parent, parent, provider=provider)
     _code, out = call(ctx, "list-work", "--mode", "review")
     assert [(i["pr"], i["clone"]) for i in out["items"]] == [("o/a#9", str(a)), ("o/a#8", str(a)), ("o/b#9", str(b))]
-    assert out["considered"] == 4
+    assert out["considered"] == 3  # the third PR filled the cap, so o/b#8 was never looked at
 
 
 def test_list_work_outside_any_clone_says_what_to_do(tmp_path):
@@ -106,7 +106,6 @@ def test_a_named_repository_without_a_local_clone_is_still_listed(work):
     ctx = make_ctx(parent.parent, parent, provider=provider)
     _code, out = call(ctx, "list-work", "--mode", "review", "--repos", "x/y")
     assert [(i["pr"], i["clone"]) for i in out["items"]] == [(str(ref), "")]
-    assert PRRef("x/y", 1) == ref
 
 
 def test_one_unreachable_clone_is_skipped_and_the_rest_still_listed(work):
@@ -115,7 +114,7 @@ def test_one_unreachable_clone_is_skipped_and_the_rest_still_listed(work):
     provider.repo = "o/b"
     provider.listing["open"] = [provider.add_pr(5, head_sha="s").ref]
     real = provider.list_prs
-    provider.list_prs = lambda scope, repos: (_ for _ in ()).throw(RuntimeError("HTTP 502")) if repos == ["o/a"] else real(scope, repos)
+    provider.list_prs = lambda scope, repos, limit=50: (_ for _ in ()).throw(RuntimeError("HTTP 502")) if repos == ["o/a"] else real(scope, repos, limit)
     ctx = make_ctx(parent.parent, parent, provider=provider)
     _code, out = call(ctx, "list-work", "--mode", "review")
     assert [i["pr"] for i in out["items"]] == ["o/b#5"]
@@ -129,7 +128,7 @@ def test_clones_after_the_cap_is_met_are_not_asked_about(work):
     provider.listing["open"] = [provider.add_pr(n, head_sha=f"s{n}").ref for n in (3, 2, 1)]
     asked = []
     real = provider.list_prs
-    provider.list_prs = lambda scope, repos: asked.append(repos[0]) or real(scope, repos)
+    provider.list_prs = lambda scope, repos, limit=50: asked.append(repos[0]) or real(scope, repos, limit)
     ctx = make_ctx(parent.parent, parent, provider=provider)
     call(ctx, "list-work", "--mode", "review")
     assert asked == ["o/a"]  # three new PRs in the first clone: o/b is never listed
@@ -155,3 +154,41 @@ def test_a_clone_with_a_broken_config_is_reported_but_one_without_a_remote_is_no
     _code, out = call(ctx, "list-work", "--mode", "review")
     assert [i["pr"] for i in out["items"]] == ["o/a#1"]
     assert out["skipped"] == [{"pr": str(b), "reason": "not a usable clone: unknown config key: nope"}]
+
+
+def test_a_repository_that_merely_contains_the_directory_does_not_hide_the_clones_in_it(work):
+    parent, _a, _b = work
+    sh(parent.parent, "init", "-q", "-b", "main")  # like a dotfiles repository above ~/opensource
+    assert [p.name for p in candidate_clones(parent, SubprocessRunner())] == ["a", "b", "elsewhere", "noremote"]
+    assert candidate_clones(parent / "plain", SubprocessRunner()) == [parent.parent.resolve()]  # no clones below: that repository
+
+
+def test_the_listing_is_asked_for_in_batches_of_three_until_enough_need_work(work):
+    parent, _a, _b = work
+    provider = ByUrl()
+    provider.repo = "o/a"
+    provider.listing["open"] = [provider.add_pr(n, head_sha=f"s{n}").ref for n in range(9, 0, -1)]
+    for n in (9, 8, 7, 6):  # the newest four are already reviewed at this head
+        provider.reviews[PRRef("o/a", n)] = [Review("me", f"s{n}", "2026-01-01T00:00:00Z", "COMMENTED")]
+    asked = []
+    real = provider.list_prs
+    provider.list_prs = lambda scope, repos, limit=50: asked.append(limit) or real(scope, repos, limit)
+    ctx = make_ctx(parent.parent, parent, provider=provider)
+    _code, out = call(ctx, "list-work", "--mode", "review")
+    assert [i["pr"] for i in out["items"]] == ["o/a#5", "o/a#4", "o/a#3"]
+    assert asked == [3, 6, 9]  # three, then six, then nine; never fifty
+
+
+def test_babysit_does_not_start_in_a_checkout_with_uncommitted_changes(work):
+    parent, a, _b = work
+    provider = ByUrl()
+    provider.repo = "o/a"
+    provider.me = "me"
+    pr = provider.add_pr(1, head_sha="s", author="me")
+    provider.listing["authored"] = [pr.ref]
+    provider.checks[pr.ref] = [Check("build", "fail")]
+    (a / "scratch.txt").write_text("x")
+    ctx = make_ctx(parent.parent, parent, provider=provider)
+    _code, out = call(ctx, "list-work", "--mode", "babysit")
+    assert out["items"] == []
+    assert out["skipped"] == [{"pr": "o/a#1", "reason": "checkout has uncommitted changes; babysit will not start in it"}]

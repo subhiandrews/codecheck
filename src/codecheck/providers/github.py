@@ -141,16 +141,16 @@ class GitHubProvider:
             is_cross_repo=bool(d.get("isCrossRepository", False)),
         )
 
-    def list_prs(self, scope: str, repos: Sequence[str]) -> list[PRRef]:
+    def list_prs(self, scope: str, repos: Sequence[str], limit: int = 50) -> list[PRRef]:
         if scope not in _SCOPES:
             raise ProviderError(f"unknown scope {scope!r}; use one of {sorted(_SCOPES)}")
         if scope == "open":
             if not repos:
                 raise ProviderError("listing every open PR needs a repository")
-            args = ["search", "prs", "--state", "open", "--sort", "created", "--order", "desc", "--limit", "50",
+            args = ["search", "prs", "--state", "open", "--sort", "created", "--order", "desc", "--limit", str(limit),
                     "--json", "number,repository"]
         else:
-            args = ["search", "prs", "--state", "open", _SCOPES[scope], "--limit", "50", "--json", "number,repository"]
+            args = ["search", "prs", "--state", "open", _SCOPES[scope], "--limit", str(limit), "--json", "number,repository"]
         for repo in repos:
             args += ["--repo", _repo(repo)]
         return [PRRef(i["repository"]["nameWithOwner"], i["number"]) for i in self._json(*args)]

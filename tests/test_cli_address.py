@@ -453,7 +453,7 @@ def test_list_work_review_stops_asking_about_older_prs_once_the_cap_is_met(tmp_p
     ctx = make_ctx(tmp_path, clone, provider=provider)
     _code, out = call(ctx, "list-work", "--mode", "review")
     assert [i["pr"] for i in out["items"]] == [str(r) for r in refs[:3]]
-    assert out["considered"] == 10
+    assert out["considered"] == 3  # three were looked at, and only the first batch of three was listed
     assert set(provider.review_calls) == set(refs[:3])  # nothing was asked about the seven older PRs
 
 

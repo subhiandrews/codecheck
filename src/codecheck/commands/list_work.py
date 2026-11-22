@@ -1,9 +1,12 @@
 from dataclasses import replace
 
-from codecheck.commands._common import approval_skip, pr_activity
+from codecheck.commands._common import approval_skip, busy_checkout, pr_activity
 from codecheck.core.precheck import review_verdict
 from codecheck.core.state import WorkItem, babysit_work, loop_key, select_work
 from codecheck.errors import CodeCheckError
+
+BATCH = 3  # PRs asked of the host at a time
+MAX_LISTED = 50  # most PRs of one repository looked at in an iteration
 
 NAME = "list-work"
 HELP = "List PRs with something new to do (zero LLM tokens); capped per iteration"
@@ -41,27 +44,38 @@ def run(args, ctx) -> dict:
             break  # the other clones wait for the next iteration and cost no API calls now
         sub = clone or ctx
         try:
-            refs = sub.provider.list_prs("open" if review else "authored", [repo])  # newest first
             me = sub.provider.whoami()
+            refs = _newest_first(sub.provider, "open" if review else "authored", repo)
+            while not enough() and (ref := next(refs, None)) is not None:  # the cap is checked before the next batch is asked for
+                considered += 1
+                try:
+                    item, skip = _consider(sub, args.mode, ref, me)
+                    if item and clone and not review and (why := busy_checkout(ctx, str(clone.cwd))):
+                        item, skip = None, why
+                except Exception as e:  # noqa: BLE001 - one broken PR must not abort the whole listing
+                    item, skip = None, f"error: {type(e).__name__}: {e}"[:300]
+                if skip:
+                    skipped.append({"pr": str(ref), "reason": skip})
+                if item:
+                    items.append(replace(item, clone=str(clone.cwd)) if clone else item)
+                    fresh += ctx.state.get(loop_key(args.mode, item.ref)) != item.fingerprint
         except Exception as e:  # noqa: BLE001 - one unreachable repository must not stop the others
             skipped.append({"pr": repo, "reason": f"error: {type(e).__name__}: {e}"[:300]})
-            continue
-        considered += len(refs)
-        for ref in refs:
-            if enough():
-                break
-            try:
-                item, skip = _consider(sub, args.mode, ref, me)
-            except Exception as e:  # noqa: BLE001 - one broken PR must not abort the whole listing
-                item, skip = None, f"error: {type(e).__name__}: {e}"[:300]
-            if skip:
-                skipped.append({"pr": str(ref), "reason": skip})
-            if item:
-                items.append(replace(item, clone=str(clone.cwd)) if clone else item)
-                fresh += ctx.state.get(loop_key(args.mode, item.ref)) != item.fingerprint
     chosen = select_work(items, ctx.state, args.mode, limit)
     return {"items": [{"pr": str(i.ref), "fingerprint": i.fingerprint, "reason": i.reason, "clone": i.clone} for i in chosen],
             "considered": considered, "skipped": skipped}
+
+
+def _newest_first(provider, scope: str, repo: str):
+    """The repository's PRs newest first, asked for in growing batches so that no more is listed than is looked at."""
+    asked = BATCH
+    seen = 0
+    while True:
+        refs = provider.list_prs(scope, [repo], limit=asked)
+        yield from refs[seen:]
+        if len(refs) < asked or asked >= MAX_LISTED:
+            return
+        seen, asked = len(refs), min(asked + BATCH, MAX_LISTED)
 
 
 def _consider(ctx, mode: str, ref, me: str) -> tuple[WorkItem | None, str | None]:

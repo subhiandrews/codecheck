@@ -5,13 +5,13 @@ User-visible changes per release, newest first. Earlier releases: `git log`. The
 ## [1.4.0]
 
 ### Changed
-- New `review-prs` and `babysit-prs` skills: the loop forms of `review-pr` and `babysit-pr`.
 - The loops find the clones at or directly under the directory you run from, so `~/opensource` works as well as `~/opensource/tokio`.
-- `babysit-pr` no longer searches all your PRs on the host.
+- `babysit-pr` with no argument now works on your open PRs in those clones instead of searching all your PRs on the host, and skips a clone with uncommitted changes.
 - `review-pr` with no argument reviews the open PRs of the repository, newest first, three per run; a PR already reviewed waits for a new commit.
 - Reviewers, `address-comments` and `babysit-pr` also read the repository's `CLAUDE.md`.
 
 ### Added
+- New `review-prs` and `babysit-prs` skills: the loop forms of `review-pr` and `babysit-pr`.
 - `review-local` can propose improvements to `CODE_CHECK.md` from what past reviews learned: findings you disputed in several PRs and human comments the panel missed. Off by default (`review.learn_guidance` in your user config); it writes the working tree only and never commits. New command `guidance evidence|apply`.
 
 ## [1.3.0]
