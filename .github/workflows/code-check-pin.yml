@@ -1,0 +1,73 @@
+name: code-check-pin
+# Keeps `code-check-ref` in code-check.yml at the latest release tag on main, by opening a bot PR when it falls behind.
+# Never merges anything. Triggers: daily, by hand (`gh workflow run code-check-pin.yml`), and after tag-release finishes
+# (a tag pushed with GITHUB_TOKEN does not start other workflows, so workflow_run is used instead of on: push: tags).
+#
+# KNOWN LIMIT: a PR or push made with GITHUB_TOKEN does not trigger other workflows, so required checks may not run on the
+# bot PR. Set the optional secret CI_PIN_BOT_TOKEN (fine-grained PAT or app token with contents and pull-requests write)
+# to push and open the PR with it instead. The repo setting "Allow GitHub Actions to create and approve pull requests"
+# must also be on. The bot branch is bot-owned and is force-pushed (with lease) when a newer tag replaces the pin.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+  workflow_run:
+    workflows: [tag-release]
+    types: [completed]
+    branches: [main]
+permissions: {}
+concurrency:
+  group: code-check-pin
+  cancel-in-progress: false
+jobs:
+  pin:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ secrets.CI_PIN_BOT_TOKEN || github.token }}
+      REPO: ${{ github.repository }}
+      BRANCH: bot/code-check-pin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with: { python-version: "3.14" }
+      - name: Bump the pin when a newer release exists
+        id: bump
+        run: |
+          result="$(git tag --merged origin/main | python scripts/update_ci_pin.py --tags-from-stdin --write)"
+          echo "$result"
+          echo "action=$(jq -r .action <<<"$result")" >> "$GITHUB_OUTPUT"
+          echo "from=$(jq -r .pin <<<"$result")" >> "$GITHUB_OUTPUT"
+          echo "to=$(jq -r .newest <<<"$result")" >> "$GITHUB_OUTPUT"
+      - name: Commit, push and open or update the PR
+        if: steps.bump.outputs.action == 'bump'
+        env:
+          FROM: ${{ steps.bump.outputs.from }}
+          TO: ${{ steps.bump.outputs.to }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git commit -am "ci: pin code-check to $TO"
+          git push --force-with-lease "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "HEAD:refs/heads/$BRANCH"
+          body="Bot-made. CI reviews pull requests with code-check \`$FROM\`; the latest release on main is \`$TO\`, so this moves \`code-check-ref\` in \`.github/workflows/code-check.yml\` from \`$FROM\` to \`$TO\`.
+
+          Release: https://github.com/${REPO}/releases/tag/${TO}
+          Changes: https://github.com/${REPO}/blob/${TO}/CHANGELOG.md
+
+          Opened by \`.github/workflows/code-check-pin.yml\`. Not auto-merged: review and merge it."
+          existing="$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --repo "$REPO" --title "ci: pin code-check to $TO" --body "$body"
+          else
+            gh pr create --repo "$REPO" --base main --head "$BRANCH" --title "ci: pin code-check to $TO" --body "$body"
+          fi
