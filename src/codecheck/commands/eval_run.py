@@ -128,6 +128,8 @@ def run_live(ctx, directory: Path, only: str | None, if_reachable: bool) -> dict
         if only not in names:
             raise CodeCheckError(f"unknown snippet {only!r}; known: {', '.join(names) or 'none'}")
         snippets = [s for s in snippets if s["name"] == only]
+    else:  # a full run skips snippets marked "live": false; --only and --memory-effect still run them
+        snippets = [s for s in snippets if s.get("live", True)]
     if not snippets:
         return {"passed": True, "cases": []}
     reason = unreachable_reason(ctx)

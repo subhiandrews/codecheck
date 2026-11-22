@@ -107,4 +107,6 @@ def snippet_problems(snippet: object) -> list[str]:
         out += _memory_effect_problems(snippet)
     if "calibrated" in snippet and not isinstance(snippet["calibrated"], bool):
         out.append("calibrated must be true or false")
+    if "live" in snippet and not isinstance(snippet["live"], bool):
+        out.append("live must be true or false")
     return out

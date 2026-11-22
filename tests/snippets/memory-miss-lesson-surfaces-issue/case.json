@@ -1,6 +1,7 @@
 {
   "name": "memory-miss-lesson-surfaces-issue",
   "calibrated": false,
+  "live": false,
   "memory": {
     "lessons": [
       {
