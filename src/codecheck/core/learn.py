@@ -1,4 +1,4 @@
-"""Evidence for improving a CODE_CHECK.md, and the checks a proposed new text must pass. Pure: no model, no clock.
+"""Evidence for improving a CODE_CHECK.md, and the checks a proposed new text must pass. No model, no clock; only `gather` reads the shadow store.
 
 The evidence is what the shadow store learned about past reviews of one repository: findings the author's own
 verdicts called incorrect, and human review comments the panel did not match to any finding. It only says where the

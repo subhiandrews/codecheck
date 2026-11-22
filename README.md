@@ -79,7 +79,7 @@ Every subcommand prints exactly one JSON document, errors included. Run `code-ch
 | Setup | `doctor`, `gen-agents --out agents`, `gen-skills --out codex/skills` |
 | Developer | `shadow` (collect, export-golden, record-verdict), `eval --replay\|--live\|--calibrate\|--history` |
 
-Loops: `/loop 15m /code-check:review-prs`, `/loop 10m /code-check:babysit-prs`, `/loop 2m /code-check:review-local`. `review-pr` reviews the open PRs of the repository you run it in, newest first, at most `loop.max_review_prs_per_iteration` (3) per iteration; `babysit-pr` handles at most `loop.max_prs_per_iteration`. Each PR gets one headless `claude -p` process each, and retries a failing PR up to 3 attempts per fingerprint.
+Loops: `/loop 15m /code-check:review-prs`, `/loop 10m /code-check:babysit-prs`, `/loop 2m /code-check:review-local`. Each PR gets one headless `claude -p` process and a failing PR is retried up to 3 attempts per fingerprint; caps are in [CONFIGURATION.md](docs/CONFIGURATION.md).
 
 ## Configuration
 

@@ -5,8 +5,11 @@ User-visible changes per release, newest first. Earlier releases: `git log`. The
 ## [1.4.0]
 
 ### Changed
-- New `review-prs` and `babysit-prs` skills (the loop forms of `review-pr` and `babysit-pr`). Both loops, and `--pr OWNER/REPO#N`, find the clones at or directly under the directory you run from, so `~/opensource` works as well as `~/opensource/tokio`; babysit no longer searches all your PRs on the host. `address-comments` and `babysit-pr` also get the repository's `CLAUDE.md`.
-- `review-pr` with no argument reviews the open PRs of the repository you run it in (not the review-requested queue), newest first, at most `loop.max_review_prs_per_iteration` (default 3) per iteration; a PR already reviewed is left alone until it gets a new commit. Reviewers also read the repository's `CLAUDE.md` from the base branch.
+- New `review-prs` and `babysit-prs` skills: the loop forms of `review-pr` and `babysit-pr`.
+- The loops find the clones at or directly under the directory you run from, so `~/opensource` works as well as `~/opensource/tokio`.
+- `babysit-pr` no longer searches all your PRs on the host.
+- `review-pr` with no argument reviews the open PRs of the repository, newest first, three per run; a PR already reviewed waits for a new commit.
+- Reviewers, `address-comments` and `babysit-pr` also read the repository's `CLAUDE.md`.
 
 ### Added
 - `review-local` can propose improvements to `CODE_CHECK.md` from what past reviews learned: findings you disputed in several PRs and human comments the panel missed. Off by default (`review.learn_guidance` in your user config); it writes the working tree only and never commits. New command `guidance evidence|apply`.
