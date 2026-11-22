@@ -2,7 +2,7 @@ import time
 
 from codecheck.commands import memory_collect
 from codecheck.config import expand_path
-from codecheck.memory import cli_lessons, cli_server
+from codecheck.memory import cli_embed, cli_lessons, cli_server
 from codecheck.memory.consolidate import Params
 from codecheck.memory.db import MemoryDB
 from codecheck.memory.measure import measure
@@ -21,6 +21,7 @@ def add_arguments(p) -> None:
     c = sub.add_parser("consolidate", help="turn the shadow store's evidence into lessons in memory.store; idempotent")
     c.add_argument("--prune", action="store_true", help="also delete evidence older than memory.expire_days")
     cli_lessons.add_arguments(sub)
+    cli_embed.add_arguments(sub)  # embed (memory/cli_embed.py)
     memory_collect.add_arguments(sub.add_parser("collect", help=memory_collect.HELP))
     cli_server.add_arguments(sub)  # serve, token, sync, status (memory/cli_server.py)
 
@@ -28,6 +29,8 @@ def add_arguments(p) -> None:
 def run(args, ctx) -> dict:
     if args.memory_cmd in cli_lessons.COMMANDS:
         return cli_lessons.run(args, ctx)
+    if args.memory_cmd in cli_embed.COMMANDS:
+        return cli_embed.run(args, ctx)
     if args.memory_cmd in cli_server.COMMANDS:
         return cli_server.run(args, ctx)
     # Both read the shadow store directly, available with shadow recording off. A missing store is empty.
@@ -40,4 +43,9 @@ def run(args, ctx) -> dict:
     m = ctx.config.memory
     params = Params(half_days=float(m.half_life_days), expire_days=float(m.expire_days))
     now = clock()
-    return consolidate_store(store, MemoryDB(expand_path(m.store), now=lambda: now), params, now, prune=args.prune)
+    out = consolidate_store(store, MemoryDB(expand_path(m.store), now=lambda: now), params, now, prune=args.prune)
+    if m.embed_model:  # semantic retrieval is on: embed the new evidence too (bounded; a failure leaves exact-key intact)
+        from codecheck.memory import semantic
+
+        out["embedding"] = semantic.refresh_local(ctx, budget=20.0)
+    return out

@@ -178,6 +178,7 @@ def push(ctx, transport, state: dict, *, now: float, solo_db: str = "", cancel: 
     shadow = ctx.shadow or ShadowStore(expand_path(ctx.config.shadow.store))
     pulled = set(state.get("pulled_ids", []))
     out, error = [], None
+    vec_pin, vec_note = _vector_pin(ctx, db, state, meta.body)
     for repo in m.share_repos:
         private = repo_private(ctx, repo)
         level = levels.effective_level(m.share_level, server_max, m.private_level, private)
@@ -193,6 +194,10 @@ def push(ctx, transport, state: dict, *, now: float, solo_db: str = "", cancel: 
             todo = []
             for (lid, kind), evs in sorted(_eligible_evidence(ctx, db, repo, pulled).items()):
                 item = levels.lesson_item(lid, kind, evs, level)
+                if vec_pin is not None:
+                    from codecheck.memory import semantic
+
+                    semantic.attach_vectors(ctx, db, item, evs, level, vec_pin)
                 dig = levels.digest(item)
                 refused = rejected.get(lid)
                 if pushed.get(lid) == dig:
@@ -210,7 +215,22 @@ def push(ctx, transport, state: dict, *, now: float, solo_db: str = "", cancel: 
         except _Stop as e:
             error = str(e)
         save_state(ctx, state, cancel)
-    return {"pushed": error is None, "repos": out, **({"error": error} if error else {})}
+    return {"pushed": error is None, "repos": out, **({"error": error} if error else {}),
+            **({"vectors": vec_note} if m.embed_model else {})}
+
+
+def _vector_pin(ctx, db: MemoryDB, state: dict, meta_body: dict):
+    """The pin to send vectors under (None sends none) and why. Also remembers the server's pin for retrieval."""
+    m = ctx.config.memory
+    if not m.embed_model:
+        return None, ""
+    from codecheck.memory import semantic
+
+    state["server_embedding"] = meta_body.get("embedding")
+    try:
+        return semantic.push_pin(ctx, db, meta_body.get("embedding"))
+    except Exception as e:  # noqa: BLE001 - vectors are optional; the push goes ahead without them
+        return None, f"error: {type(e).__name__}"
 
 
 def _push_episodes(shadow: ShadowStore, transport, state: dict, repo: str, server_max: str, rep: dict) -> None:
@@ -389,6 +409,8 @@ def sync(ctx, *, do_push: bool = True, do_pull: bool = True, solo_db: str = "", 
             if "error" in out["push"]:
                 state["last_error"] = out["push"]["error"]
         if do_pull:
+            if m.embed_model and not do_push:
+                state["server_embedding"] = transport.meta().body.get("embedding")  # retrieval compares models without a network call
             repos = list(dict.fromkeys([*m.share_repos, *extra_repos]))
             if repos:
                 out["pull"] = pull(ctx, transport, repos, state, now=now)

@@ -142,6 +142,9 @@ class HttpTransport:
             q += f"&purged_since={int(purged_since)}"
         return self._call("GET", "/v1/lessons" + q)
 
+    def search(self, body: dict) -> Response:
+        return self._call("POST", "/v1/search", body)
+
 
 @dataclass(frozen=True)
 class LocalTransport:
@@ -166,3 +169,6 @@ class LocalTransport:
         q = {"repo": [repo], "since": [repr(since)], **({"cursor": [cursor]} if cursor else {}),
              **({"purged_since": [str(int(purged_since))]} if purged_since > 0 else {})}
         return self._wrap(self.service.get_lessons(q))
+
+    def search(self, body: dict) -> Response:
+        return self._wrap(self.service.search(body))

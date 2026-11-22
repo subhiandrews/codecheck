@@ -93,6 +93,13 @@ def _lesson_from(row: sqlite3.Row) -> Lesson:
         provenance=json.loads(row["provenance"]))
 
 
+def drop_orphan_vectors(conn) -> None:
+    """Remove the semantic vectors (`evidence_vectors`, made by `memory/semantic.py`) of evidence that no longer exists, in
+    the caller's transaction, so evidence removed by a purge, `forget` or expiry leaves nothing derived from its text."""
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'evidence_vectors'").fetchone():
+        conn.execute("DELETE FROM evidence_vectors WHERE evidence_id NOT IN (SELECT id FROM evidence)")
+
+
 class MemoryDB:
     def __init__(self, directory: Path, now: Callable[[], float] = time.time) -> None:
         self.directory = Path(directory)
@@ -208,6 +215,7 @@ class MemoryDB:
                     out["updated"] += 1
                 conn.execute("DELETE FROM evidence WHERE thread_key = ? AND id != ?", (row[2], ev.id))
                 conn.execute(f"INSERT OR REPLACE INTO evidence ({', '.join(_EVIDENCE_COLS)}) VALUES ({', '.join('?' * len(row))})", row)  # noqa: S608 - fixed column names, values bound
+            drop_orphan_vectors(conn)
         return out
 
     def evidence(self, *, repo: str | None = None, lesson_id: str | None = None) -> list[Evidence]:
@@ -277,6 +285,7 @@ class MemoryDB:
         with self._use(write=True) as conn, self._tx(conn):
             n = conn.execute("DELETE FROM evidence WHERE lesson_id = ?", (lesson_id,)).rowcount
             gone = conn.execute("DELETE FROM lessons WHERE id = ?", (lesson_id,)).rowcount
+            drop_orphan_vectors(conn)
             conn.execute("INSERT OR REPLACE INTO forgotten (lesson_id, ts) VALUES (?, ?)", (lesson_id, self.now()))
         return {"lesson": bool(gone), "evidence": n}
 
@@ -288,6 +297,7 @@ class MemoryDB:
             for i in range(0, len(wanted), 500):
                 chunk = wanted[i:i + 500]
                 gone += conn.execute(f"DELETE FROM evidence WHERE id IN ({', '.join('?' * len(chunk))})", chunk).rowcount  # noqa: S608 - placeholders only
+            drop_orphan_vectors(conn)
         return gone
 
     def expire(self, params: Params | None = None, now: float | None = None) -> int:
@@ -296,6 +306,7 @@ class MemoryDB:
         at = self.now() if now is None else now
         with self._use(write=True) as conn, self._tx(conn):
             n = conn.execute("DELETE FROM evidence WHERE ? - ts >= ?", (at, params.expire_days * DAY)).rowcount
+            drop_orphan_vectors(conn)
         self.recompute(params, at)
         return n
 

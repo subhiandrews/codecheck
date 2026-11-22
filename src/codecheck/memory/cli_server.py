@@ -31,6 +31,10 @@ def add_arguments(sub) -> None:
     s.add_argument("--behind-proxy", action="store_true", help="a reverse proxy in front terminates TLS")
     s.add_argument("--allow-host", action="append", default=[], help="a Host header value to accept (repeatable)")
     s.add_argument("--max-concurrent", type=int, default=32)
+    s.add_argument("--embed-model", default="", help="embed evidence text with this Ollama model (needed for --allow-search)")
+    s.add_argument("--embed-url", default="", help="the Ollama URL (default memory.embed_url)")
+    s.add_argument("--allow-search", action="store_true", help="answer POST /v1/search: clients may send query text for ranking")
+    s.add_argument("--reset-embeddings", action="store_true", help="forget the stored embedding model and every vector, then start")
 
     t = sub.add_parser("token", help="manage the server's tokens (run on the server's machine)").add_subparsers(dest="token_cmd", required=True)
     a = t.add_parser("add", help="create a token; it is printed once and only its hash is stored")
@@ -85,17 +89,38 @@ def run(args, ctx) -> dict:
         if args.push_only and args.pull_only:
             raise CodeCheckError("--push-only and --pull-only exclude each other")
         return sync.sync(ctx, do_push=not args.pull_only, do_pull=not args.push_only, solo_db=args.db, extra_repos=args.repo)
-    return sync.status(ctx, offline=args.offline, solo_db=args.db)
+    out = sync.status(ctx, offline=args.offline, solo_db=args.db)
+    from codecheck.memory import semantic
+
+    out["embedding"] = semantic.status_info(ctx, offline=args.offline, server_meta=(out.get("server") or {}).get("meta"))
+    return out
+
+
+def _configure_search(service: Service, args, ctx) -> None:
+    """Semantic search on the server: an embedder for the evidence text it holds, and the search route when asked."""
+    if args.allow_search and not args.embed_model:
+        raise CodeCheckError("--allow-search needs --embed-model: the server embeds the query and the evidence text")
+    from codecheck.memory import semantic
+
+    if args.reset_embeddings:
+        semantic.reset_embeddings(service.db)
+    if args.embed_model:
+        from codecheck.memory.embed import OllamaEmbedder
+
+        service.embedder = OllamaEmbedder(args.embed_url or ctx.config.memory.embed_url, args.embed_model)
+    service.allow_search = args.allow_search
 
 
 def serve(args, ctx) -> dict:
     db = _db(ctx, args)
     service = Service(db, args.max_level, sync.params_of(ctx))
+    _configure_search(service, args, ctx)
     server = make_server(service, args.host, args.port, tls_cert=args.tls_cert, tls_key=args.tls_key,
                          behind_proxy=args.behind_proxy, allow_hosts=args.allow_host, max_concurrent=args.max_concurrent)
     host, port = server.server_address[:2]
     print(json.dumps({"serving": True, "address": f"{host}:{port}", "tls": bool(args.tls_cert), "behind_proxy": args.behind_proxy,
-                      "db": str(db.file), "max_level": args.max_level}), flush=True)
+                      "db": str(db.file), "max_level": args.max_level,
+                      **({"search": True, "embed_model": args.embed_model} if args.allow_search else {})}), flush=True)
     if threading.current_thread() is threading.main_thread():
         def stop(_signum, _frame):
             threading.Thread(target=server.shutdown, daemon=True).start()

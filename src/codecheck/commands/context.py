@@ -44,6 +44,15 @@ def run(args, ctx) -> dict:
         raise
 
 
+def _memory_queries(cfg, parsed, reviewable) -> list:
+    """Similarity queries (a summary of each file's added lines) for `memory.embed_model`; nothing when it is empty."""
+    if not cfg.memory.embed_model:
+        return []
+    from codecheck.memory.semantic import diff_queries
+
+    return diff_queries(parsed, reviewable)
+
+
 def _build(args, ctx, run_id, run_dir) -> dict:
     cfg = ctx.config
     if args.with_replies and args.mode != "pr":
@@ -112,7 +121,7 @@ def _build(args, ctx, run_id, run_dir) -> dict:
     meta["run_files"] = [n for n in ("CODE_CHECK.md", "existing-comments.md") if (run_dir / n).is_file()]
     # Lessons for the reviewers: misses keyed on the diff. Off by default, withheld from blind runs, never fatal.
     meta["memory"] = safe_build(ctx, run_dir, stage=REVIEWERS, repo=meta["repo"], base_ref=sync.base_ref, blind=blind,
-                                paths=reviewable)
+                                paths=reviewable, queries=_memory_queries(cfg, parsed, reviewable))
     if meta["memory"].get("file"):
         meta["run_files"].append(meta["memory"]["file"])
     meta["replies"] = replies

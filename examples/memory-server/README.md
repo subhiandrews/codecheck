@@ -46,8 +46,7 @@ docker compose up -d --build
 docker compose exec memory code-check memory token add alice
 ```
 
-`compose.yaml` publishes the server on `127.0.0.1:8787` only, keeps the store in a volume, and starts an `ollama/ollama` container for the embeddings added in a later phase. The image runs `code-check memory serve --behind-proxy`; keep the published port on loopback and put your proxy in front, and replacing `memory.example.com` in the `command` of `compose.yaml` with your hostname (`--allow-host` is required; the server refuses to start without one).
-
+`compose.yaml` publishes the server on `127.0.0.1:8787` only, keeps the store in a volume, and starts an `ollama/ollama` container for the optional [semantic retrieval](../../docs/MAINTAINING.md#semantic-retrieval-opt-in-default-off) (see the comments in `compose.yaml`). The image runs `code-check memory serve --behind-proxy`; keep the published port on loopback and put your proxy in front, and replace `memory.example.com` in the `command` of `compose.yaml` with your hostname (`--allow-host` is required; the server refuses to start without one).
 ## Operating notes
 
 - Back up the store by copying the `/data` volume (SQLite, WAL mode) while the server is stopped, or with `sqlite3 memory.db ".backup copy.db"`.

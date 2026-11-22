@@ -54,12 +54,40 @@ def test_a_configured_server_is_pulled_once_before_the_reviewers_read(tmp_path, 
     assert meta["memory"]["pull"] == {"pulled": True}
 
 
-@pytest.mark.parametrize("over", [{}, {"enabled": False}, {"read": False}, {"reviewers": False}])
+@pytest.mark.parametrize("over", [{}, {"enabled": False}, {"read": False}])
 def test_nothing_is_pulled_without_a_url_or_when_memory_is_off(tmp_path, pulls, over):
     cfg = memory_cfg(tmp_path, url=URL, **over) if over else memory_cfg(tmp_path)  # {} case: url empty
     ctx = local_ctx(tmp_path, memory=cfg)
     _out, meta = context(ctx)
     assert pulls.n == 0 and "pull" not in meta["memory"]
+
+
+def test_an_aggregator_only_configuration_still_pulls_once_and_writes_no_reviewer_file(tmp_path, pulls):
+    ctx = local_ctx(tmp_path, memory=memory_cfg(tmp_path, url=URL, share_repos=("o/r",), reviewers=False))
+    out, meta = context(ctx)
+    assert pulls.n == 1
+    assert meta["memory"] == {"read": False, "reason": "reviewers off", "pull": {"pulled": True}}
+    assert not (Path(out["run_dir"]) / "memory.md").exists()
+
+
+@pytest.mark.parametrize("calls", [Calls(exc=RuntimeError("boom")), Calls(exc=KeyboardInterrupt()), Calls(delay=5.0)])
+def test_an_aggregator_only_pull_is_guarded_and_bounded(tmp_path, monkeypatch, calls):
+    monkeypatch.setattr(sync, "pull_if_stale", calls)
+    ctx = local_ctx(tmp_path, memory=memory_cfg(tmp_path, url=URL, share_repos=("o/r",), reviewers=False, timeout_seconds=2))
+    t = time.monotonic()
+    _out, meta = context(ctx)
+    assert time.monotonic() - t < 4.0 and calls.n == 1
+    assert meta["memory"]["reason"] == "reviewers off"
+
+
+def test_a_blind_run_with_reviewers_off_pulls_nothing(tmp_path, pulls):
+    from clihelp import run_pr_context
+
+    ctx, _provider, pr = blind_pr(tmp_path)
+    ctx.config = replace(ctx.config, memory=memory_cfg(tmp_path, url=URL, share_repos=("o/r",), reviewers=False))
+    out = run_pr_context(ctx, pr)
+    assert out["memory"] == {"read": False, "reason": "blind"}
+    assert pulls.n == 0
 
 
 def test_a_blind_run_pulls_nothing(tmp_path, pulls):

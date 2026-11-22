@@ -37,6 +37,7 @@ from codecheck.memory.db import (
     MemoryDB,
     MemoryStoreError,
     _evidence_from,
+    drop_orphan_vectors,
 )
 from codecheck.memory.model import Evidence
 from codecheck.shadow.scrub import scrub_text
@@ -223,6 +224,7 @@ class ServerDB(MemoryDB):
             conn.execute("DELETE FROM purge_log WHERE id <= (SELECT MAX(id) FROM purge_log) - ?", (PURGE_LOG_MAX,))
             gone = conn.execute("DELETE FROM evidence WHERE id NOT IN (SELECT evidence_id FROM evidence_contrib)").rowcount
             eps = conn.execute("DELETE FROM episodes WHERE contributor = ?", (contributor,)).rowcount
+            drop_orphan_vectors(conn)  # vectors are derived from the purged evidence text
         reweighed = self.resolve_roles(theirs, touch_ts=now)  # a maintainer's role leaves with the maintainer
         self.recompute(params, now)
         return {"evidence": gone, "episodes": eps, "reweighed": reweighed}
@@ -249,6 +251,9 @@ class ServerDB(MemoryDB):
 class Service:
     """Every server rule, with no HTTP in it. Methods return (status, JSON-able body)."""
 
+    embedder = None  # an Embedder, set by `memory serve --embed-model`
+    allow_search = False  # set by `memory serve --allow-search`
+
     def __init__(self, db: ServerDB, max_level: str = "episodes", params: Params | None = None,
                  now: Callable[[], float] = time.time) -> None:
         if max_level not in levels.LEVELS:
@@ -256,7 +261,20 @@ class Service:
         self.db, self.max_level, self.params, self.now = db, max_level, params or Params(), now
 
     def meta(self) -> tuple[int, dict]:
-        return 200, {"api": API_VERSION, "schema": SCHEMA_VERSION, "max_level": self.max_level, "embedding": None}
+        return 200, {"api": API_VERSION, "schema": SCHEMA_VERSION, "max_level": self.max_level,
+                     "embedding": self._embedding()}
+
+    def _embedding(self) -> dict | None:
+        # lazy imports: semantic imports the client, which imports this module
+        from codecheck.memory import semantic
+
+        return semantic.meta_embedding(self)
+
+    def search(self, body: object) -> tuple[int, dict]:
+        """`POST /v1/search` (only with `--allow-search`): ranked lesson ids for query texts. Stores and logs nothing."""
+        from codecheck.memory import semantic
+
+        return semantic.serve_search(self, body)
 
     def put_lessons(self, contributor: str, body: object, ceiling: str = "contributor") -> tuple[int, dict]:
         """`ceiling` is the token's evidence-role ceiling. Solo mode (one person, the same machine) passes "maintainer"."""
@@ -264,7 +282,7 @@ class Service:
         if not isinstance(items, list) or not items or len(items) > levels.MAX_BATCH_ITEMS:
             return 422, {"error": f"body must be {{\"items\": [1 to {levels.MAX_BATCH_ITEMS} lessons]}}"}
         now = self.now()
-        parsed, results = [], []
+        parsed, results, vector_pairs = [], [], []
         for raw in items:
             claimed = raw.get("lesson_id") if isinstance(raw, dict) and isinstance(raw.get("lesson_id"), str) else None
             try:
@@ -277,10 +295,21 @@ class Service:
             capped = [replace(e, role=clamp_role(e.role, ceiling)) for e in evidence]  # never trust the claimed role
             down = sum(1 for a, b in zip(evidence, capped, strict=True) if a.role != b.role)
             parsed.append((lid, capped))
+            vector_pairs.extend(zip(raw["evidence"], capped, strict=True))
             results.append({"lesson_id": lid, "status": "ok", "error": None, "downgraded_roles": down})
+        vectors: list = []
+        if vector_pairs:
+            # lazy import: semantic imports the client, which imports this module
+            from codecheck.memory import semantic
+
+            refused, vectors = semantic.collect_vectors(self.db, vector_pairs)
+            if refused:
+                return refused  # 409 for another model, 422 for a malformed vector: nothing is stored
         counts = self.db.ingest(contributor, [e for _, ev in parsed for e in ev], self.params, now) if parsed else Counter()
         if parsed:
             self.db.recompute(self.params, now)
+        if vectors:
+            semantic.put_vectors(self.db, vectors)
         return 200, {"results": results, "evidence": dict(counts),
                      "downgraded_roles": sum(r.get("downgraded_roles", 0) for r in results)}
 
@@ -554,6 +583,8 @@ class _Handler(BaseHTTPRequestHandler):
                 status, body = svc.get_lessons(parse_qs(url.query))
             elif route == ("PUT", "/v1/lessons"):
                 status, body = svc.put_lessons(name, self._read_body(), svc.db.ceiling_of(name))
+            elif route == ("POST", "/v1/search"):
+                status, body = svc.search(self._read_body())
             elif route == ("PUT", "/v1/episodes"):
                 status, body = svc.put_episodes(name, self._read_body())
             elif route == ("DELETE", "/v1/evidence"):
