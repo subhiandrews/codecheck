@@ -20,7 +20,7 @@ max_inline_comments = 25       # the rest goes into the review summary
 security = false               # true: always include the security reviewer (see [ARCHITECTURE.md](ARCHITECTURE.md#security-review))
 performance = false            # true: always include the performance reviewer (see [ARCHITECTURE.md](ARCHITECTURE.md#performance-review))
 full = false                   # true: every reviewer on every review, routing skipped (see [ARCHITECTURE.md](ARCHITECTURE.md#reviewer-routing-and-full-mode))
-attribution = true             # one credit line (tool, licence, repo link) in the review summary, never in inline comments
+attribution = true             # one credit line (tool, version, licence, repo link) in the review summary, never in inline comments
 label = "code-check"           # label added to reviewed PRs; "" disables it
 login = ""                     # act as this login instead of `gh api user`; set it in CI, where the token cannot call /user (e.g. "github-actions[bot]")
 ignore = ["**/*.lock", "dist/**"]   # plain glob patterns, see below
@@ -97,7 +97,7 @@ Regenerate the Codex skill templates from a checkout with `code-check gen-skills
 
 ## Attribution and label
 
-Each posted PR review ends its summary comment with one small line saying it was made with code-check (Apache-2.0) and linking this repository. Inline comments never carry it. After posting, the PR gets the `code-check` label (GitHub creates it if missing); labeling is best-effort, so a reviewer without triage rights still posts the review and `post` reports `labeled: false`. Set `review.attribution = false` or `review.label = ""` in your user config to turn either off; a repository cannot change them.
+Each posted PR review ends its summary comment with one small line saying it was made with code-check, which version, and under Apache-2.0, and linking this repository. Inline comments never carry it. After posting, the PR gets the `code-check` label (GitHub creates it if missing); labeling is best-effort, so a reviewer without triage rights still posts the review and `post` reports `labeled: false`. Set `review.attribution = false` or `review.label = ""` in your user config to turn either off; a repository cannot change them.
 
 ## Shadow and golden settings (user config or environment only)
 

@@ -4,11 +4,12 @@ import re
 from collections import Counter
 from collections.abc import Sequence
 
+from codecheck import __version__
 from codecheck.core.existing import ExistingThread
 from codecheck.models import Decision, Finding, Severity
 
 RUN_MARKER = "<!-- code-check:run:{} -->"
-ATTRIBUTION = "<sub>Reviewed with [code-check](https://github.com/subhiandrews/codecheck) · Apache-2.0</sub>"
+ATTRIBUTION = f"<sub>Reviewed with [code-check](https://github.com/subhiandrews/codecheck) v{__version__} · Apache-2.0</sub>"
 FINDING_MARKER = re.compile(r"<!-- code-check:finding:([0-9a-f]{12}) -->")
 
 
