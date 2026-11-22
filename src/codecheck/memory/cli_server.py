@@ -36,6 +36,9 @@ def add_arguments(sub) -> None:
     a = t.add_parser("add", help="create a token; it is printed once and only its hash is stored")
     a.add_argument("name", help="the contributor id; their evidence is removable by it")
     a.add_argument("--admin", action="store_true", help="may also delete a contributor's evidence")
+    a.add_argument("--maintainer", action="store_true",
+                   help="may assert the maintainer role on evidence (for people with write access); without it a claimed "
+                        "maintainer is stored as a contributor")
     a.add_argument("--db", default="")
     r = t.add_parser("revoke", help="stop a token working")
     r.add_argument("name")
@@ -67,8 +70,9 @@ def run(args, ctx) -> dict:
         db = _db(ctx, args)
         action = args.token_cmd
         if action == "add":
-            token = db.add_token(args.name, "admin" if args.admin else "contributor")
-            return {"name": args.name, "role": "admin" if args.admin else "contributor", "token": token,
+            ceiling = "maintainer" if args.maintainer else "contributor"
+            token = db.add_token(args.name, "admin" if args.admin else "contributor", ceiling)
+            return {"name": args.name, "role": "admin" if args.admin else "contributor", "ceiling": ceiling, "token": token,
                     "note": "shown once; only its hash is stored. Put it in a 0600 file named by memory.token_file."}
         if action == "revoke":
             done = db.revoke_token(args.name)

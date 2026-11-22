@@ -25,6 +25,7 @@ import threading
 import time
 from collections import Counter
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
@@ -43,6 +44,13 @@ from codecheck.shadow.scrub import scrub_text
 API_VERSION = 1
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 ROLES = ("contributor", "admin")
+# What a token may assert about the people behind its evidence. `maintainer` is the only evidence role that earns more
+# than a contributor's weight (consolidate.AGAINST_BY_ROLE / MISS_BY_ROLE) and the only one that can activate a lesson, so
+# it is the only one a token needs permission for: self, author, contributor and unknown never weigh more than
+# `contributor` for any signal, so they pass unchanged. A client's claim is a request, never a fact.
+CEILINGS = ("contributor", "maintainer")
+PURGE_LOG_MAX = 20000
+PURGED_PER_RESPONSE = 1000
 PAGE_LIMIT = 500
 LOOPBACK_NAMES = {"localhost", "127.0.0.1", "::1"}
 
@@ -52,6 +60,8 @@ CREATE TABLE IF NOT EXISTS tokens (id INTEGER PRIMARY KEY, name TEXT NOT NULL, h
 CREATE INDEX IF NOT EXISTS tokens_name ON tokens (name);
 CREATE TABLE IF NOT EXISTS evidence_contrib (evidence_id TEXT NOT NULL, contributor TEXT NOT NULL, received_ts REAL NOT NULL,
     PRIMARY KEY (evidence_id, contributor));
+CREATE TABLE IF NOT EXISTS purge_log (id INTEGER PRIMARY KEY, evidence_id TEXT NOT NULL, repo TEXT NOT NULL, ts REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS purge_log_repo_ts ON purge_log (repo, ts);
 CREATE INDEX IF NOT EXISTS contrib_who ON evidence_contrib (contributor);
 CREATE TABLE IF NOT EXISTS vectors (lesson_id TEXT NOT NULL, model TEXT NOT NULL, digest TEXT NOT NULL, dim INTEGER NOT NULL,
     vec BLOB NOT NULL, PRIMARY KEY (lesson_id, model));
@@ -64,6 +74,21 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def _add_column(conn, table: str, column: str, decl: str) -> None:
+    if column not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
+# Best first: when two contributors disagree about who wrote a thread, the heavier role is kept, but a contributor can
+# only ever have asserted a role within its own ceiling (`clamp_role`).
+_ROLE_ORDER = ("maintainer", "contributor", "self", "unknown", "author")
+
+
+def clamp_role(role: str, ceiling: str) -> str:
+    """`role` as a token with `ceiling` may assert it: a claimed maintainer without that ceiling is a contributor."""
+    return "contributor" if role == "maintainer" and ceiling != "maintainer" else role
+
+
 class ServerDB(MemoryDB):
     """The shared store. Opening it creates the server tables next to the lesson tables."""
 
@@ -72,11 +97,15 @@ class ServerDB(MemoryDB):
             for stmt in _EXTRA_SCHEMA.split(";"):
                 if stmt.strip():
                     conn.execute(stmt)
+            _add_column(conn, "tokens", "ceiling", "TEXT NOT NULL DEFAULT 'contributor'")  # older stores: the safe ceiling
+            _add_column(conn, "evidence_contrib", "role", "TEXT")  # the role this contributor was allowed to assert
         return self
 
     # ---- tokens ----
 
-    def add_token(self, name: str, role: str = "contributor") -> str:
+    def add_token(self, name: str, role: str = "contributor", ceiling: str = "contributor") -> str:
+        if ceiling not in CEILINGS:
+            raise CodeCheckError(f"ceiling must be one of {', '.join(CEILINGS)}")
         if not NAME_RE.fullmatch(name):
             raise CodeCheckError("a token name must be 1 to 64 letters, digits, '.', '_' or '-'")
         if role not in ROLES:
@@ -85,8 +114,8 @@ class ServerDB(MemoryDB):
         with self._use(write=True) as conn, self._tx(conn):
             if conn.execute("SELECT 1 FROM tokens WHERE name = ? AND revoked_ts IS NULL", (name,)).fetchone():
                 raise CodeCheckError(f"a token named {name!r} already exists; revoke it first")
-            conn.execute("INSERT INTO tokens (name, hash, role, created_ts) VALUES (?, ?, ?, ?)",
-                         (name, hash_token(token), role, self.now()))
+            conn.execute("INSERT INTO tokens (name, hash, role, created_ts, ceiling) VALUES (?, ?, ?, ?, ?)",
+                         (name, hash_token(token), role, self.now(), ceiling))
         return token
 
     def revoke_token(self, name: str) -> bool:
@@ -98,8 +127,8 @@ class ServerDB(MemoryDB):
         with self._use(write=False) as conn:
             if conn is None:
                 return []
-            rows = conn.execute("SELECT name, role, created_ts, revoked_ts FROM tokens ORDER BY id")
-            return [{"name": r["name"], "role": r["role"], "created_ts": r["created_ts"], "revoked": r["revoked_ts"] is not None}
+            rows = conn.execute("SELECT name, role, ceiling, created_ts, revoked_ts FROM tokens ORDER BY id")
+            return [{"name": r["name"], "role": r["role"], "ceiling": r["ceiling"], "created_ts": r["created_ts"], "revoked": r["revoked_ts"] is not None}
                     for r in rows]
 
     def authenticate(self, token: str) -> tuple[str, str] | None:
@@ -114,6 +143,14 @@ class ServerDB(MemoryDB):
                     found = (row["name"], row["role"])
         return found
 
+    def ceiling_of(self, name: str) -> str:
+        """The highest evidence role the live token `name` may assert; anything unreadable is the lowest."""
+        with self._use(write=False) as conn:
+            if conn is None:
+                return "contributor"
+            row = conn.execute("SELECT ceiling FROM tokens WHERE name = ? AND revoked_ts IS NULL", (name,)).fetchone()
+        return row["ceiling"] if row and row["ceiling"] in CEILINGS else "contributor"
+
     # ---- evidence ----
 
     def ingest(self, contributor: str, items: Sequence[Evidence], params: Params, now: float) -> Counter:
@@ -123,11 +160,47 @@ class ServerDB(MemoryDB):
         counts: Counter = Counter(skipped_expired=len(items) - len(live))
         with self._use(write=True) as conn, self._tx(conn):
             conn.executemany(
-                "INSERT INTO evidence_contrib (evidence_id, contributor, received_ts) VALUES (?, ?, ?) "
-                "ON CONFLICT (evidence_id, contributor) DO UPDATE SET received_ts = excluded.received_ts",
-                [(e.id, contributor, now) for e in live])
+                "INSERT INTO evidence_contrib (evidence_id, contributor, received_ts, role) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT (evidence_id, contributor) DO UPDATE SET received_ts = excluded.received_ts, role = excluded.role",
+                [(e.id, contributor, now, e.role) for e in live])
         counts.update(self.upsert_evidence(live))
+        self.resolve_roles([e.id for e in live])
         return counts
+
+    def resolve_roles(self, ids: Sequence[str], *, touch_ts: float | None = None) -> int:
+        """Set each stored evidence role to the best role any of its contributors was allowed to assert. Without this a
+        later, lower-ceiling copy of the same thread would overwrite a maintainer's role, and a maintainer's role would
+        survive that maintainer's purge. Rows with no recorded role (older stores) do not vote. With `touch_ts`, rows
+        whose role changed are re-stamped so teammates pull them again."""
+        changed = 0
+        with self._use(write=True) as conn, self._tx(conn):
+            for eid in dict.fromkeys(ids):
+                roles = [r[0] for r in conn.execute("SELECT role FROM evidence_contrib WHERE evidence_id = ? AND role IS NOT NULL", (eid,))]
+                if not roles:
+                    continue
+                best = min(roles, key=lambda r: _ROLE_ORDER.index(r) if r in _ROLE_ORDER else len(_ROLE_ORDER))
+                if conn.execute("UPDATE evidence SET role = ? WHERE id = ? AND role != ?", (best, eid, best)).rowcount:
+                    changed += 1
+                    if touch_ts is not None:
+                        conn.execute("UPDATE evidence_contrib SET received_ts = ? WHERE evidence_id = ?", (touch_ts, eid))
+        return changed
+
+    def purged_page(self, repo: str, after_seq: int, limit: int) -> list[tuple[int, str]]:
+        """(sequence, evidence id) purge-log entries of `repo` after `after_seq`, oldest first, minus ids that exist again."""
+        with self._use(write=False) as conn:
+            if not self._ready(conn):
+                return []
+            rows = conn.execute(
+                "SELECT p.id, p.evidence_id FROM purge_log p WHERE p.repo = ? AND p.id > ? "
+                "AND NOT EXISTS (SELECT 1 FROM evidence e WHERE e.id = p.evidence_id) ORDER BY p.id LIMIT ?",
+                (repo, after_seq, limit))
+            return [(r[0], r[1]) for r in rows]
+
+    def purge_seq(self) -> int:
+        with self._use(write=False) as conn:
+            if not self._ready(conn):
+                return 0
+            return int(conn.execute("SELECT COALESCE(MAX(id), 0) FROM purge_log").fetchone()[0])
 
     def evidence_page(self, repo: str, after_ts: float, after_id: str, limit: int) -> list[tuple[float, Evidence]]:
         with self._use(write=False) as conn:
@@ -142,11 +215,17 @@ class ServerDB(MemoryDB):
     def purge_contributor(self, contributor: str, params: Params, now: float) -> dict:
         """Remove what one contributor sent. Evidence another contributor also sent stays, because it is still theirs."""
         with self._use(write=True) as conn, self._tx(conn):
+            theirs = [r[0] for r in conn.execute("SELECT evidence_id FROM evidence_contrib WHERE contributor = ?", (contributor,))]
             conn.execute("DELETE FROM evidence_contrib WHERE contributor = ?", (contributor,))
+            doomed = [(r[0], r[1]) for r in conn.execute(
+                "SELECT id, repo FROM evidence WHERE id NOT IN (SELECT evidence_id FROM evidence_contrib)")]
+            conn.executemany("INSERT INTO purge_log (evidence_id, repo, ts) VALUES (?, ?, ?)", [(i, repo, now) for i, repo in doomed])
+            conn.execute("DELETE FROM purge_log WHERE id <= (SELECT MAX(id) FROM purge_log) - ?", (PURGE_LOG_MAX,))
             gone = conn.execute("DELETE FROM evidence WHERE id NOT IN (SELECT evidence_id FROM evidence_contrib)").rowcount
             eps = conn.execute("DELETE FROM episodes WHERE contributor = ?", (contributor,)).rowcount
+        reweighed = self.resolve_roles(theirs, touch_ts=now)  # a maintainer's role leaves with the maintainer
         self.recompute(params, now)
-        return {"evidence": gone, "episodes": eps}
+        return {"evidence": gone, "episodes": eps, "reweighed": reweighed}
 
     # ---- episodes ----
 
@@ -179,7 +258,8 @@ class Service:
     def meta(self) -> tuple[int, dict]:
         return 200, {"api": API_VERSION, "schema": SCHEMA_VERSION, "max_level": self.max_level, "embedding": None}
 
-    def put_lessons(self, contributor: str, body: object) -> tuple[int, dict]:
+    def put_lessons(self, contributor: str, body: object, ceiling: str = "contributor") -> tuple[int, dict]:
+        """`ceiling` is the token's evidence-role ceiling. Solo mode (one person, the same machine) passes "maintainer"."""
         items = body.get("items") if isinstance(body, dict) and set(body) == {"items"} else None
         if not isinstance(items, list) or not items or len(items) > levels.MAX_BATCH_ITEMS:
             return 422, {"error": f"body must be {{\"items\": [1 to {levels.MAX_BATCH_ITEMS} lessons]}}"}
@@ -194,12 +274,15 @@ class Service:
             except levels.PayloadError as e:
                 results.append({"lesson_id": claimed, "status": "rejected", "error": str(e)})
                 continue
-            parsed.append((lid, evidence))
-            results.append({"lesson_id": lid, "status": "ok", "error": None})
+            capped = [replace(e, role=clamp_role(e.role, ceiling)) for e in evidence]  # never trust the claimed role
+            down = sum(1 for a, b in zip(evidence, capped, strict=True) if a.role != b.role)
+            parsed.append((lid, capped))
+            results.append({"lesson_id": lid, "status": "ok", "error": None, "downgraded_roles": down})
         counts = self.db.ingest(contributor, [e for _, ev in parsed for e in ev], self.params, now) if parsed else Counter()
         if parsed:
             self.db.recompute(self.params, now)
-        return 200, {"results": results, "evidence": dict(counts)}
+        return 200, {"results": results, "evidence": dict(counts),
+                     "downgraded_roles": sum(r.get("downgraded_roles", 0) for r in results)}
 
     def get_lessons(self, query: dict[str, list[str]]) -> tuple[int, dict]:
         repo = (query.get("repo") or [""])[0]
@@ -226,7 +309,19 @@ class Service:
             "scope": levels.scope_payload(le.scope)} for le in lessons]
         evidence = [{**levels.evidence_payload(e, "episodes"), "lesson_id": e.lesson_id, "received_ts": ts} for ts, e in page]
         nxt = f"{page[-1][0]!r}|{page[-1][1].id}" if more and page else None
-        return 200, {"lessons": out, "evidence": evidence, "next_cursor": nxt, "server_ts": self.now()}
+        body = {"lessons": out, "evidence": evidence, "next_cursor": nxt, "server_ts": self.now()}
+        if not cursor:  # purged ids ride on the first page of a pull; the sequence number is the client's watermark
+            try:
+                after_seq = max(int((query.get("purged_since") or ["0"])[0]), 0)
+            except ValueError:
+                return 422, {"error": "purged_since is malformed"}
+            seq_now = self.db.purge_seq()  # read first: a purge landing in between is simply seen by the next pull
+            gone = self.db.purged_page(repo, after_seq, PURGED_PER_RESPONSE + 1)
+            truncated = len(gone) > PURGED_PER_RESPONSE
+            gone = gone[:PURGED_PER_RESPONSE]
+            body.update(purged=[i for _, i in gone], purged_more=truncated,
+                        purged_seq=gone[-1][0] if truncated else max(seq_now, after_seq))
+        return 200, body
 
     def put_episodes(self, contributor: str, body: object) -> tuple[int, dict]:
         if levels.rank(self.max_level) < levels.rank("episodes"):
@@ -281,13 +376,77 @@ def _host_only(header: str) -> str:
     return header.rsplit(":", 1)[0] if header.count(":") == 1 else header
 
 
+_KNOWN_PATHS = frozenset({"/healthz", "/v1/meta", "/v1/lessons", "/v1/episodes", "/v1/evidence"})
+
+
+class AuthLimiter:
+    """Failed-token throttle, per source address, in memory. After `max_failures` failed authentications within `window`
+    seconds an address is locked out for `lockout` seconds: every request from it, valid token or not, is answered 429
+    before any token is looked at, so the answer says nothing about which tokens exist. Other addresses are unaffected.
+    The table is bounded; the clock is injectable for tests."""
+
+    MAX_ADDRESSES = 4096
+
+    def __init__(self, max_failures: int = 10, window: float = 60.0, lockout: float = 60.0,
+                 clock: Callable[[], float] = time.monotonic) -> None:
+        self.max_failures, self.window, self.lockout, self.clock = max_failures, window, lockout, clock
+        self._fails: dict[str, list[float]] = {}
+        self._locked: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def retry_after(self, addr: str) -> int | None:
+        """Seconds until `addr` may try again, or None when it is not locked out."""
+        now = self.clock()
+        with self._lock:
+            until = self._locked.get(addr)
+            if until is None:
+                return None
+            if until <= now:
+                del self._locked[addr]
+                self._fails.pop(addr, None)
+                return None
+            return max(int(until - now) + 1, 1)
+
+    def failed(self, addr: str) -> None:
+        now = self.clock()
+        with self._lock:
+            if len(self._fails) >= self.MAX_ADDRESSES and addr not in self._fails:
+                self._sweep(now)
+                if len(self._fails) >= self.MAX_ADDRESSES:
+                    self._fails.pop(next(iter(self._fails)))  # oldest first: a flood of addresses cannot grow the table
+            hits = [t for t in self._fails.get(addr, []) if now - t < self.window]
+            hits.append(now)
+            self._fails[addr] = hits
+            if len(hits) >= self.max_failures:
+                self._locked[addr] = now + self.lockout
+
+    def _sweep(self, now: float) -> None:
+        for a in [a for a, hits in self._fails.items() if not hits or now - hits[-1] >= self.window]:
+            del self._fails[a]
+        for a in [a for a, until in self._locked.items() if until <= now]:
+            del self._locked[a]
+
+
+def _source(handler_addr: str, forwarded: str, behind_proxy: bool) -> str:
+    """The address failures are counted against. Behind a declared proxy that appends to X-Forwarded-For, the last entry is
+    the one the proxy itself added; anything else (a client-supplied earlier entry) is never believed."""
+    if behind_proxy and forwarded:
+        last = forwarded.rsplit(",", 1)[-1].strip()
+        try:
+            return str(ipaddress.ip_address(last))
+        except ValueError:
+            pass
+    return handler_addr
+
+
 class MemoryHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 32
 
     def __init__(self, addr, service: Service, *, allowed_hosts: set[str] | None, max_concurrent: int,
-                 log: Callable[[str], None]) -> None:
+                 log: Callable[[str], None], behind_proxy: bool = False, limiter: AuthLimiter | None = None) -> None:
         self.service, self.allowed_hosts, self.log = service, allowed_hosts, log
+        self.behind_proxy, self.limiter = behind_proxy, limiter or AuthLimiter()
         self.slots = threading.BoundedSemaphore(max_concurrent)
         self.is_v6 = ":" in addr[0]
         if self.is_v6:
@@ -311,9 +470,11 @@ class _Handler(BaseHTTPRequestHandler):
     def log_error(self, *_args) -> None:
         return
 
-    def _send(self, status: int, body: dict) -> None:
+    def _send(self, status: int, body: dict, headers: dict[str, str] | None = None) -> None:
         data = json.dumps(body, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
@@ -357,6 +518,8 @@ class _Handler(BaseHTTPRequestHandler):
             self.server.log(f"error {type(e).__name__}")
         finally:
             path = urlsplit(self.path).path[:100]
+            if path not in _KNOWN_PATHS:
+                path = "/other"  # an unknown path is client text: it could be a pasted token, so it is never logged
             self.server.log(f"{self.command} {scrub_text(path)} {self._status} {who}")
 
     def _handle(self) -> str:
@@ -369,10 +532,16 @@ class _Handler(BaseHTTPRequestHandler):
         if url.path == "/healthz" and self.command == "GET":
             self._send(200, {"ok": True})
             return "-"
+        source = _source(str(self.client_address[0]), self.headers.get("X-Forwarded-For", ""), srv.behind_proxy)
+        wait = srv.limiter.retry_after(source)
+        if wait is not None:  # before any token is looked at, so a lockout never reveals whether a token is valid
+            self._send(429, {"error": "too many failed attempts; try again later"}, {"Retry-After": str(wait)})
+            return "-"
         auth = self.headers.get("Authorization", "")
         scheme, _, token = auth.partition(" ")
         who = srv.service.db.authenticate(token.strip()) if scheme.lower() == "bearer" and token.strip() else None
         if who is None:
+            srv.limiter.failed(source)
             self._send(401, {"error": "a valid token is required"})
             return "-"
         name, role = who
@@ -384,7 +553,7 @@ class _Handler(BaseHTTPRequestHandler):
             elif route == ("GET", "/v1/lessons"):
                 status, body = svc.get_lessons(parse_qs(url.query))
             elif route == ("PUT", "/v1/lessons"):
-                status, body = svc.put_lessons(name, self._read_body())
+                status, body = svc.put_lessons(name, self._read_body(), svc.db.ceiling_of(name))
             elif route == ("PUT", "/v1/episodes"):
                 status, body = svc.put_episodes(name, self._read_body())
             elif route == ("DELETE", "/v1/evidence"):
@@ -416,8 +585,8 @@ def _tls_context(cert: str, key: str) -> ssl.SSLContext:
 
 def make_server(service: Service, host: str = "127.0.0.1", port: int = 8787, *, tls_cert: str = "", tls_key: str = "",
                 behind_proxy: bool = False, allow_hosts: Sequence[str] = (), max_concurrent: int = 32,
-                log: Callable[[str], None] | None = None) -> MemoryHTTPServer:
-    """A bound, not yet serving, server. Refuses a non-loopback bind without TLS or `behind_proxy`."""
+                log: Callable[[str], None] | None = None, limiter: AuthLimiter | None = None) -> MemoryHTTPServer:
+    """A bound, not yet serving, server. Refuses a non-loopback bind without TLS or `behind_proxy`, and without `allow_hosts`."""
     if bool(tls_cert) != bool(tls_key):
         raise CodeCheckError("--tls-cert and --tls-key go together")
     check_bind(host, tls=bool(tls_cert), behind_proxy=behind_proxy)
@@ -425,11 +594,14 @@ def make_server(service: Service, host: str = "127.0.0.1", port: int = 8787, *, 
     if is_loopback(host):
         allowed: set[str] | None = LOOPBACK_NAMES | {host.lower()} | hosts  # also defeats DNS rebinding
     else:
-        allowed = ({host.lower()} | hosts) if hosts else None  # a proxy or TLS name: check only when told which names
+        if not hosts:
+            raise CodeCheckError("a server reachable from other machines needs at least one --allow-host (the public hostname "
+                                 "clients use, for example memory.example.com): without it any Host header is accepted")
+        allowed = {host.lower()} | hosts
     log = log or (lambda line: print(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {line}", file=sys.stderr, flush=True))
     try:
         server = MemoryHTTPServer((host or "0.0.0.0", port), service, allowed_hosts=allowed,  # noqa: S104 - guarded by check_bind
-                                  max_concurrent=max_concurrent, log=log)
+                                  max_concurrent=max_concurrent, log=log, behind_proxy=behind_proxy, limiter=limiter)
     except OSError as e:
         raise CodeCheckError(f"cannot bind {host}:{port}: {e.strerror or e}") from None
     if tls_cert:

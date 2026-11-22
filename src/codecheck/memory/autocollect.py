@@ -5,6 +5,7 @@ shown to a reviewer of that run. It reuses `collect_outcomes` (the same function
 `consolidate_store`, and it never raises: a provider, store or state failure becomes an entry in the result.
 """
 
+import threading
 import time
 from collections.abc import Callable
 
@@ -62,7 +63,23 @@ def _push_shared(ctx) -> dict:
     try:
         from codecheck.memory import sync
 
-        out = sync.sync(ctx, do_pull=False)
+        budget = max(float(ctx.config.memory.timeout_seconds), 0.5)
+        box: dict = {}
+        cancel = threading.Event()
+
+        def work() -> None:
+            try:
+                box["out"] = sync.sync(ctx, do_pull=False, http_timeout=budget, cancel=cancel)
+            except BaseException as e:  # noqa: BLE001 - nothing in the worker may escape
+                box["out"] = {"ok": False, "error": type(e).__name__}
+
+        t = threading.Thread(target=work, name="code-check-memory-push", daemon=True)
+        t.start()
+        t.join(budget)  # a hard wall clock: cleanup is never delayed longer than memory.timeout_seconds by the server
+        if t.is_alive():
+            cancel.set()  # the abandoned push may finish its request, but it can no longer write sync.json
+            return {"ok": False, "error": "timeout"}
+        out = box.get("out") or {}
         return {"ok": bool(out.get("ok")), **({"error": out["error"]} if "error" in out else {})}
     except Exception as e:  # noqa: BLE001 - collection must never fail because the server did
         return {"ok": False, "error": type(e).__name__}

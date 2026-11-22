@@ -119,6 +119,7 @@ class MemoryConfig:
     timeout_seconds: int = 3
     url: str = ""  # shared memory server; "" keeps memory local
     token_file: str = ""  # file holding the server token
+    ca_file: str = ""  # PEM file of the certificate authority to trust for an https memory.url (a private CA or a self-signed server)
     share_level: str = "lessons"  # most detail pushed to the server: lessons, evidence or episodes
     private_level: str = "lessons"  # cap for private repositories
     share_repos: tuple[str, ...] = ()  # repositories whose memory may be pushed; empty pushes nothing
@@ -392,7 +393,7 @@ def validate_memory(m: MemoryConfig) -> None:
     for repo in m.share_repos:
         if not re.fullmatch(r"[A-Za-z0-9_.][A-Za-z0-9_.-]*(/[A-Za-z0-9_.][A-Za-z0-9_.-]*)+", repo):
             raise ConfigError(f"config key memory.share_repos entries must look like owner/name; got {repo!r}")
-    for key in ("store", "token_file", "embed_model"):
+    for key in ("store", "token_file", "ca_file", "embed_model"):
         if getattr(m, key).startswith("-"):
             raise ConfigError(f"config key memory.{key} must not start with '-'")
 

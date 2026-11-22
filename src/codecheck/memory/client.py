@@ -11,6 +11,7 @@ import http.client
 import json
 import os
 import re
+import ssl
 import stat
 import urllib.error
 import urllib.request
@@ -84,9 +85,20 @@ class HttpTransport:
     url: str
     token: str = field(repr=False)
     timeout: float = 3.0
+    ca_file: str = ""  # PEM bundle to trust instead of the system store (a private CA or a self-signed server); https only
 
     def __post_init__(self) -> None:
         check_url(self.url)
+
+    def _opener(self) -> urllib.request.OpenerDirector:
+        handlers: list = [_NoRedirect]
+        if self.ca_file and urlsplit(self.url).scheme == "https":
+            try:  # verification and host-name checks stay on: this only changes which authority is trusted
+                ctx = ssl.create_default_context(cafile=os.path.expanduser(self.ca_file))
+            except (OSError, ssl.SSLError):
+                raise MemoryTransportError("cannot load memory.ca_file") from None
+            handlers.append(urllib.request.HTTPSHandler(context=ctx))
+        return urllib.request.build_opener(*handlers)
 
     def _call(self, method: str, path: str, body: object | None = None) -> Response:
         data = json.dumps(body, separators=(",", ":")).encode("utf-8") if body is not None else None
@@ -95,7 +107,7 @@ class HttpTransport:
             headers={"Authorization": f"Bearer {self.token}", "Accept": "application/json",
                      "User-Agent": f"code-check/{__version__}", **({"Content-Type": "application/json"} if data else {})})
         try:
-            with urllib.request.build_opener(_NoRedirect).open(req, timeout=self.timeout) as resp:
+            with self._opener().open(req, timeout=self.timeout) as resp:
                 status, raw = resp.status, resp.read(READ_CAP + 1)
         except urllib.error.HTTPError as e:
             status, raw = e.code, e.read(READ_CAP + 1)
@@ -124,8 +136,10 @@ class HttpTransport:
     def put_episodes(self, episodes: list[dict]) -> Response:
         return self._call("PUT", "/v1/episodes", {"episodes": episodes})
 
-    def get_lessons(self, repo: str, since: float = 0.0, cursor: str = "") -> Response:
+    def get_lessons(self, repo: str, since: float = 0.0, cursor: str = "", purged_since: int = 0) -> Response:
         q = f"?repo={quote(repo, safe='/')}&since={since!r}" + (f"&cursor={quote(cursor, safe='|.')}" if cursor else "")
+        if purged_since > 0:
+            q += f"&purged_since={int(purged_since)}"
         return self._call("GET", "/v1/lessons" + q)
 
 
@@ -142,11 +156,13 @@ class LocalTransport:
         return self._wrap(self.service.meta())
 
     def put_lessons(self, items: list[dict]) -> Response:
-        return self._wrap(self.service.put_lessons(self.contributor, {"items": items}))
+        # solo mode: the sender is the person whose roles these are, so its own assertions stand
+        return self._wrap(self.service.put_lessons(self.contributor, {"items": items}, "maintainer"))
 
     def put_episodes(self, episodes: list[dict]) -> Response:
         return self._wrap(self.service.put_episodes(self.contributor, {"episodes": episodes}))
 
-    def get_lessons(self, repo: str, since: float = 0.0, cursor: str = "") -> Response:
-        q = {"repo": [repo], "since": [repr(since)], **({"cursor": [cursor]} if cursor else {})}
+    def get_lessons(self, repo: str, since: float = 0.0, cursor: str = "", purged_since: int = 0) -> Response:
+        q = {"repo": [repo], "since": [repr(since)], **({"cursor": [cursor]} if cursor else {}),
+             **({"purged_since": [str(int(purged_since))]} if purged_since > 0 else {})}
         return self._wrap(self.service.get_lessons(q))
