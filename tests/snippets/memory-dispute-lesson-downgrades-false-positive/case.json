@@ -1,6 +1,7 @@
 {
   "name": "memory-dispute-lesson-downgrades-false-positive",
   "calibrated": false,
+  "live": false,
   "memory": {
     "lessons": [
       {
