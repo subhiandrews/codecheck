@@ -43,7 +43,7 @@ def run(args, ctx) -> dict:
         return measure(store)
     if args.memory_cmd == "report":
         return memory_report.report(store, args.min_findings)
-    # Explicit and user-invoked, so it works with memory.enabled = false. Nothing in a review reads this store yet.
+    # Explicit and user-invoked, so it works with memory.enabled = false. Reviews read this store only when memory is on.
     m = ctx.config.memory
     params = Params(half_days=float(m.half_life_days), expire_days=float(m.expire_days))
     now = clock()

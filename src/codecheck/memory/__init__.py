@@ -1,1 +1,1 @@
-"""Memory of review outcomes. Phase 0 only measures whether it would help; nothing here is read by a review."""
+"""Opt-in review memory: evidence from past reviews, consolidated lessons, a local or shared store, and retrieval for later reviews. Off by default."""
