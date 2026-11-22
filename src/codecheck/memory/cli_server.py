@@ -84,7 +84,7 @@ def run(args, ctx) -> dict:
                     "note": "shown once; only its hash is stored. Put it in a 0600 file named by memory.token_file."}
         if action == "revoke":
             done = db.revoke_token(args.name)
-            if not done:
+            if not done and not args.purge:  # with --purge a revoked name is fine: a failed purge must be retryable
                 raise CodeCheckError(f"no live token named {args.name!r}")
             purged = db.purge_contributor(args.name, sync.params_of(ctx), db.now()) if args.purge else None
             return {"revoked": args.name, "purged": purged}

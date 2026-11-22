@@ -368,7 +368,8 @@ class Service:
                 return 422, {"error": "purged_since is malformed"}
             seq_now = self.db.purge_seq()  # read first: a purge landing in between is simply seen by the next pull
             floor = self.db.purge_floor()
-            gap = after_seq > 0 and floor > after_seq + 1  # entries the client never saw were pruned from the log
+            # entries the client never saw were pruned from the log, or the client is ahead of a restored or recreated store
+            gap = after_seq > 0 and (floor > after_seq + 1 or after_seq > seq_now)
             gone = self.db.purged_page(repo, after_seq, PURGED_PER_RESPONSE + 1)
             truncated = len(gone) > PURGED_PER_RESPONSE
             gone = gone[:PURGED_PER_RESPONSE]

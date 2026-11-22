@@ -101,7 +101,8 @@ class HttpTransport:
         import ssl
         import urllib.request
 
-        handlers: list = [_no_redirect_handler()]
+        # an empty ProxyHandler: the bearer token never rides an environment proxy (HTTP_PROXY / HTTPS_PROXY)
+        handlers: list = [urllib.request.ProxyHandler({}), _no_redirect_handler()]
         if self.ca_file and urlsplit(self.url).scheme == "https":
             try:  # verification and host-name checks stay on: this only changes which authority is trusted
                 ctx = ssl.create_default_context(cafile=os.path.expanduser(self.ca_file))

@@ -95,7 +95,8 @@ class OllamaEmbedder:
             base + path, data=data, method=method,
             headers={"Accept": "application/json", **({"Content-Type": "application/json"} if data else {})})
         try:
-            with urllib.request.build_opener(_no_redirect_handler()).open(req, timeout=timeout) as resp:
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _no_redirect_handler())  # never an env proxy
+            with opener.open(req, timeout=timeout) as resp:
                 if resp.status != 200:
                     return None
                 raw = resp.read(RESPONSE_CAP + 1)
