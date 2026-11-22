@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 
 from codecheck.errors import CodeCheckError
-from codecheck.evals import history, memory_retrieval
+from codecheck.evals import history, memory_retrieval, memory_semantic
 from codecheck.evals.golden import DEFAULT_CASES, run_replay
 from codecheck.evals.judge import run_calibration
 from codecheck.evals.live import (
@@ -78,6 +78,7 @@ def _run_memory(args, ctx) -> dict:
     if args.memory_retrieval:
         if (args.snippets, args.only) != (None, None) or args.no_record:
             raise CodeCheckError("--memory-retrieval takes only --cases, --retriever and --if-reachable")
+        memory_semantic.register(ctx)  # only with memory.embed_model set; available only while the embedder answers
         return run_retrieval(_dir(ctx, args.cases, memory_retrieval.DEFAULT_CASES, "cases"), args.retriever, args.if_reachable)
     if args.cases is not None or args.retriever is not None or args.no_record:
         raise CodeCheckError("--memory-effect takes only --snippets, --only and --if-reachable")

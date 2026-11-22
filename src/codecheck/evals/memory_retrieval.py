@@ -132,6 +132,8 @@ def _query_problems(i: int, q: object, names: set[str]) -> list[str]:
             out.append(f"queries[{i}].{key} names unknown lessons: {', '.join(sorted(set(v) - names))}")
     if not q.get("expect") and not q.get("expect_absent"):
         out.append(f"queries[{i}] needs expect or expect_absent")
+    if "text" in q and not _str(q["text"]):
+        out.append(f"queries[{i}].text must be a non-empty string (the summary of the diff's added lines, for a semantic retriever)")
     if q.get("tier", "exact") not in TIERS:
         out.append(f"queries[{i}].tier must be one of {', '.join(TIERS)}")
     render = q.get("render", {})
@@ -291,7 +293,8 @@ def evaluate(case: dict, fn: Retriever) -> list[dict]:
         for q in case["queries"]:
             paths = q["paths"] if q["mode"] == "diff" else [f["file"] for f in q["findings"]]
             query = RetrievalQuery(db=db, repo=case.get("repo", DEFAULT_REPO), mode=q["mode"], paths=list(paths),
-                                   findings=list(q.get("findings", [])), files_at_base=list(case["files_at_base"]))
+                                   findings=list(q.get("findings", [])), files_at_base=list(case["files_at_base"]),
+                                   extra={"text": q["text"]} if q.get("text") else {})
             rows.append(_score_query(case, q, list(fn(query)), db, ids))
         return rows
 

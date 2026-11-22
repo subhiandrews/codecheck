@@ -206,7 +206,7 @@ Only `active` and `contested` lessons are shown (candidates never reach a review
 Three tools measure memory, none gates anything and none writes `docs/eval-history.jsonl` (decision 0044; the reasoning of decision 0023 applies). See `docs/Evals.md` for what each answers.
 
 ```
-code-check eval --memory-retrieval [--retriever NAME] [--cases DIR] [--if-reachable]   # recall@5 and MRR per retriever; no model
+code-check eval --memory-retrieval [--retriever NAME] [--cases DIR] [--if-reachable]   # recall@5 and MRR per retriever; `semantic` needs memory.embed_model and Ollama
 code-check eval --memory-effect [--only SNIPPET] [--snippets DIR] [--if-reachable]      # two live reviews per memory snippet; costs tokens
 code-check memory report [--min-findings N]                                              # shadow outcomes with and without lessons; read-only
 ```

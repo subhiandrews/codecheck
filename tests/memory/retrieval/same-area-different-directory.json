@@ -8,6 +8,6 @@
   ],
   "queries": [
     {"name": "same-directory", "mode": "diff", "paths": ["src/http/retry.py"], "expect": ["http-retry-miss"]},
-    {"name": "sibling-directory-same-topic", "tier": "semantic", "mode": "diff", "paths": ["src/rpc/backoff.py"], "expect": ["http-retry-miss"]}
+    {"name": "sibling-directory-same-topic", "tier": "semantic", "mode": "diff", "paths": ["src/rpc/backoff.py"], "text": "retry loop doubles the backoff delay with no cap and no jitter", "expect": ["http-retry-miss"]}
   ]
 }

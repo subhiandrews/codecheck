@@ -405,7 +405,7 @@ def _host_only(header: str) -> str:
     return header.rsplit(":", 1)[0] if header.count(":") == 1 else header
 
 
-_KNOWN_PATHS = frozenset({"/healthz", "/v1/meta", "/v1/lessons", "/v1/episodes", "/v1/evidence"})
+_KNOWN_PATHS = frozenset({"/healthz", "/v1/meta", "/v1/lessons", "/v1/episodes", "/v1/evidence", "/v1/search"})
 
 
 class AuthLimiter:
