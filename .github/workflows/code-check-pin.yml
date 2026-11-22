@@ -1,7 +1,7 @@
 name: code-check-pin
 # Opens a bot PR when code-check-ref in code-check.yml is behind the newest release tag on main. See docs/MAINTAINING.md
 # (CI review pin). No workflow_run or push: tags trigger: a tag pushed with GITHUB_TOKEN starts no workflow, and zizmor
-# rejects workflow_run, so the scheduled run picks up a new release.
+# rejects workflow_run, so tag-release dispatches this workflow after it tags, and the schedule below is the backstop.
 on:
   schedule:
     # 06:17, 10:17, 14:17 and 18:17 Pacific Standard Time (UTC-8); an hour later on the clock in summer, because cron is UTC only
