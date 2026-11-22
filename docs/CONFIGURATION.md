@@ -69,6 +69,7 @@ max_chars = 6000               # most characters of lessons shown to one review
 timeout_seconds = 3            # time budget for reading memory; a slow store is skipped, never waited on
 url = ""                       # shared memory server, https unless it is on this machine; "" keeps memory local
 token_file = ""                # file holding the server token
+ca_file = ""                   # PEM file of the authority to trust for an https url (a private CA or a self-signed server); "" uses the system store
 share_level = "lessons"        # most detail pushed to the server: "lessons", "evidence" or "episodes"
 private_level = "lessons"      # the same cap, applied to private repositories
 share_repos = []               # repositories whose memory may be pushed; empty pushes nothing
@@ -126,6 +127,8 @@ Each posted PR review ends its summary comment with one small line saying it was
 ## Memory settings (user config or environment only)
 
 `[memory]` is listed in the block above and can only come from your user file or `CODE_CHECK_MEMORY__<KEY>` (for example `CODE_CHECK_MEMORY__ENABLED=1`, `CODE_CHECK_MEMORY__SHARE_REPOS=org/a,org/b`); a repository's `.code-check.toml` containing `[memory]` is an error. `share_level` and `private_level` must be `lessons`, `evidence` or `episodes`, `embed_at` must be `client` or `server`, the numeric keys must be positive, and `url` and `embed_url` must be `https` unless they point at `localhost` or `127.x.x.x`. `memory.collect` makes cleanup collect outcomes and consolidate; `memory.read` (with `reviewers`) puts lessons into reviews as `memory.md`, never in blind runs; with a `url` set, `context` first refreshes the local replica from the server (at most every 10 minutes, within half of `timeout_seconds`, any failure silently keeps the replica), and with `url` and `share_repos` both set, collection pushes after it consolidates. `memory consolidate` is run by hand, works with `enabled = false`, writes `memory.db` inside `store` (directory mode 0700, file 0600) and reads `half_life_days` and `expire_days`.
+
+**Server access keys.** `ca_file` is a PEM file trusted instead of the system store when `url` is `https` (a private CA or a self-signed server); it must not start with `-`, and certificate and host-name verification stay on. `context` pulls the repository being reviewed whenever `url` is set, even when it is not in `share_repos`; that read sends the server only the repository name (`GET /v1/lessons?repo=owner/name`), which its operator can see, and `share_repos` still alone decides what is pushed. The push after a collection is bounded by `timeout_seconds` and abandoned if slower. Server-side settings (token ceilings, `--allow-host`) are in [MAINTAINING.md](MAINTAINING.md#hosting-the-memory-server).
 
 `collect = true` takes effect: when a skill finishes (`cleanup`), reviewed PRs that are due are collected and the shadow store is consolidated into `store`. See "Automatic collection" in MAINTAINING.md.
 

@@ -11,8 +11,9 @@ services:
       - "127.0.0.1:8787:8787"
     volumes:
       - memory-data:/data
-    # Most detail the server accepts: lessons, evidence or episodes. Add --allow-host your.name behind a proxy.
-    command: ["--max-level", "lessons"]
+    # Most detail the server accepts: lessons, evidence or episodes. --allow-host is required (the server refuses to start
+    # without one): list every name clients put in the URL. Replace memory.example.com with your public hostname.
+    command: ["--max-level", "lessons", "--allow-host", "localhost", "--allow-host", "127.0.0.1", "--allow-host", "memory.example.com"]
     restart: unless-stopped
 
   # Used from phase 5 (embeddings). Not needed to store and share lessons.

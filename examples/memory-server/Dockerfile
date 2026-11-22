@@ -15,6 +15,7 @@ EXPOSE 8787
 
 # --behind-proxy: put a TLS-terminating reverse proxy in front (see README.md). For a server on loopback only,
 # publish the port as 127.0.0.1:8787:8787 and keep this flag.
-# --allow-host: the name clients use; the Host header is rejected otherwise.
+# --allow-host: REQUIRED (the server refuses to start without one): the name clients use; other Host headers are rejected.
+# The default CMD below therefore fails; pass `--allow-host your.name` (compose.yaml does).
 ENTRYPOINT ["code-check", "memory", "serve", "--host", "0.0.0.0", "--port", "8787", "--db", "/data", "--behind-proxy"]
 CMD ["--max-level", "lessons"]

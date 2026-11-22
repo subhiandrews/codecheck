@@ -25,8 +25,8 @@ Then `code-check memory sync` and `code-check memory status`. `http://` is accep
 
 ## Team
 
-1. Run the server where everyone can reach it, behind a reverse proxy that terminates TLS (Caddy, nginx, a cloud load balancer). The server binds loopback by default and refuses any other address unless you pass `--behind-proxy` (a proxy in front) or `--tls-cert` and `--tls-key` (it terminates TLS itself).
-2. Give each person their own token: `code-check memory token add alice`. The name is the contributor id; `--admin` additionally allows deleting a contributor's evidence. List with `memory token list`; remove with `memory token revoke alice --purge` (the evidence they sent goes too).
+1. Run the server where everyone can reach it, behind a reverse proxy that terminates TLS (Caddy, nginx, a cloud load balancer). The server binds loopback by default and refuses any other address unless you pass `--behind-proxy` (a proxy in front) or `--tls-cert` and `--tls-key` (it terminates TLS itself), and then also requires at least one `--allow-host your.public.name` (it will not start without it). With your own certificate authority or a self-signed certificate, each client sets `memory.ca_file` to the PEM file.
+2. Give each person their own token: `code-check memory token add alice`. The name is the contributor id; `--admin` additionally allows deleting a contributor's evidence. **Give `--maintainer` to everyone with write access to the repositories:** a token without it can only send evidence as a contributor (a claimed `maintainer` is stored as `contributor`), and a lesson needs a maintainer behind it to activate. List with `memory token list`; remove with `memory token revoke alice --purge` (the evidence they sent goes too, and teammates' replicas drop it on their next pull).
 3. Each person sets `memory.url = "https://memory.example.com"`, a `token_file` (mode 0600) and `share_repos`.
 4. Choose the most detail the server accepts with `--max-level lessons|evidence|episodes` (default `lessons`). Each client can send less with `memory.share_level`; private repositories, and repositories whose visibility cannot be determined, are capped at `memory.private_level` (default `lessons`).
 
@@ -46,10 +46,12 @@ docker compose up -d --build
 docker compose exec memory code-check memory token add alice
 ```
 
-`compose.yaml` publishes the server on `127.0.0.1:8787` only, keeps the store in a volume, and starts an `ollama/ollama` container for the embeddings added in a later phase. The image runs `code-check memory serve --behind-proxy`; keep the published port on loopback and put your proxy in front, adding `--allow-host your.host.name` to the `command` so the `Host` header is checked.
+`compose.yaml` publishes the server on `127.0.0.1:8787` only, keeps the store in a volume, and starts an `ollama/ollama` container for the embeddings added in a later phase. The image runs `code-check memory serve --behind-proxy`; keep the published port on loopback and put your proxy in front, and replacing `memory.example.com` in the `command` of `compose.yaml` with your hostname (`--allow-host` is required; the server refuses to start without one).
 
 ## Operating notes
 
 - Back up the store by copying the `/data` volume (SQLite, WAL mode) while the server is stopped, or with `sqlite3 memory.db ".backup copy.db"`.
 - Logs hold method, path (no query), status and contributor name, never tokens or text.
-- Roles in evidence are asserted by clients, so anyone holding a token is trusted. Revoke tokens that should not be.
+- Roles in evidence are asserted by clients but capped by the token's ceiling (`--maintainer`); otherwise anyone holding a token is trusted. Revoke tokens that should not be.
+- After 10 failed tokens from one address in a minute the server answers 429 with `Retry-After` for a minute. Behind a proxy it reads the last `X-Forwarded-For` entry, so make the proxy set it.
+- A review pulls the repository it reviews whenever `memory.url` is set, even if it is not in `share_repos`; that sends only the repository name, which you as the operator can see.
