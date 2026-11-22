@@ -14,7 +14,7 @@ def add_arguments(p) -> None:
 
 def run(args, ctx) -> dict:
     result = _cleanup(args, ctx)
-    if ctx.config.memory.collect:
+    if ctx.config.memory.enabled and ctx.config.memory.collect:
         # Every review skill ends here. Guarded: collection can never change this command's output or exit status.
         ctx.guarded(collect_due, ctx)
     return result

@@ -100,7 +100,7 @@ def test_default_off_leaves_run_files_and_the_run_directory_as_they_were(tmp_pat
     ctx = local_ctx(tmp_path)
     out, meta = context(ctx)
     assert meta["run_files"] == [] and out["run_files"] == []
-    assert meta["memory"] == {"read": False, "reason": "disabled"} and out["memory"] == meta["memory"]
+    assert meta["memory"] == {"read": False, "reason": "disabled"} and "memory" not in out
     assert not (Path(out["run_dir"]) / "memory.md").exists()
 
     # a configured store with lessons changes nothing while enabled is false
