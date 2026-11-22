@@ -1,0 +1,21 @@
+{
+  "id": "expired-lesson-not-shown",
+  "description": "A lesson marked expired, and an active one whose expiry time has passed, are never shown; a live twin is.",
+  "files_at_base": ["lib/cache/store.py", "lib/queue/worker.py", "lib/net/client.py"],
+  "lessons": [
+    {"name": "cache-expired-status", "kind": "finding", "lean": "dispute", "path_glob": "lib/cache/**", "language": "python", "category": "performance", "status": "expired",
+     "statement": "Cache warm-up findings were disputed."},
+    {"name": "queue-past-expiry", "kind": "finding", "lean": "dispute", "path_glob": "lib/queue/**", "language": "python", "category": "performance", "expires_in_days": -2,
+     "statement": "Queue batching findings were disputed."},
+    {"name": "net-live", "kind": "finding", "lean": "dispute", "path_glob": "lib/net/**", "language": "python", "category": "performance",
+     "statement": "Connection reuse findings were disputed."}
+  ],
+  "queries": [
+    {"name": "expired-status", "mode": "findings", "findings": [{"file": "lib/cache/store.py", "category": "performance"}],
+     "expect_absent": ["cache-expired-status"]},
+    {"name": "past-expiry-time", "mode": "findings", "findings": [{"file": "lib/queue/worker.py", "category": "perf"}],
+     "expect_absent": ["queue-past-expiry"]},
+    {"name": "live-twin", "mode": "findings", "findings": [{"file": "lib/net/client.py", "category": "perf"}],
+     "expect": ["net-live"]}
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "id": "same-area-different-wording",
+  "description": "The same area is raised under a bug-like word (an alias the exact key knows) and under free wording it does not know.",
+  "files_at_base": ["src/billing/ledger.py", "src/billing/rates.py"],
+  "lessons": [
+    {"name": "ledger-correctness", "kind": "finding", "lean": "confirm", "path_glob": "src/billing/**", "language": "python", "category": "correctness",
+     "statement": "Rounding errors in ledger totals were confirmed by maintainers in earlier reviews."},
+    {"name": "rates-validation", "kind": "finding", "lean": "confirm", "path_glob": "src/billing/**", "language": "python", "category": "validation",
+     "statement": "Rate inputs that skip a null check were confirmed as real problems."}
+  ],
+  "queries": [
+    {"name": "alias-bug", "mode": "findings", "findings": [{"file": "src/billing/ledger.py", "category": "bug", "message": "total is rounded twice"}],
+     "expect": ["ledger-correctness"], "expect_absent": ["rates-validation"]},
+    {"name": "alias-behaviour", "mode": "findings", "findings": [{"file": "src/billing/ledger.py", "category": "behaviour", "message": "total changes"}],
+     "expect": ["ledger-correctness"]},
+    {"name": "free-wording-for-validation", "tier": "semantic", "mode": "findings",
+     "findings": [{"file": "src/billing/rates.py", "category": "nullable argument is never checked", "message": "rate can be None here"}],
+     "expect": ["rates-validation"]}
+  ]
+}

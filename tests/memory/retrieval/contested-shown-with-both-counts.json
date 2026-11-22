@@ -1,0 +1,18 @@
+{
+  "id": "contested-shown-with-both-counts",
+  "description": "A contested lesson is shown, ranked after an active one, and the rendered memory carries both the for and against counts.",
+  "files_at_base": ["core/jobs/runner.py", "core/jobs/retry.py"],
+  "lessons": [
+    {"name": "runner-contested", "kind": "finding", "lean": "confirm", "path_glob": "core/jobs/**", "language": "python", "category": "concurrency", "status": "contested", "support": 3, "contra": 2, "n_prs": 2,
+     "statement": "Shared state in the job runner was confirmed by some maintainers and disputed by others."},
+    {"name": "retry-active", "kind": "finding", "lean": "confirm", "path_glob": "core/jobs/**", "language": "python", "category": "correctness", "support": 5,
+     "statement": "Retry counts that disagree with their docs were confirmed."}
+  ],
+  "queries": [
+    {"name": "contested-with-counts", "mode": "findings", "findings": [{"file": "core/jobs/runner.py", "category": "race"}],
+     "expect": ["runner-contested"], "render": {"contains": ["status: contested", "for 3, against 2"]}},
+    {"name": "active-ranks-before-contested", "mode": "findings",
+     "findings": [{"file": "core/jobs/runner.py", "category": "race"}, {"file": "core/jobs/retry.py", "category": "bug"}],
+     "expect": ["retry-active"], "render": {"contains": ["for 3, against 2", "for 5, against 0"]}}
+  ]
+}

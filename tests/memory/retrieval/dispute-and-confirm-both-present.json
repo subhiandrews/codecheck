@@ -1,0 +1,18 @@
+{
+  "id": "dispute-and-confirm-both-present",
+  "description": "Both a disputed and a confirmed lesson are retrievable for the same file; the lean is kept so the aggregator can weigh it.",
+  "files_at_base": ["srv/db/pool.py", "srv/db/query.py"],
+  "lessons": [
+    {"name": "pool-disputed", "kind": "finding", "lean": "dispute", "path_glob": "srv/db/**", "language": "python", "category": "performance", "support": 4,
+     "statement": "Pool size findings were disputed by maintainers."},
+    {"name": "query-confirmed", "kind": "finding", "lean": "confirm", "path_glob": "srv/db/**", "language": "python", "category": "security", "support": 4,
+     "statement": "String-built queries were confirmed as injection risks."}
+  ],
+  "queries": [
+    {"name": "both-lessons", "mode": "findings",
+     "findings": [{"file": "srv/db/pool.py", "category": "perf"}, {"file": "srv/db/query.py", "category": "injection"}],
+     "expect": ["pool-disputed", "query-confirmed"], "render": {"contains": ["finding (dispute)", "finding (confirm)"]}},
+    {"name": "only-the-category-asked", "mode": "findings", "findings": [{"file": "srv/db/query.py", "category": "security"}],
+     "expect": ["query-confirmed"], "expect_absent": ["pool-disputed"]}
+  ]
+}
