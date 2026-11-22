@@ -80,6 +80,18 @@ def test_list_prs_builds_search_with_repos():
         gh.list_prs("bogus", [])
 
 
+def test_list_prs_open_scope_is_newest_first_and_needs_a_repository():
+    runner = FakeRunner().on(
+        "gh", "search", "prs", "--state", "open", "--sort", "created", "--order", "desc", "--limit", "50",
+        "--json", "number,repository", "--repo", "o/r",
+        stdout=json.dumps([{"number": 9, "repository": {"nameWithOwner": "o/r"}}, {"number": 3, "repository": {"nameWithOwner": "o/r"}}]),
+    )
+    gh = GitHubProvider(runner)
+    assert gh.list_prs("open", ["o/r"]) == [PRRef("o/r", 9), PRRef("o/r", 3)]
+    with pytest.raises(ProviderError, match="needs a repository"):
+        gh.list_prs("open", [])
+
+
 def test_repo_is_private_reads_gh_output_and_returns_none_on_failure():
     argv = ("gh", "repo", "view", "o/r", "--json", "isPrivate", "--jq", ".isPrivate")
     assert GitHubProvider(FakeRunner().on(*argv, stdout="true\n")).repo_is_private("o/r") is True

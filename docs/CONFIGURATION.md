@@ -33,8 +33,9 @@ small_max_files = 3
 performance_min_score = 3      # score of the loop, query and memory signals in the added lines that adds the performance reviewer
 
 [loop]
-max_prs_per_iteration = 5
-repos = []                     # empty = every repository you have access to
+max_prs_per_iteration = 5      # babysit: PRs of yours handled per iteration
+max_review_prs_per_iteration = 3  # review: open PRs reviewed per iteration, newest first
+repos = []                     # empty = babysit: every repository you have access to; review: the repository you run it in
 review_forks = false           # the unattended review loop skips fork-based PRs unless true
 
 [models]

@@ -31,14 +31,14 @@ SUBSTITUTIONS = {
     ),
     "review-pr": (
         *REVIEW_RULES,
-        (r" With no argument it works the queue .*? Use for", " Use for"),
+        (r" With no argument it reviews the open PRs .*? Use for", " Use for"),
         (r', or under /loop to keep reviewing teammates\' PRs\.', "."),
         (r"\(step 8\)", "(step 6)"),
-        (r" A keyword without a PR means queue mode, where it has no effect because configuration controls it\.", ""),
+        (r" A keyword without a PR means repository mode, where it has no effect because configuration controls it\.", ""),
         (r", and `?\(ignored guidance: <reasons>\)`? when any subagent.*\.", "."),
         (r"Ask no questions, except the replies-only question in step 1, and only when run interactively\.",
          "Ask for a missing PR reference or ask the replies-only question in step 1 when run interactively."),
-        QUEUE_RULE,
+        (r"^## Without an argument \(repository mode\)\n\n[^\n]+\n\n", QUEUE),
     ),
     "address-comments": (
         (r"Run it with the Bash tool's maximum timeout .*? wait for it instead\.", PUSH_WAIT),

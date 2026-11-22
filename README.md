@@ -78,7 +78,7 @@ Every subcommand prints exactly one JSON document, errors included. Run `code-ch
 | Setup | `doctor`, `gen-agents --out agents`, `gen-skills --out codex/skills` |
 | Developer | `shadow` (collect, export-golden, record-verdict), `eval --replay\|--live\|--calibrate\|--history` |
 
-Loops: `/loop 15m /code-check:review-pr`, `/loop 10m /code-check:babysit-pr`, `/loop 2m /code-check:review-local`. Each iteration handles at most `loop.max_prs_per_iteration` PRs, one headless `claude -p` process each, and retries a failing PR up to 3 attempts per fingerprint.
+Loops: `/loop 15m /code-check:review-pr`, `/loop 10m /code-check:babysit-pr`, `/loop 2m /code-check:review-local`. `review-pr` reviews the open PRs of the repository you run it in, newest first, at most `loop.max_review_prs_per_iteration` (3) per iteration; `babysit-pr` handles at most `loop.max_prs_per_iteration`. Each PR gets one headless `claude -p` process each, and retries a failing PR up to 3 attempts per fingerprint.
 
 ## Configuration
 
@@ -107,7 +107,7 @@ A repository's `.code-check.toml` cannot set `state_dir`, `[run_pr]`, `[shadow]`
 
 ### CODE_CHECK.md
 
-A `CODE_CHECK.md` at the repository root tells the reviewers, in plain prose, what to look at and what to ignore (max 16,000 characters). PR runs read it from the **base branch**, never the PR head; local runs read your working tree. A missing, empty or symlinked file is ignored. In a monorepo, a `CODE_CHECK.md` in a directory above a changed file is read too and applies only to files under that directory, where it wins over the root file on a conflict; all files share the one size limit. Optionally (`review.learn_guidance`, user config only, off by default), `review-local` can propose edits to these files from what past reviews on this machine learned, writing the working tree only and never committing; see [ARCHITECTURE.md](docs/ARCHITECTURE.md#codecheckmd). This repository's own file also checks that the docs stay accurate: the README stays short and current, and architecture detail lives under `docs/`.
+A `CODE_CHECK.md` at the repository root tells the reviewers, in plain prose, what to look at and what to ignore (max 16,000 characters). PR runs read it from the **base branch**, never the PR head; local runs read your working tree. A missing, empty or symlinked file is ignored. The same way, reviewers also get the repository's `CLAUDE.md` (and nested ones) as background on conventions and how it is built; it cannot give them tasks. In a monorepo, a `CODE_CHECK.md` in a directory above a changed file is read too and applies only to files under that directory, where it wins over the root file on a conflict; all files share the one size limit. Optionally (`review.learn_guidance`, user config only, off by default), `review-local` can propose edits to these files from what past reviews on this machine learned, writing the working tree only and never committing; see [ARCHITECTURE.md](docs/ARCHITECTURE.md#codecheckmd). This repository's own file also checks that the docs stay accurate: the README stays short and current, and architecture detail lives under `docs/`.
 
 ## Safety
 

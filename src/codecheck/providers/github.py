@@ -23,7 +23,8 @@ from codecheck.runner import CommandResult, CommandRunner
 _REMOTE = re.compile(r"[:/]([^/:]+/[^/]+?)(?:\.git)?/?$")
 _RUN_ID = re.compile(r"/actions/runs/(\d+)")
 _BUCKET = {"pass": "pass", "fail": "fail", "pending": "pending", "skipping": "skipped", "cancel": "cancelled"}
-_SCOPES = {"review-requested": "--review-requested=@me", "authored": "--author=@me"}
+# "open" is every open PR of the given repositories, newest first; it never runs without a repository
+_SCOPES = {"review-requested": "--review-requested=@me", "authored": "--author=@me", "open": None}
 _PR_FIELDS = "number,title,body,author,baseRefName,headRefName,headRefOid,isDraft,state,url,isCrossRepository"
 _REPO = re.compile(r"[A-Za-z0-9_.][A-Za-z0-9_.-]*/[A-Za-z0-9_.][A-Za-z0-9_.-]*")
 _LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\[bot\])?")
@@ -143,7 +144,13 @@ class GitHubProvider:
     def list_prs(self, scope: str, repos: Sequence[str]) -> list[PRRef]:
         if scope not in _SCOPES:
             raise ProviderError(f"unknown scope {scope!r}; use one of {sorted(_SCOPES)}")
-        args = ["search", "prs", "--state", "open", _SCOPES[scope], "--limit", "50", "--json", "number,repository"]
+        if scope == "open":
+            if not repos:
+                raise ProviderError("listing every open PR needs a repository")
+            args = ["search", "prs", "--state", "open", "--sort", "created", "--order", "desc", "--limit", "50",
+                    "--json", "number,repository"]
+        else:
+            args = ["search", "prs", "--state", "open", _SCOPES[scope], "--limit", "50", "--json", "number,repository"]
         for repo in repos:
             args += ["--repo", _repo(repo)]
         return [PRRef(i["repository"]["nameWithOwner"], i["number"]) for i in self._json(*args)]

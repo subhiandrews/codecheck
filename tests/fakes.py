@@ -68,7 +68,7 @@ class FakeProvider:
         self.me = "me"
         self.prs: dict[PRRef, PullRequest] = {}
         self.files: dict[PRRef, list[str]] = {}
-        self.listing: dict[str, list[PRRef]] = {"review-requested": [], "authored": []}
+        self.listing: dict[str, list[PRRef]] = {"review-requested": [], "authored": [], "open": []}
         self.threads: dict[PRRef, list[Thread]] = {}
         self.checks: dict[PRRef, list[Check]] = {}
         self.reviews: dict[PRRef, list[Review]] = {}

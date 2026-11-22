@@ -4,6 +4,9 @@ User-visible changes per release, newest first. Earlier releases: `git log`. The
 
 ## [1.4.0]
 
+### Changed
+- `review-pr` with no argument reviews the open PRs of the repository you run it in (not the review-requested queue), newest first, at most `loop.max_review_prs_per_iteration` (default 3) per iteration; a PR already reviewed is left alone until it gets a new commit. Reviewers also read the repository's `CLAUDE.md` from the base branch.
+
 ### Added
 - `review-local` can propose improvements to `CODE_CHECK.md` from what past reviews learned: findings you disputed in several PRs and human comments the panel missed. Off by default (`review.learn_guidance` in your user config); it writes the working tree only and never commits. New command `guidance evidence|apply`.
 

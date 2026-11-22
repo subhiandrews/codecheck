@@ -1,6 +1,6 @@
 from codecheck.commands._common import approval_skip, pr_activity
 from codecheck.core.precheck import review_verdict
-from codecheck.core.state import WorkItem, babysit_work, select_work
+from codecheck.core.state import WorkItem, babysit_work, loop_key, select_work
 
 NAME = "list-work"
 HELP = "List PRs with something new to do (zero LLM tokens); capped per iteration"
@@ -15,11 +15,17 @@ def run(args, ctx) -> dict:
     cfg = ctx.config
     repos = [r.strip() for r in args.repos.split(",") if r.strip()] or list(cfg.loop.repos)
     me = ctx.provider.whoami()
-    scope = "review-requested" if args.mode == "review" else "authored"
+    review = args.mode == "review"
+    if review and not repos:
+        # no queue: review the open PRs of the repository this runs in
+        repos = [ctx.current_repo()]  # raises a clear error outside a clone of a known repository
+    limit = cfg.loop.max_review_prs_per_iteration if review else cfg.loop.max_prs_per_iteration
     items: list[WorkItem] = []
     skipped: list[dict] = []
-    refs = ctx.provider.list_prs(scope, repos)
+    refs = ctx.provider.list_prs("open" if review else "authored", repos)  # newest first, so the newest is reviewed first
     for ref in refs:
+        if sum(ctx.state.get(loop_key(args.mode, i.ref)) != i.fingerprint for i in items) >= limit:
+            break  # enough new work; older PRs wait for the next iteration and cost no API calls now
         try:
             item, skip = _consider(ctx, args.mode, ref, me)
         except Exception as e:  # noqa: BLE001 - one broken PR must not abort the whole listing
@@ -28,7 +34,7 @@ def run(args, ctx) -> dict:
             skipped.append({"pr": str(ref), "reason": skip})
         if item:
             items.append(item)
-    chosen = select_work(items, ctx.state, args.mode, cfg.loop.max_prs_per_iteration)
+    chosen = select_work(items, ctx.state, args.mode, limit)
     return {"items": [{"pr": str(i.ref), "fingerprint": i.fingerprint, "reason": i.reason} for i in chosen],
             "considered": len(refs), "skipped": skipped}
 

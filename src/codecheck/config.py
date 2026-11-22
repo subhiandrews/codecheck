@@ -42,6 +42,7 @@ class ReviewConfig:
 @dataclass(frozen=True, slots=True)
 class LoopConfig:
     max_prs_per_iteration: int = 5
+    max_review_prs_per_iteration: int = 3  # review mode only: the newest open PRs of the repository come first
     repos: tuple[str, ...] = ()
     review_forks: bool = False  # the unattended review loop skips fork-based PRs unless this is true
 

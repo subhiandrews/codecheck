@@ -6,7 +6,7 @@ from codecheck.core.chunk import chunk_files
 from codecheck.core.diffmap import parse_diff
 from codecheck.core.doccheck import measure
 from codecheck.core.existing import collect_existing
-from codecheck.core.guidance import from_base, from_worktree
+from codecheck.core.guidance import CONTEXT_FILE, from_base, from_worktree
 from codecheck.core.panel import detect_language, filter_ignored, select_panel
 from codecheck.core.precheck import cap_replies, review_activity
 from codecheck.core.render import render_existing
@@ -104,12 +104,18 @@ def _build(args, ctx, run_id, run_dir) -> dict:
     # read before the worktree exists, so a failure here leaves nothing behind
     # base branch only in PR mode: a PR cannot change the rules it is judged by
     guidance = from_base(ctx.git, sync.base_ref, reviewable) if meta["worktree"] else from_worktree(root, reviewable)
+    # CLAUDE.md is background on the repo (conventions, how it is built and tested), read the same way and under the same limits
+    project = (from_base(ctx.git, sync.base_ref, reviewable, name=CONTEXT_FILE) if meta["worktree"]
+               else from_worktree(root, reviewable, name=CONTEXT_FILE))
     if meta["worktree"]:
         ctx.git.worktree_add(root, local_ref)
     if guidance is not None:
         (run_dir / "CODE_CHECK.md").write_text(guidance.text, encoding="utf-8")
+    if project is not None:
+        (run_dir / CONTEXT_FILE).write_text(project.text, encoding="utf-8")
     meta["guidance"] = guidance.to_meta() if guidance else None
-    meta["run_files"] = [n for n in ("CODE_CHECK.md", "existing-comments.md") if (run_dir / n).is_file()]
+    meta["project_context"] = project.to_meta() if project else None
+    meta["run_files"] = [n for n in ("CODE_CHECK.md", CONTEXT_FILE, "existing-comments.md") if (run_dir / n).is_file()]
     meta["replies"] = replies
     meta["existing_comments"] = existing_comments
     meta["existing_comments_error"] = existing_comments_error
@@ -167,7 +173,7 @@ def _build(args, ctx, run_id, run_dir) -> dict:
         ctx.guarded(record_run, ctx.shadow, meta, diff, cfg)
     out = {"run_id": run_id, "run_dir": str(run_dir), "root": meta["root"], "mode": args.mode,
             "base_warning": sync.warning, "files": len(files), "chunks": chunks, "panel": meta["panel"],
-            "guidance": meta["guidance"], "run_files": meta["run_files"], "replies": replies, "existing_comments": existing_comments,
+            "guidance": meta["guidance"], "project_context": meta["project_context"], "run_files": meta["run_files"], "replies": replies, "existing_comments": existing_comments,
             "existing_comments_error": existing_comments_error}
     if handoff:
         out.update(handoff=True, blind=blind)

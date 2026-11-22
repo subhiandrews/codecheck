@@ -14,6 +14,7 @@ def test_defaults(tmp_path):
     assert cfg.provider == "auto"
     assert cfg.review.auto_approve is False
     assert cfg.loop.max_prs_per_iteration == 5
+    assert cfg.loop.max_review_prs_per_iteration == 3
     assert cfg.models.language_experts == "haiku"
     assert cfg.models.aggregator == "opus"
     assert cfg.deep_reviewer.enabled is False

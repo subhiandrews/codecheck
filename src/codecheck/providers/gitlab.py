@@ -49,7 +49,7 @@ _JOB_STATE = {
     "manual": "skipped", "running": "pending", "pending": "pending", "created": "pending", "preparing": "pending",
     "waiting_for_resource": "pending", "scheduled": "pending",
 }
-_SCOPES = {"review-requested": "reviewer_username", "authored": "author_username"}
+_SCOPES = {"review-requested": "reviewer_username", "authored": "author_username", "open": None}
 _POSITION_REJECTED = re.compile(r"\b400\b|\b422\b|line_code|position|diff_refs|could not be resolved", re.IGNORECASE)
 
 
@@ -184,7 +184,12 @@ class GitLabProvider:
     def list_prs(self, scope: str, repos: Sequence[str]) -> list[PRRef]:
         if scope not in _SCOPES:
             raise ProviderError(f"unknown scope {scope!r}; use one of {sorted(_SCOPES)}")
-        query = f"state=opened&scope=all&per_page=50&{_SCOPES[scope]}={quote(_login(self.whoami()), safe='')}"
+        if scope == "open":
+            if not repos:
+                raise ProviderError("listing every open merge request needs a project")
+            query = "state=opened&scope=all&per_page=50&order_by=created_at&sort=desc"  # newest first
+        else:
+            query = f"state=opened&scope=all&per_page=50&{_SCOPES[scope]}={quote(_login(self.whoami()), safe='')}"
         endpoints = [f"projects/{_pid(r)}/merge_requests?{query}" for r in repos] or [f"merge_requests?{query}"]
         refs: list[PRRef] = []
         for endpoint in endpoints:
