@@ -7,7 +7,7 @@ corrupt store, a missing git ref, a bug or a slow disk costs the review nothing 
 
 import threading
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 
 from codecheck.config import expand_path
@@ -105,7 +105,7 @@ def _pull_replica(ctx, stage: str, budget: float, repo: str | None = None) -> di
 
 
 def safe_build(ctx, run_dir: Path, *, stage: str, repo: str | None, base_ref: str | None, blind: bool,
-               paths: Iterable[str] = (), findings: Iterable[tuple[str, object]] = (), queries: Sequence = ()) -> dict:
+               paths: Iterable[str] = (), findings: Iterable[tuple[str, object]] = (), queries: Sequence | Callable[[], Sequence] = ()) -> dict:
     """Write `run_dir/memory.md` when there is something to say. Never raises.
 
     Returns `{"read": False, "reason": ...}` or `{"read": True, "reason": "ok", "stage", "lessons", "ids", "chars"}`;
@@ -140,8 +140,9 @@ def safe_build(ctx, run_dir: Path, *, stage: str, repo: str | None, base_ref: st
 
         def work() -> None:
             try:
+                qs = queries() if callable(queries) else queries  # a callable runs here, inside the guard and the budget
                 box["out"] = _build(ctx, stage=stage, repo=repo, base_ref=base_ref, paths=list(paths), findings=list(findings),
-                                  queries=list(queries), sem=sem, deadline=deadline, partial=partial)
+                                  queries=list(qs), sem=sem, deadline=deadline, partial=partial)
             except BaseException as e:  # noqa: BLE001 - nothing in the worker may escape
                 box["error"] = f"{type(e).__name__}: {e}"[:200]
 

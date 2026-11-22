@@ -41,7 +41,7 @@ def collect_due(ctx, *, everything: bool = False, dry_run: bool = False, now: Ca
         stamp = now()
         cands = due(ctx.state, shadow, stamp, everything=everything)
         result["due"] = [c.pr for c in cands]
-        if not shadow.ordered_run_ids():
+        if not shadow.run_ids():
             result["hint"] = f"the shadow store at {shadow.root} holds no reviews yet, so there is nothing to collect"
         if dry_run or not cands:
             return result

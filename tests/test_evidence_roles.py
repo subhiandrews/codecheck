@@ -30,11 +30,11 @@ MARK = f"**Warning**\n<!-- code-check:finding:{FID} -->"
     ("maya", False, "OWNER", "contributor"),
     ("maya", None, "OWNER", "maintainer"),
     ("maya", None, "MEMBER", "unknown"),  # an org member is not known to have write access
-    ("maya", None, "COLLABORATOR", "maintainer"),
+    ("maya", None, "COLLABORATOR", "contributor"),  # may hold read or triage only
     ("maya", None, "CONTRIBUTOR", "contributor"),
     ("maya", None, "FIRST_TIME_CONTRIBUTOR", "contributor"),
     ("maya", None, "NONE", "contributor"),
-    ("maya", None, "collaborator", "maintainer"),
+    ("maya", None, "collaborator", "contributor"),
     ("maya", None, "", "unknown"),
     ("maya", None, "SOMETHING_NEW", "unknown"),
 ])
@@ -59,7 +59,7 @@ def test_resolver_swallows_lookup_errors_and_odd_answers():
     provider.write_errors = {"boom"}
     provider.write_access = {"odd": "yes"}  # type: ignore[dict-item]
     roles = RoleResolver(provider, "o/r", "me", "pat")
-    assert roles.role("boom", "COLLABORATOR") == "maintainer"  # falls back to the association
+    assert roles.role("boom", "OWNER") == "maintainer"  # falls back to the association
     assert roles.role("odd") == "unknown"
     assert roles.role("boom") == "unknown"
     assert provider.can_write_calls.count(("o/r", "boom")) == 1  # a failure is cached too
@@ -121,7 +121,7 @@ def test_collect_falls_back_to_association_when_can_write_fails_and_never_raises
     shadow = ShadowStore(tmp_path)
     seed(shadow, pr_author="pat")
     provider = provider_with(Thread("T1", "a.py", 3, False, False,
-                                    (tc(1, "me", MARK), tc(2, "maya", "no", "COLLABORATOR"), tc(3, "zed", "no"))))
+                                    (tc(1, "me", MARK), tc(2, "maya", "no", "OWNER"), tc(3, "zed", "no"))))
     provider.write_errors = {"maya", "zed"}
     assert collect_outcomes(provider, shadow, REF, "me")["outcomes"] == 1
     (outcome,) = (r for r in shadow.read(RID) if r["type"] == "outcome")
