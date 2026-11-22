@@ -4,12 +4,15 @@ on:
     branches: [main]
 permissions:
   contents: write
+  actions: write # to start code-check-pin: workflow_dispatch is the one event GITHUB_TOKEN may trigger
 jobs:
   tag:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4 # zizmor: ignore[artipacked] the job pushes the tag with the persisted token
       - name: Tag the commit with the plugin version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           version="$(tr -d '[:space:]' < VERSION)"
           if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -23,3 +26,6 @@ jobs:
           fi
           git tag "$tag" "$GITHUB_SHA"
           git push origin "refs/tags/$tag"
+          # a tag pushed with GITHUB_TOKEN starts no workflow, but a dispatch does: ask the pin bot to look at once
+          gh workflow run code-check-pin.yml --repo "$GITHUB_REPOSITORY" --ref main \
+            || echo "::warning::could not dispatch code-check-pin; the schedule will pick up $tag"
