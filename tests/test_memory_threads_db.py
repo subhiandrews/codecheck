@@ -128,11 +128,22 @@ def test_ingest_does_not_import_the_semantic_stack():
     from pathlib import Path
 
     src = Path(__file__).resolve().parent.parent / "src" / "codecheck" / "commands" / "ingest.py"
-    imported = [n.module for n in ast.walk(ast.parse(src.read_text())) if isinstance(n, ast.ImportFrom) and n.module]
-    assert "codecheck.memory.semantic" not in imported and "codecheck.memory.embed" not in imported
+    heavy = {"codecheck.memory.semantic", "codecheck.memory.embed"}
+    imported: set[str] = set()
+    for n in ast.walk(ast.parse(src.read_text())):  # every spelling: import a.b, from a import b, from a.b import c
+        if isinstance(n, ast.Import):
+            imported.update(a.name for a in n.names)
+        elif isinstance(n, ast.ImportFrom) and n.module and not n.level:
+            imported.add(n.module)
+            imported.update(f"{n.module}.{a.name}" for a in n.names)  # `from codecheck.memory import semantic`
+    assert not imported & heavy, imported & heavy
+    # the subprocess half loads the memory modules ingest really names (importing codecheck.commands.ingest itself runs
+    # codecheck/commands/__init__, which imports eval_run and so semantic, so it cannot be the subject here)
+    names = sorted(m for m in imported if m.startswith("codecheck.memory.") and m.count(".") == 2)
+    assert "codecheck.memory.inject" in names, names
     root = Path(__file__).resolve().parent.parent / "src"
-    code = (f"import sys; sys.path[:0] = [{str(root)!r}]; import codecheck.memory.inject, codecheck.memory.model; "
-            "bad = [m for m in ('codecheck.memory.semantic', 'codecheck.memory.embed') if m in sys.modules]; "
+    code = (f"import sys; sys.path[:0] = [{str(root)!r}]; import {', '.join(names)}; "
+            f"bad = [m for m in {sorted(heavy)!r} if m in sys.modules]; "
             "print(bad); sys.exit(1 if bad else 0)")
     r = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, check=False)
     assert r.returncode == 0, r.stdout + r.stderr

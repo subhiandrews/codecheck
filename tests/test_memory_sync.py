@@ -433,7 +433,8 @@ def test_cli_revoke_purge_removes_the_contributors_evidence(tmp_path, clone):
     s.put_lessons("dave", {"items": [__import__("test_memory_server").item_for([make_ev("T1")])]})
     assert len(db.evidence()) == 1
     code, out = call(ctx, "memory", "token", "revoke", "dave", "--purge", "--db", str(tmp_path / "srvdb"))
-    assert code == 0 and out["purged"]["evidence"] == 1 and db.evidence() == [] and token
+    assert code == 0 and out["purged"]["evidence"] == 1 and db.evidence() == []
+    assert ServerDB(tmp_path / "srvdb").authenticate(token) is None
 
 
 def test_cli_serve_refuses_a_public_bind_and_status_never_prints_a_token(tmp_path, clone, srv):
