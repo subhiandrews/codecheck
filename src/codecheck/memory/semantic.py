@@ -231,6 +231,35 @@ def collect_vectors(db: MemoryDB, pairs: Iterable[tuple[object, Evidence]]) -> t
 
 # ---------- embedding local evidence ----------
 
+START_BATCH = 8  # texts in a first request: a slow host then still finishes some inside the budget
+
+
+def embed_progressively(embedder: Embedder, todo: Sequence, deadline: float, store) -> tuple[int, str | None]:
+    """Embed `todo` (pairs of `(item, text)`) in batches that adapt to the host's speed; `(done, reason)`.
+
+    Starts at `START_BATCH` and doubles (up to `embed.BATCH`) only while a batch finishes well inside what was left. A
+    failed or timed-out batch is halved and retried (down to one text) instead of giving up the run; while it can still
+    be halved a call gets at most half of what is left, so a slow batch cannot eat the whole budget. `store(chunk,
+    vecs)` saves a finished batch right away (so progress survives a later failure) and returns False to stop. Never
+    runs past `deadline`; `reason` is None when everything was embedded."""
+    done, size, ceiling = 0, min(START_BATCH, embed.BATCH), embed.BATCH
+    while done < len(todo):
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return done, "ran out of time: run `memory embed` again to continue"
+        chunk = todo[done:done + size]
+        vecs = embedder.embed([t for _, t in chunk], left / 2 if size > 1 else left)
+        if vecs is None or len(vecs) != len(chunk) or not vecs or not store(chunk, vecs):
+            if size == 1:
+                return done, "the embedding service failed or ran out of time"
+            ceiling = size = max(size // 2, 1)
+            continue
+        done += len(chunk)
+        if deadline - time.monotonic() > 3 * (left - (deadline - time.monotonic())) and size < ceiling:
+            size = min(size * 2, ceiling)
+    return done, None
+
+
 def refresh_local(ctx, db: MemoryDB | None = None, *, embedder: Embedder | None = None, rebuild: bool = False,
                   budget: float = 20.0) -> dict:
     """Embed the evidence of the local replica that has text and no vector under the current model. Never raises.
@@ -256,21 +285,18 @@ def refresh_local(ctx, db: MemoryDB | None = None, *, embedder: Embedder | None 
         have = _have(db, embedder.model, digest)
         todo = [(e, t) for e, t in evs if e.id not in have]
         out["texts"], out["digest"] = len(evs), digest
-        done = 0
         dim = 0
-        for i in range(0, len(todo), embed.BATCH):
-            left = deadline - time.monotonic()
-            if left <= 0:
-                break
-            chunk = todo[i:i + embed.BATCH]
-            vecs = embedder.embed([t for _, t in chunk], left)
-            if vecs is None:
-                out["reason"] = "the embedding service failed or ran out of time"
-                break
+
+        def store(chunk, vecs) -> bool:
+            nonlocal dim
             dim = len(vecs[0])
             pin = Pin(embedder.model, digest, dim)
             put_vectors(db, [(e.id, pin, embed.pack(v)) for (e, _), v in zip(chunk, vecs, strict=True)])
-            done += len(chunk)
+            return True
+
+        done, why = embed_progressively(embedder, todo, deadline, store)
+        if why:
+            out["reason"] = why
         out.update(embedded=done, remaining=len(todo) - done, skipped_no_text=len(db.evidence()) - len(evs))
         if dim:
             out["dim"] = dim
@@ -550,15 +576,13 @@ def _fill_missing(db: MemoryDB, emb: Embedder, pin: Pin, repo: str, deadline: fl
     with contextlib.suppress(Exception):
         have = _have(db, pin.model, pin.digest)
         todo = [(e, t) for e in db.evidence(repo=repo) if e.id not in have and (t := evidence_text(e))][:FILL_LIMIT]
-        for i in range(0, len(todo), embed.BATCH):
-            left = deadline - time.monotonic()
-            if left <= 0:
-                return
-            chunk = todo[i:i + embed.BATCH]
-            vecs = emb.embed([t for _, t in chunk], left)
-            if vecs is None or any(len(v) != pin.dim for v in vecs):
-                return
+        def store(chunk, vecs) -> bool:
+            if any(len(v) != pin.dim for v in vecs):
+                return False
             put_vectors(db, [(e.id, pin, embed.pack(v)) for (e, _), v in zip(chunk, vecs, strict=True)])
+            return True
+
+        embed_progressively(emb, todo, deadline, store)
 
 
 # ---------- pushing vectors (client side of sync) ----------
