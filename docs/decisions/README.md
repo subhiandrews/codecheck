@@ -62,3 +62,5 @@ Records dated before 2026-11-20 were reconstructed from the original design spec
 - [0041-review-pr-proposes-guidance-as-a-patch-for-a-separate-pr.md](0041-review-pr-proposes-guidance-as-a-patch-for-a-separate-pr.md): review-pr proposes guidance as a patch for a separate PR
 - [0042-report-repeatable-patterns-once-with-every-site.md](0042-report-repeatable-patterns-once-with-every-site.md): Report repeatable patterns once with every site
 - [0043-check-that-a-fix-covers-the-whole-failure.md](0043-check-that-a-fix-covers-the-whole-failure.md): Check that a fix covers the whole failure
+- [0044-sweep-broken-invariants-by-route-and-fix-them-at-one-boundary.md](0044-sweep-broken-invariants-by-route-and-fix-them-at-one-boundary.md): Sweep broken invariants by route and fix them at one boundary
+- [0045-late-review-rounds-post-suggestions-only-on-new-lines.md](0045-late-review-rounds-post-suggestions-only-on-new-lines.md): Late review rounds post suggestions only on new lines

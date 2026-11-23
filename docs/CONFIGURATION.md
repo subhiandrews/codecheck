@@ -17,6 +17,7 @@ auto_approve = false           # true: approve only when there are no Critical o
 max_files = 80                 # larger changes are split into chunks, never skipped
 max_chunk_chars = 120000
 max_inline_comments = 25       # the rest goes into the review summary
+quiet_after_round = 3          # review-pr: from this round on, suggestions only on lines changed since our last review (criticals and warnings anywhere); 0 disables
 security = false               # true: always include the security reviewer (see [ARCHITECTURE.md](ARCHITECTURE.md#security-review))
 performance = false            # true: always include the performance reviewer (see [ARCHITECTURE.md](ARCHITECTURE.md#performance-review))
 full = false                   # true: every reviewer on every review, routing skipped (see [ARCHITECTURE.md](ARCHITECTURE.md#reviewer-routing-and-full-mode))
