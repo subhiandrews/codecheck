@@ -13,5 +13,8 @@ first reported it and `fixed_in` is the commit that resolved it. It is a label f
 .venv/bin/python -m codecheck.evals.replay run cases.json --budget 10   # live: costs tokens
 ```
 
+Add `--raw-dir DIR` to keep each case's raw reviewer and aggregator output. Each result then also has a `funnel`: per label,
+`kept`, `dropped:<reason>` (a reviewer reported it and the aggregator dropped it), `lost-in-aggregation` or `not-reported`.
+
 The score's `by_round` shows how many of each round's findings one review found. The target is every round at the
 first head. The three heads hold 17, 11 and 7 labelled findings: each later head leaves out what the PR had fixed.

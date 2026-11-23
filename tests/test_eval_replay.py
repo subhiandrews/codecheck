@@ -372,3 +372,28 @@ def test_a_replay_keeps_each_finding_message_for_scoring(tmp_path, source):
     ctx, _ = reviewing_ctx(tmp_path, [FOUND])
     out = run_case(ctx, make_case(source), workdir(tmp_path))
     assert out["got"][0]["message"] == "returns 2, not 1"
+
+
+def test_funnel_says_where_each_label_was_lost():
+    raw = {"reviewers": {"skeptic": [{"file": "a.yml", "line": 5, "message": "m"}, {"file": "b.md", "line": 9}],
+                         "doc-skeptic": [{"file": "c.md", "line": 3}], "pragmatist": []},
+           "aggregator": {"findings": [{"file": "a.yml", "line": 5, "message": "m"}],
+                          "dropped": [{"reviewers": ["skeptic"], "file": "b.md", "line": 9, "reason": "low-value"}]}}
+    comments = [comment(5, path="a.yml", round=1), comment(9, path="b.md", round=2), comment(3, path="c.md", round=2),
+                comment(70, path="d.py", round=3)]
+    out = replay.funnel(raw, comments)
+    assert [r["stage"] for r in out["per_comment"]] == ["kept", "dropped:low-value", "lost-in-aggregation", "not-reported"]
+    assert out["per_comment"][2]["reported_by"] == ["doc-skeptic"]
+    assert out["stages"] == {"dropped:low-value": 1, "kept": 1, "lost-in-aggregation": 1, "not-reported": 1}
+    assert out["reviewer_findings"] == {"doc-skeptic": 1, "pragmatist": 0, "skeptic": 2}
+    assert (out["kept"], out["dropped"]) == (1, 1) and out["dropped_findings"][0]["reason"] == "low-value"
+    assert replay.funnel(None, comments) == {"error": "no raw output"}
+
+
+def test_run_case_saves_the_raw_output_and_reports_the_funnel(tmp_path, source):
+    ctx, _ = reviewing_ctx(tmp_path, [FOUND])
+    raw_dir = tmp_path / "raw"
+    out = run_case(ctx, make_case(source), workdir(tmp_path), raw_dir=raw_dir)
+    assert out["funnel"]["stages"] == {"kept": 1}
+    [saved] = raw_dir.glob("*.raw.json")
+    assert saved.name == "pr1.raw.json" and "aggregator" in json.loads(saved.read_text())

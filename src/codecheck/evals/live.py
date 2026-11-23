@@ -147,10 +147,15 @@ def review_argv(ctx, workdir: Path, *, fixed_panel: bool = True) -> list[str]:
             "--add-dir", str(workdir), "--allowedTools", *cfg.review_allowed_tools]
 
 
+def newest_raw(store: ShadowStore) -> dict | None:
+    """The raw reviewer and aggregator output of the newest hand-off, or None."""
+    return next((r for rid in reversed(store.ordered_run_ids()) if (r := store.read_raw(rid)) is not None), None)
+
+
 def _findings(store: ShadowStore, *, keep_message: bool = False) -> tuple[list[dict], list[str], str | None]:
     """The newest hand-off's aggregator findings as (got, validation errors, error). A replay keeps each message,
     because the sites a finding names count for scoring."""
-    raw = next((r for rid in reversed(store.ordered_run_ids()) if (r := store.read_raw(rid)) is not None), None)
+    raw = newest_raw(store)
     if raw is None:
         return [], [], "no hand-off output in the shadow store: the review did not reach its hand-off step"
     if "aggregator" not in raw:

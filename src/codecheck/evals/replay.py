@@ -178,11 +178,49 @@ def score(findings: list[dict], comments: list[dict], *, tolerance: int = 3, max
             "by_round": {k: by_round[k] for k in sorted(by_round)}, "per_comment": rows}
 
 
+def _near(findings: list[dict], comment: dict, tolerance: int) -> list[dict]:
+    return [f for f in findings if any(p == comment["path"] and abs(n - comment["line"]) <= tolerance
+                                       for p, n in _sites(f))]
+
+
+def funnel(raw: dict | None, comments: list[dict], *, tolerance: int = 3) -> dict:
+    """Where each labelled finding was lost: never reported by a reviewer, reported and dropped by the aggregator
+    (with its reason), or kept. Also the panel's size, so a thin review can be told from a thin panel."""
+    if raw is None:
+        return {"error": "no raw output"}
+    reviewers = {name: [f for f in found if isinstance(f, dict)] for name, found in (raw.get("reviewers") or {}).items()
+                 if isinstance(found, list)}
+    aggregator = raw.get("aggregator") if isinstance(raw.get("aggregator"), dict) else {}
+    kept = [f for f in aggregator.get("findings") or [] if isinstance(f, dict)]
+    dropped = [f for f in aggregator.get("dropped") or [] if isinstance(f, dict)]
+    rows = []
+    for c in comments:
+        if c.get("in_review") is False or not isinstance(c.get("line"), int) or not isinstance(c.get("path"), str):
+            continue
+        by = sorted(n for n, found in reviewers.items() if _near(found, c, tolerance))
+        if _near(kept, c, tolerance):
+            stage = "kept"
+        elif d := _near(dropped, c, tolerance):
+            stage = f"dropped:{d[0].get('reason')}"
+        elif by:
+            stage = "lost-in-aggregation"
+        else:
+            stage = "not-reported"
+        rows.append({"thread_id": c.get("thread_id"), "round": c.get("round"), "stage": stage, "reported_by": by})
+    stages: dict = {}
+    for r in rows:
+        stages[r["stage"]] = stages.get(r["stage"], 0) + 1
+    return {"reviewer_findings": {n: len(f) for n, f in sorted(reviewers.items())},
+            "kept": len(kept), "dropped": len(dropped), "stages": dict(sorted(stages.items())),
+            "dropped_findings": [{k: d.get(k) for k in ("reviewers", "file", "line", "reason")} for d in dropped],
+            "per_comment": rows}
+
+
 # --- running -----------------------------------------------------------------------------------------------------
 
 
 def run_case(ctx, case: dict, workdir: Path, *, fixed_panel: bool = False, dry_run: bool = False,
-             tolerance: int = 3, max_per_author: int | None = None) -> dict:
+             tolerance: int = 3, max_per_author: int | None = None, raw_dir: Path | None = None) -> dict:
     workdir = Path(workdir).resolve()
     repo = build_repo(ctx, case, workdir)
     out = {"name": case["name"], "repo": case["repo"], "head": case["head"], "base": case["base"],
@@ -192,11 +230,18 @@ def run_case(ctx, case: dict, workdir: Path, *, fixed_panel: bool = False, dry_r
     res = ctx.runner.run(live.review_argv(ctx, workdir, fixed_panel=fixed_panel), cwd=repo,
                          timeout=ctx.config.run_pr.timeout_seconds, input="")
     claude = parse_result(res.stdout, res.returncode, res.stderr)
-    got, invalid, error = live._findings(ShadowStore(workdir / "shadow"), keep_message=True)
+    store = ShadowStore(workdir / "shadow")
+    got, invalid, error = live._findings(store, keep_message=True)
+    raw = live.newest_raw(store)
+    if raw is not None and raw_dir is not None:
+        target = Path(raw_dir).expanduser()
+        target.mkdir(parents=True, exist_ok=True)
+        (target / (re.sub(r"[^\w.@-]", "_", case["name"]) + ".raw.json")).write_text(json.dumps(raw, indent=2), encoding="utf-8")
     if not claude["ok"]:
         error = f"claude run failed: {claude['summary']}"
     out |= {"got": got, "claude": {"ok": claude["ok"], "summary": claude["summary"], "cost_usd": claude["cost"]},
-            "score": score(got, case["comments"], tolerance=tolerance, max_per_author=max_per_author)}
+            "score": score(got, case["comments"], tolerance=tolerance, max_per_author=max_per_author),
+            "funnel": funnel(raw, case["comments"], tolerance=tolerance)}
     if invalid:
         out["invalid"] = invalid[:5]
     if error:
@@ -205,7 +250,8 @@ def run_case(ctx, case: dict, workdir: Path, *, fixed_panel: bool = False, dry_r
 
 
 def run_cases(ctx, cases: list[dict], *, dry_run: bool = False, limit: int | None = None, budget_usd: float | None = None,
-              only: str | None = None, fixed_panel: bool = False, tolerance: int = 3, max_per_author: int | None = None) -> dict:
+              only: str | None = None, fixed_panel: bool = False, tolerance: int = 3, max_per_author: int | None = None,
+              raw_dir: Path | None = None) -> dict:
     """One review per case, one after another, never retried. The budget is checked before each case, so the last
     case can overshoot it by one review's cost."""
     if only is not None:
@@ -226,7 +272,7 @@ def run_cases(ctx, cases: list[dict], *, dry_run: bool = False, limit: int | Non
         with tempfile.TemporaryDirectory(prefix="code-check-replay-", ignore_cleanup_errors=True) as workdir:
             try:
                 result = run_case(ctx, case, Path(workdir), fixed_panel=fixed_panel, dry_run=dry_run,
-                                  tolerance=tolerance, max_per_author=max_per_author)
+                                  tolerance=tolerance, max_per_author=max_per_author, raw_dir=raw_dir)
             except CodeCheckError as e:
                 result = {"name": case["name"], "error": str(e)}
         spent += float((result.get("claude") or {}).get("cost_usd") or 0)
@@ -338,6 +384,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--budget", type=float, default=None, metavar="USD", help="stop starting new cases past this total")
     r.add_argument("--only", default=None, metavar="NAME")
     r.add_argument("--fixed-panel", action="store_true", help="the live-eval panel (routing off) instead of the shipped one")
+    r.add_argument("--raw-dir", type=Path, default=None, help="save each case's raw reviewer and aggregator output here")
     r.add_argument("--tolerance", type=int, default=3)
     r.add_argument("--max-per-author", type=int, default=None)
     r.add_argument("--out", type=Path, default=None, help="append one JSON line per case here")
@@ -369,7 +416,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         result = run_cases(ctx, load_cases(args.cases), dry_run=args.dry_run, limit=args.limit, budget_usd=args.budget,
                            only=args.only, fixed_panel=args.fixed_panel, tolerance=args.tolerance,
-                           max_per_author=args.max_per_author)
+                           max_per_author=args.max_per_author, raw_dir=args.raw_dir)
         if args.out is not None:
             with args.out.expanduser().open("a", encoding="utf-8") as fh:
                 for c in result["cases"]:
