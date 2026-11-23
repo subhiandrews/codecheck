@@ -127,18 +127,20 @@ def _setup_repo(ctx, snippet: dict, workdir: Path) -> Path:
     return repo
 
 
-def review_argv(ctx, workdir: Path) -> list[str]:
+def review_argv(ctx, workdir: Path, *, fixed_panel: bool = True) -> list[str]:
     cfg = ctx.config.run_pr
     root = plugin_root(ctx.env)
     # Paths are absolute, so never start with '-'; tools and permission mode are validated with the config.
     isolate = [f"CODE_CHECK_STATE_DIR={workdir}/state", f"CODE_CHECK_SHADOW__STORE={workdir}/shadow",
                "CODE_CHECK_SHADOW__HANDOFF=1",
                # The throwaway repository's base is origin/main, whatever the user configured.
-               "CODE_CHECK_REMOTE=origin", "CODE_CHECK_BASE_BRANCH=main",
-               # A user's review.security, review.performance or review.full would add an extra agent to every snippet,
-               # and routing would drop the architect from these small changes: the eval measures the fixed panel.
-               "CODE_CHECK_REVIEW__SECURITY=0", "CODE_CHECK_REVIEW__PERFORMANCE=0", "CODE_CHECK_REVIEW__FULL=0",
-               "CODE_CHECK_REVIEW__ROUTING__MODE=off"]
+               "CODE_CHECK_REMOTE=origin", "CODE_CHECK_BASE_BRANCH=main"]
+    if fixed_panel:
+        # A user's review.security, review.performance or review.full would add an extra agent to every snippet,
+        # and routing would drop the architect from these small changes: the eval measures the fixed panel.
+        # A replay of a real PR passes fixed_panel=False and measures the panel as it ships.
+        isolate += ["CODE_CHECK_REVIEW__SECURITY=0", "CODE_CHECK_REVIEW__PERFORMANCE=0", "CODE_CHECK_REVIEW__FULL=0",
+                    "CODE_CHECK_REVIEW__ROUTING__MODE=off"]
     # The prompt comes first: --allowedTools and --add-dir are variadic and would swallow a later positional.
     return ["env", *UNSET_GIT_REPO_VARS, *isolate, claude_bin(ctx), "-p", REVIEW_PROMPT, "--plugin-dir", str(root),
             "--output-format", "json", "--permission-mode", cfg.permission_mode, "--permission-prompts", "none",
