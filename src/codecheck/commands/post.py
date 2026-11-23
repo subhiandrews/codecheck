@@ -16,6 +16,7 @@ from codecheck.core.render import (
     render_local,
     summary_body,
 )
+from codecheck.core.rounds import hold_back
 from codecheck.errors import CodeCheckError, ProviderError
 from codecheck.models import ReviewComment
 from codecheck.shadow.recorder import record_post
@@ -86,6 +87,7 @@ def run(args, ctx) -> dict:
     if pr.head_sha != meta["head_sha"]:
         return {"posted": False, "stale": True,
                 "reason": f"PR head moved ({meta['head_sha'][:8]} -> {pr.head_sha[:8]}); re-run the review"}
+    findings, held = hold_back(findings, meta.get("round"), cfg.review.quiet_after_round)
     decision = decide(findings, auto_approve=cfg.review.auto_approve, is_draft=pr.is_draft, incomplete=incomplete)
     already = _already_posted(ctx.provider.list_threads(ref), me)
     plan = plan_review(findings, diff_files, already=already, cap=cfg.review.max_inline_comments)
@@ -112,7 +114,7 @@ def run(args, ctx) -> dict:
             ctx.shadow, meta, reviewer_findings=_reviewer_findings(run_dir, ingest, meta), findings=findings,
             inline_ids={finding_id(f) for f, _ in inline}, decision=decision, incomplete=incomplete, dropped=dropped))
     return {"posted": True, "degraded": result.degraded, "inline": len(comments), "unlisted": len(not_inline),
-            "already_posted": repeated, "labeled": labeled,
+            "already_posted": repeated, "held_back": len(held), "labeled": labeled,
             "findings": len(findings), "decision": decision.event, "reason": decision.reason,
             "incomplete": incomplete, "failed_reviewers": failed, "base_warning": meta.get("base_warning"),
             "run_id": meta["run_id"]}

@@ -138,6 +138,11 @@ def build_repo(ctx, case: dict, workdir: Path) -> Path:
 SITE = re.compile(r"(?<![\w./-])([\w./-]+):(\d{1,9})(?!\d)")  # also files without an extension, such as docker/Dockerfile
 
 
+def _same_file(named: str, path: str) -> bool:
+    """A reviewer writes `plugin.py:41` or `execute/plugin.py:41` for `src/pkg/execute/plugin.py`: the whole path or any trailing part of it names the file."""
+    return named == path or path.endswith("/" + named.lstrip("./"))
+
+
 def _sites(finding: dict) -> list[tuple[str, int]]:
     """Where a finding points: its anchor plus every `file:line` its message names (a pattern reported once)."""
     sites = []
@@ -170,7 +175,7 @@ def score(findings: list[dict], comments: list[dict], *, tolerance: int = 3, max
     rows, used = [], set()
     for c in kept:
         hits = [i for i, ss in enumerate(sites)
-                if any(p == c["path"] and abs(n - c["line"]) <= tolerance for p, n in ss)]
+                if any(_same_file(p, c["path"]) and abs(n - c["line"]) <= tolerance for p, n in ss)]
         used.update(hits)
         at_anchor = any(isinstance(f.get("line"), int) and f.get("file") == c["path"]
                         and abs(f["line"] - c["line"]) <= tolerance for f in findings)

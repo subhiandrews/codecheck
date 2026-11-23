@@ -9,6 +9,7 @@ from codecheck.core.existing import ExistingThread
 from codecheck.models import Decision, Finding, Severity
 
 RUN_MARKER = "<!-- code-check:run:{} -->"
+RUN_PREFIX = RUN_MARKER.split("{}")[0]  # what finds any of our reviews, whatever its run id
 ATTRIBUTION = f"<sub>Reviewed with [code-check](https://github.com/subhiandrews/codecheck) v{__version__} · Apache-2.0</sub>"
 FINDING_MARKER = re.compile(r"<!-- code-check:finding:([0-9a-f]{12}) -->")
 

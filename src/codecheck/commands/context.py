@@ -10,6 +10,7 @@ from codecheck.core.guidance import CONTEXT_FILE, from_base, from_worktree
 from codecheck.core.panel import detect_language, filter_ignored, select_panel
 from codecheck.core.precheck import cap_replies, review_activity
 from codecheck.core.render import render_existing
+from codecheck.core.rounds import changed_lines, count_reviews, last_review_commit
 from codecheck.core.routing import route
 from codecheck.core.state import ensure_private_dir, local_fingerprint
 from codecheck.errors import CodeCheckError
@@ -43,11 +44,26 @@ def run(args, ctx) -> dict:
         raise
 
 
+def _round(ctx, reviews, me, local_ref) -> dict:
+    """Which review of this PR this is, and the lines changed since our last one (None, with a note, when they cannot be told)."""
+    number = count_reviews(reviews, me) + 1
+    last = last_review_commit(reviews, me)
+    changed = None
+    note = None
+    if number > 1 and last:
+        try:
+            changed = changed_lines(ctx.git.diff(f"{last}..{local_ref}"))
+        except CodeCheckError:  # a force-pushed-away commit just means no filtering
+            note = "the last reviewed commit is not available, so no suggestions are held back"
+    return {"number": number, "since": last[:12] or None, "changed": changed, "note": note}
+
+
 def _build(args, ctx, run_id, run_dir) -> dict:
     cfg = ctx.config
     if args.with_replies and args.mode != "pr":
         raise CodeCheckError("--with-replies requires --mode pr")
     replies = None
+    round_info = None
     existing_comments = None
     existing_comments_error = None
     handoff = cfg.shadow.handoff
@@ -79,7 +95,9 @@ def _build(args, ctx, run_id, run_dir) -> dict:
                 raise _Blind
             threads = ctx.provider.list_threads(ref, reactions=False)
             me = ctx.provider.whoami()
-            act = review_activity(ctx.provider.list_reviews(ref), threads, me)
+            reviews = ctx.provider.list_reviews(ref)
+            act = review_activity(reviews, threads, me)
+            round_info = _round(ctx, reviews, me, local_ref)
             existing = collect_existing(threads, act, me=me)
             if existing:
                 (run_dir / "existing-comments.md").write_text(render_existing(existing), encoding="utf-8")
@@ -117,6 +135,7 @@ def _build(args, ctx, run_id, run_dir) -> dict:
     meta["project_context"] = project.to_meta() if project else None
     meta["run_files"] = [n for n in ("CODE_CHECK.md", CONTEXT_FILE, "existing-comments.md") if (run_dir / n).is_file()]
     meta["replies"] = replies
+    meta["round"] = round_info
     meta["existing_comments"] = existing_comments
     meta["existing_comments_error"] = existing_comments_error
     if handoff:

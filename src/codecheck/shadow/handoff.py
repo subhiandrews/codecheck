@@ -18,6 +18,7 @@ skill restarts from `precheck` with a new run id, so one run cannot see them).
 import re
 from collections.abc import Sequence
 
+from codecheck.core.render import RUN_PREFIX
 from codecheck.models import IssueComment, Review
 
 SCHEMA = 1
@@ -45,7 +46,7 @@ def build_general_comments(reviews: Sequence[Review], issue_comments: Sequence[I
 
 
 def _skip_body(body: str) -> bool:
-    return not (body or "").strip() or "<!-- code-check:run:" in body
+    return not (body or "").strip() or RUN_PREFIX in body
 
 
 def build_comparison(records: Sequence[dict], findings: Sequence[dict], general_comments: Sequence[dict] = (),

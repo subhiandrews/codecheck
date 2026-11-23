@@ -2,6 +2,16 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.4.4]
+
+### Changed
+- When one rule is broken in several unlike places (a secret reaching output through a URL, a message and a header), reviewers report it once with every route, and `address-comments` fixes it at one boundary with a test through each route.
+- From the third review of a PR, `review-pr` posts new Suggestions only on lines changed since its last review; Critical and Warning findings are still posted anywhere. Set `review.quiet_after_round = 0` to turn this off.
+- `address-comments` declines suggestions whose fix adds its own logic or state unless the change is one line, so a fix gives the next review less to find.
+
+### Fixed
+- PR replay scoring credits a route a finding names by a short path, such as `plugin.py:41`.
+
 ## [1.4.3]
 
 ### Changed

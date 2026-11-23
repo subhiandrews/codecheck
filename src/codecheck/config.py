@@ -36,6 +36,7 @@ class ReviewConfig:
     max_files: int = 80
     max_chunk_chars: int = 120_000
     max_inline_comments: int = 25
+    quiet_after_round: int = 3  # from this review round on, a PR gets suggestions only on lines changed since our last review; 0 disables
     ignore: tuple[str, ...] = ("**/*.lock", "dist/**")
 
 
@@ -346,6 +347,8 @@ def validate(cfg: Config) -> Config:
     for key in ("small_max_lines", "small_max_files", "performance_min_score"):
         if getattr(routing, key) < 0:
             raise ConfigError(f"config key review.routing.{key} must not be negative")
+    if cfg.review.quiet_after_round < 0:
+        raise ConfigError("config key review.quiet_after_round must not be negative")
     label = cfg.review.label
     if label and (label.startswith("-") or not LABEL_NAME.fullmatch(label)):
         raise ConfigError(f"config key review.label is not a valid label name: {label!r}")
