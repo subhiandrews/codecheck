@@ -61,3 +61,4 @@ Records dated before 2026-11-20 were reconstructed from the original design spec
 - [0040-loops-discover-clones-under-the-working-directory.md](0040-loops-discover-clones-under-the-working-directory.md): Loops discover clones under the working directory
 - [0041-review-pr-proposes-guidance-as-a-patch-for-a-separate-pr.md](0041-review-pr-proposes-guidance-as-a-patch-for-a-separate-pr.md): review-pr proposes guidance as a patch for a separate PR
 - [0042-report-repeatable-patterns-once-with-every-site.md](0042-report-repeatable-patterns-once-with-every-site.md): Report repeatable patterns once with every site
+- [0043-check-that-a-fix-covers-the-whole-failure.md](0043-check-that-a-fix-covers-the-whole-failure.md): Check that a fix covers the whole failure
