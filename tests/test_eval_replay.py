@@ -641,3 +641,22 @@ def test_anchor_recall_ignores_sites_a_message_merely_names():
 def test_score_does_not_raise_on_rounds_of_mixed_types():
     comments = [{**comment(3), "round": 1}, {**comment(9), "round": "2a"}]
     assert sorted(score([], comments)["by_round"], key=str) == [1, "2a"]
+
+
+def test_a_message_with_a_huge_number_after_a_colon_does_not_raise_in_score():
+    finding = {"file": "a.py", "line": 3, "message": "see a.py:" + "9" * 5000}
+    assert score([finding], [comment(3, path="a.py")])["matched"] == 1
+
+
+@pytest.mark.parametrize("where", ["base", "head", "introduced_in", "fixed_in"])
+def test_from_git_refuses_a_commit_that_would_read_as_an_option(tmp_path, where):
+    label = {"id": "a", "round": 1, "path": "f", "needle": "n"}
+    base, heads = "a" * 40, ["b" * 40]
+    if where == "base":
+        base = "--output=x"
+    elif where == "head":
+        heads = ["-x"]
+    else:
+        label[where] = "-y"
+    with pytest.raises(CodeCheckError, match="does not start with"):
+        replay.cases_from_git(_ctx(tmp_path, LiveRunner(FakeRunner())), tmp_path, "o/r", base, [label], heads)

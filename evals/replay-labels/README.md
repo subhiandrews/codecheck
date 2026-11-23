@@ -13,7 +13,6 @@ first reported it and `fixed_in` is the commit that resolved it. `hermetic-pr6.j
 .venv/bin/python -m codecheck.evals.replay run cases.json --budget 10   # live: costs tokens
 ```
 
-Add `--raw-dir DIR` to keep each case's raw reviewer and aggregator output. Each result then also has a `funnel`: per label,
-`kept`, `dropped:<reason>` (a reviewer reported it and the aggregator dropped it), `lost-in-aggregation` or `not-reported`.
+`--raw-dir` and the `funnel` it adds are described in `docs/MAINTAINING.md`.
 
 The target is every round at the first head (`by_round` in the score). The three heads hold 17, 11 and 7 labelled findings: each later head leaves out what the PR had fixed.

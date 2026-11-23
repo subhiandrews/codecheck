@@ -65,7 +65,7 @@ The repository ships **5 snippets**: `clean-code` (which should produce nothing)
 
 ### PR replay: does one review find what later rounds found
 
-Maintainer tooling, not a CLI command, and it costs tokens. `python -m codecheck.evals.replay` rebuilds a saved PR as a throwaway repository, runs one review and scores the findings against the comments people (or earlier reviews) made. `from-git` builds a case per head from a clone and a label file (`evals/replay-labels/`): each label names the review round that first reported it, a line of text that locates it, and the commit that fixed it. The hermetic PR 2 labels are the first set: all 17 findings were detectable at the first head. How it is scored is described in the "PR replay" section of `docs/MAINTAINING.md`. No gate runs it.
+`python -m codecheck.evals.replay` rebuilds a saved PR, runs one review and scores it against the findings and comments later rounds made; no gate runs it. The commands, scoring and label files are described in the "PR replay" section of `docs/MAINTAINING.md`.
 
 ### Calibrate: measuring the measuring stick
 

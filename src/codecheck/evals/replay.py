@@ -4,7 +4,8 @@ A case is a saved PR: a local clone, the head commit that was reviewed, its base
 review saw. The replay rebuilds a throwaway repository whose `origin/main` is the base and whose `HEAD` is the head,
 checks that `git diff base...head` is exactly the saved diff, then runs one headless review the way `eval --live`
 does, in isolated state. Findings are scored against the human comments recorded for that PR with a plain rule
-(same file, line within a tolerance). Nothing is posted and the user's own clones, state and shadow store are never
+(same file, line within a tolerance, at the line a finding is anchored to or at a `file:line` its message names;
+`anchor_recall` counts the anchor only). Nothing is posted and the user's own clones, state and shadow store are never
 touched. Use `--dry-run` to rebuild and check every case without calling a model.
 
     python -m codecheck.evals.replay manifest|from-git|run --help
@@ -134,7 +135,7 @@ def build_repo(ctx, case: dict, workdir: Path) -> Path:
 # --- scoring -----------------------------------------------------------------------------------------------------
 
 
-SITE = re.compile(r"([\w./-]+):(\d+)")  # also files without an extension, such as docker/Dockerfile
+SITE = re.compile(r"([\w./-]+):(\d{1,9})(?!\d)")  # also files without an extension, such as docker/Dockerfile
 
 
 def _sites(finding: dict) -> list[tuple[str, int]]:
@@ -422,6 +423,9 @@ def cases_from_git(ctx, clone: Path, repo: str, base: str, labels: list[dict], h
     case the panel is not expected to find)}. A label with `introduced_in` has kind `fix`. Any other head must still hold the needle, or the case is refused. The diff is taken from git, so
     the case always passes the rebuild check."""
     validate_labels(labels)
+    for ref in (base, *heads, *(label.get(k) for label in labels for k in ("introduced_in", "fixed_in"))):
+        if ref is not None and (not isinstance(ref, str) or not ref or ref.startswith("-")):
+            raise CodeCheckError(f"commit {ref!r} must be a non-empty string that does not start with '-'")
     clone = Path(clone).expanduser().resolve()
     if not _ok(ctx, clone, "cat-file", "-e", f"{base}^{{commit}}"):
         raise CodeCheckError(f"base {base!r} is not in {clone}")
