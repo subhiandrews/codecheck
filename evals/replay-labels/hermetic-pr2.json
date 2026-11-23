@@ -1,0 +1,120 @@
+[
+  {
+    "id": "tag-without-ci",
+    "round": 1,
+    "path": ".github/workflows/release.yml",
+    "needle": "tags: [\"v*\"]",
+    "fixed_in": "ba076e5"
+  },
+  {
+    "id": "tag-version-mismatch",
+    "round": 1,
+    "path": ".github/workflows/release.yml",
+    "needle": "- run: uv build",
+    "fixed_in": "ba076e5"
+  },
+  {
+    "id": "docker-sock-group",
+    "round": 1,
+    "path": "docker/docker-compose.yml",
+    "needle": "/var/run/docker.sock:/var/run/docker.sock",
+    "fixed_in": "98d16d2"
+  },
+  {
+    "id": "latest-on-prerelease",
+    "round": 1,
+    "path": ".github/workflows/release.yml",
+    "needle": "type=raw,value=latest",
+    "fixed_in": "ba076e5"
+  },
+  {
+    "id": "release-actions-mutable",
+    "round": 1,
+    "path": ".github/workflows/release.yml",
+    "needle": "pypa/gh-action-pypi-publish@release/v1",
+    "fixed_in": "ba076e5"
+  },
+  {
+    "id": "claude-md-ci-claim",
+    "round": 1,
+    "path": "CLAUDE.md",
+    "needle": "CI (`.github/workflows/ci.yml`) runs exactly",
+    "fixed_in": "fed3f54"
+  },
+  {
+    "id": "ci-actions-mutable",
+    "round": 2,
+    "path": ".github/workflows/ci.yml",
+    "needle": "uses: actions/checkout",
+    "fixed_in": "3cae94f"
+  },
+  {
+    "id": "pypi-job-contents",
+    "round": 2,
+    "path": ".github/workflows/release.yml",
+    "needle": "id-token: write",
+    "fixed_in": "3cae94f"
+  },
+  {
+    "id": "claude-md-restates-architecture",
+    "round": 2,
+    "path": "CLAUDE.md",
+    "needle": "Run history is flat files behind",
+    "fixed_in": "2f1d453"
+  },
+  {
+    "id": "dockerfile-images-mutable",
+    "round": 2,
+    "path": "docker/Dockerfile",
+    "needle": "FROM python:3.12-slim",
+    "fixed_in": "3cae94f"
+  },
+  {
+    "id": "build-in-id-token-job",
+    "round": 3,
+    "path": ".github/workflows/release.yml",
+    "needle": "- run: uv build",
+    "fixed_in": "0bad61a"
+  },
+  {
+    "id": "architecture-restates-workflows",
+    "round": 3,
+    "path": "docs/architecture.md",
+    "needle": "## Distribution",
+    "fixed_in": "c538fb5"
+  },
+  {
+    "id": "redundant-main-guard",
+    "round": 3,
+    "path": "src/hermetic/cli.py",
+    "needle": "if __name__ == \"__main__\"",
+    "fixed_in": "3e54ac8"
+  },
+  {
+    "id": "image-deps-unpinned",
+    "round": 4,
+    "path": "docker/Dockerfile",
+    "needle": "pip install --no-cache-dir",
+    "fixed_in": "db40f21"
+  },
+  {
+    "id": "architecture-milestone-status",
+    "round": 4,
+    "path": "docs/architecture.md",
+    "needle": "Milestone status:",
+    "fixed_in": "be5dbc4"
+  },
+  {
+    "id": "live-marker-not-deselected",
+    "round": 4,
+    "path": "pyproject.toml",
+    "needle": "addopts =",
+    "fixed_in": "ca1fd62"
+  },
+  {
+    "id": "contributing-repeats-commands",
+    "round": 5,
+    "path": "CONTRIBUTING.md",
+    "needle": "uv run ruff check"
+  }
+]

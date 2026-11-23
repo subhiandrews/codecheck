@@ -8,6 +8,7 @@ does, in isolated state. Findings are scored against the human comments recorded
 touched. Use `--dry-run` to rebuild and check every case without calling a model.
 
     python -m codecheck.evals.replay manifest --shadow DIR --clone OWNER/REPO=PATH RUN_ID... > cases.json
+    python -m codecheck.evals.replay from-git --clone PATH --repo OWNER/REPO --base SHA --labels FILE HEAD... > cases.json
     python -m codecheck.evals.replay run cases.json [--dry-run] [--limit N] [--budget USD] [--out results.jsonl]
 """
 
@@ -125,11 +126,25 @@ def build_repo(ctx, case: dict, workdir: Path) -> Path:
 # --- scoring -----------------------------------------------------------------------------------------------------
 
 
+SITE = re.compile(r"([\w./-]+):(\d+)")  # also files without an extension, such as docker/Dockerfile
+
+
+def _sites(finding: dict) -> list[tuple[str, int]]:
+    """Where a finding points: its anchor plus every `file:line` its message names (a pattern reported once)."""
+    sites = []
+    if isinstance(finding.get("file"), str) and isinstance(finding.get("line"), int):
+        sites.append((finding["file"], finding["line"]))
+    sites += [(m[0], int(m[1])) for m in SITE.findall(str(finding.get("message") or ""))]
+    return sites
+
+
 def score(findings: list[dict], comments: list[dict], *, tolerance: int = 3, max_per_author: int | None = None) -> dict:
-    """Which human comments a finding landed on: same file, lines within `tolerance`.
+    """Which human comments a finding landed on: same file, lines within `tolerance`, at the finding's anchor or at
+    a `file:line` its message names.
 
     Comments outside the reviewed files (`in_review` false) and comments without a line are left out of the
-    denominator. `max_per_author` keeps only each author's first comments so one reviewer cannot dominate."""
+    denominator. `max_per_author` keeps only each author's first comments so one reviewer cannot dominate. A
+    comment with a `round` (the review round that first reported it) also counts in `by_round`."""
     kept, per_author = [], {}
     for c in comments:
         if c.get("in_review") is False or not isinstance(c.get("line"), int) or not isinstance(c.get("path"), str):
@@ -139,18 +154,28 @@ def score(findings: list[dict], comments: list[dict], *, tolerance: int = 3, max
         if max_per_author is not None and per_author[author] > max_per_author:
             continue
         kept.append(c)
+    sites = [_sites(f) for f in findings]
     rows, used = [], set()
     for c in kept:
-        hit = next((i for i, f in enumerate(findings)
-                    if f.get("file") == c["path"] and abs(int(f.get("line", -10**9)) - c["line"]) <= tolerance), None)
+        hit = next((i for i, ss in enumerate(sites)
+                    if any(p == c["path"] and abs(n - c["line"]) <= tolerance for p, n in ss)), None)
         if hit is not None:
             used.add(hit)
-        rows.append({"thread_id": c.get("thread_id"), "path": c["path"], "line": c["line"], "author": c.get("author"),
-                     "matched": hit is not None})
+        row = {"thread_id": c.get("thread_id"), "path": c["path"], "line": c["line"], "author": c.get("author"),
+               "matched": hit is not None}
+        if c.get("round") is not None:
+            row["round"] = c["round"]
+        rows.append(row)
     matched = sum(r["matched"] for r in rows)
+    by_round: dict = {}
+    for r in rows:
+        if "round" in r:
+            entry = by_round.setdefault(r["round"], {"comments": 0, "matched": 0})
+            entry["comments"] += 1
+            entry["matched"] += r["matched"]
     return {"comments": len(rows), "matched": matched, "recall": (matched / len(rows)) if rows else None,
             "findings": len(findings), "findings_on_a_comment": len(used), "findings_elsewhere": len(findings) - len(used),
-            "per_comment": rows}
+            "by_round": {k: by_round[k] for k in sorted(by_round)}, "per_comment": rows}
 
 
 # --- running -----------------------------------------------------------------------------------------------------
@@ -243,6 +268,45 @@ def case_from_handoff(ctx, shadow_dir: Path, run_id: str, clone: Path, *, owner:
             "diff": diff, "comments": human_comments(handoff, owner=owner), "recorded_tool_version": handoff.get("tool_version")}
 
 
+# --- building cases from a clone and a label file ------------------------------------------------------------------
+
+
+def cases_from_git(ctx, clone: Path, repo: str, base: str, labels: list[dict], heads: list[str], *,
+                   name: str = "case") -> list[dict]:
+    """One case per head of a PR that was reviewed more than once.
+
+    `labels` are the findings the reviews made over time, found again by text so each head gets its own line
+    numbers: {"id", "round" (when it was first reported), "path", "needle" (a line of the file that holds the
+    problem), "occurrence" (default 1), "fixed_in" (optional commit: heads that contain it no longer have the
+    problem)}. Any other head must still hold the needle, or the case is refused. The diff is taken from git, so
+    the case always passes the rebuild check."""
+    clone = Path(clone).expanduser()
+    if not _ok(ctx, clone, "cat-file", "-e", f"{base}^{{commit}}"):
+        raise CodeCheckError(f"base {base!r} is not in {clone}")
+    cases = []
+    for head in heads:
+        full = _out(ctx, clone, "rev-parse", "--verify", f"{head}^{{commit}}").strip()
+        diff = _out(ctx, clone, "diff", "--no-color", "--no-ext-diff", f"{base}...{full}")
+        comments = []
+        for label in labels:
+            fixed = label.get("fixed_in")
+            if fixed:
+                fixed_full = _out(ctx, clone, "rev-parse", "--verify", f"{fixed}^{{commit}}").strip()
+                if _ok(ctx, clone, "merge-base", "--is-ancestor", fixed_full, full):
+                    continue
+            res = ctx.runner.run([*live._GIT, "show", f"{full}:{label['path']}"], cwd=clone)
+            lines = res.stdout.splitlines() if res.returncode == 0 else []
+            hits = [i for i, text in enumerate(lines, 1) if label["needle"] in text]
+            want = int(label.get("occurrence", 1))
+            if len(hits) < want:
+                raise CodeCheckError(f"label {label['id']}: occurrence {want} of {label['needle']!r} not in {label['path']} at {head}")
+            comments.append({"thread_id": label["id"], "path": label["path"], "line": hits[want - 1], "author": "labelled",
+                             "in_review": True, "round": label.get("round")})
+        cases.append({"name": f"{name}@{full[:7]}", "repo": repo, "clone": str(clone.resolve()), "head": full, "base": base,
+                      "diff": diff, "comments": comments})
+    return cases
+
+
 # --- command line ------------------------------------------------------------------------------------------------
 
 
@@ -260,6 +324,13 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--clone", action="append", default=[], metavar="OWNER/REPO=PATH", help="local clone of a repository")
     m.add_argument("--owner", default=None, help="your own login: its comments are left out")
     m.add_argument("runs", nargs="+", metavar="RUN_ID")
+    g = sub.add_parser("from-git", help="build one case per head from a clone and a label file (no model; prints JSON)")
+    g.add_argument("--clone", type=Path, required=True)
+    g.add_argument("--repo", required=True, metavar="OWNER/REPO")
+    g.add_argument("--base", required=True, help="the commit the PR branched from")
+    g.add_argument("--labels", type=Path, required=True, help="JSON list of labelled findings")
+    g.add_argument("--name", default="case")
+    g.add_argument("heads", nargs="+", metavar="HEAD")
     r = sub.add_parser("run", help="rebuild each case and review it (costs tokens unless --dry-run)")
     r.add_argument("cases", type=Path)
     r.add_argument("--dry-run", action="store_true", help="rebuild and check every case; no model")
@@ -273,6 +344,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         ctx = _context()
+        if args.command == "from-git":
+            labels = json.loads(args.labels.expanduser().read_text(encoding="utf-8"))
+            cases = cases_from_git(ctx, args.clone, args.repo, args.base, labels, args.heads, name=args.name)
+            json.dump(cases, sys.stdout, indent=2)
+            print()
+            return 0
         if args.command == "manifest":
             clones = {}
             for spec in args.clone:

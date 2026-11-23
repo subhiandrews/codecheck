@@ -282,3 +282,87 @@ def test_the_command_line_runs_a_dry_run_and_reports_errors_as_json(tmp_path, so
     assert json.loads(out_file.read_text().splitlines()[0])["name"] == "pr1"
     assert replay.main(["run", str(tmp_path / "missing.json")]) == 1
     assert "error" in json.loads(capsys.readouterr().out)
+
+
+# --- a PR reviewed several times ---------------------------------------------------------------------------------
+
+
+def test_score_credits_every_site_a_finding_names_and_groups_recall_by_round():
+    findings = [{"file": "release.yml", "line": 10, "message": "Unpinned: also ci.yml:20 and docker/Dockerfile:1."}]
+    comments = [comment(10, path="release.yml", round=1), comment(21, path="ci.yml", round=2),
+                comment(1, path="docker/Dockerfile", round=2), comment(40, path="ci.yml", round=3)]
+    out = score(findings, comments)
+    assert [r["matched"] for r in out["per_comment"]] == [True, True, True, False]
+    assert out["by_round"] == {1: {"comments": 1, "matched": 1}, 2: {"comments": 2, "matched": 2},
+                               3: {"comments": 1, "matched": 0}}
+    assert out["findings_on_a_comment"] == 1  # one finding covered three comments
+
+
+def test_score_without_rounds_has_no_by_round_entries():
+    assert score([{"file": "a.py", "line": 1}], [comment(1, path="a.py")])["by_round"] == {}
+
+
+@pytest.fixture
+def reviewed_twice(tmp_path, git_env):
+    """A PR whose first head has two problems; the second head fixes one and moves the other down."""
+    src = tmp_path / "multi"
+    src.mkdir()
+    git(src, "init", "-q", "-b", "main")
+    (src / "a.txt").write_text("keep\n")
+    git(src, "add", "-A")
+    git(src, "commit", "-qm", "base")
+    base = git(src, "rev-parse", "HEAD").strip()
+    git(src, "checkout", "-qb", "feature")
+    (src / "ci.yml").write_text("uses: x@v1\nuses: y@v1\n")
+    (src / "docs.md").write_text("intro\nrepeats the commands\n")
+    git(src, "add", "-A")
+    git(src, "commit", "-qm", "first")
+    first = git(src, "rev-parse", "HEAD").strip()
+    (src / "ci.yml").write_text("uses: x@sha\nuses: y@sha\n")
+    git(src, "commit", "-qam", "pin")
+    fix = git(src, "rev-parse", "HEAD").strip()
+    (src / "docs.md").write_text("new line\nintro\nrepeats the commands\n")
+    git(src, "commit", "-qam", "docs")
+    second = git(src, "rev-parse", "HEAD").strip()
+    labels = [
+        {"id": "pins", "round": 1, "path": "ci.yml", "needle": "uses: y", "fixed_in": fix[:7]},
+        {"id": "dup", "round": 2, "path": "docs.md", "needle": "repeats the commands"},
+    ]
+    return {"path": src, "base": base, "first": first, "second": second, "labels": labels}
+
+
+def test_cases_from_git_map_each_label_to_its_line_at_each_head(tmp_path, reviewed_twice):
+    r = reviewed_twice
+    ctx = _ctx(tmp_path, LiveRunner(FakeRunner()))
+    first, second = replay.cases_from_git(ctx, r["path"], "o/r", r["base"], r["labels"], [r["first"], r["second"]], name="multi")
+    assert first["name"] == f"multi@{r['first'][:7]}" and first["head"] == r["first"]
+    assert [(c["thread_id"], c["line"], c["round"]) for c in first["comments"]] == [("pins", 2, 1), ("dup", 2, 2)]
+    assert [(c["thread_id"], c["line"]) for c in second["comments"]] == [("dup", 3)]  # fixed label gone, line moved
+    validate_case(first)
+
+
+def test_cases_from_git_refuse_a_label_the_head_no_longer_holds(tmp_path, reviewed_twice):
+    r = reviewed_twice
+    gone = [{"id": "x", "round": 1, "path": "docs.md", "needle": "never there"}]
+    with pytest.raises(CodeCheckError, match="never there"):
+        replay.cases_from_git(_ctx(tmp_path, LiveRunner(FakeRunner())), r["path"], "o/r", r["base"], gone, [r["first"]])
+    twice = [{"id": "y", "round": 1, "path": "ci.yml", "needle": "uses:", "occurrence": 3}]
+    with pytest.raises(CodeCheckError, match="occurrence 3"):
+        replay.cases_from_git(_ctx(tmp_path, LiveRunner(FakeRunner())), r["path"], "o/r", r["base"], twice, [r["first"]])
+    assert replay.cases_from_git(_ctx(tmp_path, LiveRunner(FakeRunner())), r["path"], "o/r", r["base"],
+                                 [{**twice[0], "occurrence": 2}], [r["first"]])[0]["comments"][0]["line"] == 2
+
+
+def test_from_git_cases_pass_the_rebuild_check(tmp_path, reviewed_twice):
+    r = reviewed_twice
+    ctx = _ctx(tmp_path, LiveRunner(FakeRunner()))
+    cases = replay.cases_from_git(ctx, r["path"], "o/r", r["base"], r["labels"], [r["first"], r["second"]])
+    for case in cases:
+        assert run_case(ctx, case, workdir(tmp_path, case["head"][:7]), dry_run=True)["built"] is True
+
+
+def test_the_hermetic_pr_labels_are_well_formed():
+    labels = json.loads((Path(__file__).parent.parent / "evals/replay-labels/hermetic-pr2.json").read_text())
+    assert len({x["id"] for x in labels}) == len(labels) == 17
+    assert {x["round"] for x in labels} == {1, 2, 3, 4, 5}
+    assert all({"id", "round", "path", "needle"} <= set(x) and x["needle"] for x in labels)
