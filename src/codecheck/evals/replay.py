@@ -23,11 +23,13 @@ from codecheck import __version__
 from codecheck.commands.run_pr import parse_result
 from codecheck.errors import CodeCheckError
 from codecheck.evals import live
+from codecheck.models import is_service_login
 from codecheck.shadow.store import ShadowStore
 
 SHA = re.compile(r"[0-9a-f]{40}")
-# Authors whose comments are not human review: matched as lowercase substrings of the login.
-BOT_HINTS = ("[bot]", "bot", "copilot", "coderabbit", "codecov", "github-actions", "dependabot", "duo")
+# Review bots whose login has no `[bot]` suffix, compared whole and in lowercase; `is_service_login` covers the rest.
+KNOWN_BOTS = frozenset({"copilot", "copilot-pull-request-reviewer", "coderabbitai", "codecov-commenter", "codecov",
+                        "github-actions", "dependabot"})
 BASE_REFS = ("origin/main", "origin/master", "main", "master")
 REQUIRED = ("name", "repo", "clone", "head", "base", "diff", "comments")
 
@@ -180,9 +182,11 @@ def run_case(ctx, case: dict, workdir: Path, *, fixed_panel: bool = False, dry_r
 
 
 def run_cases(ctx, cases: list[dict], *, dry_run: bool = False, limit: int | None = None, budget_usd: float | None = None,
-              only: str | None = None, fixed_panel: bool = False, tolerance: int = 3, max_per_author: int | None = None) -> dict:
+              only: str | None = None, fixed_panel: bool = False, tolerance: int = 3, max_per_author: int | None = None,
+              on_result=None) -> dict:
     """One review per case, one after another, never retried. The budget is checked before each case, so the last
-    case can overshoot it by one review's cost."""
+    case can overshoot it by one review's cost. `on_result` is called with each result as soon as it exists, so a
+    caller can save a paid review before a later case fails."""
     if only is not None:
         cases = [c for c in cases if c["name"] == only]
         if not cases:
@@ -206,6 +210,8 @@ def run_cases(ctx, cases: list[dict], *, dry_run: bool = False, limit: int | Non
                 result = {"name": case["name"], "error": str(e)}
         spent += float((result.get("claude") or {}).get("cost_usd") or 0)
         results.append(result)
+        if on_result is not None:
+            on_result(result)
     return {"cases": results, "cost_usd": round(spent, 4), "skipped_for_budget": skipped, "dry_run": dry_run,
             "tool_version": __version__}
 
@@ -213,17 +219,27 @@ def run_cases(ctx, cases: list[dict], *, dry_run: bool = False, limit: int | Non
 # --- building a manifest from hand-offs --------------------------------------------------------------------------
 
 
-def human_comments(handoff: dict, *, owner: str | None = None, bots: tuple[str, ...] = BOT_HINTS) -> list[dict]:
+def is_bot(author: str, bots: frozenset[str] = KNOWN_BOTS) -> bool:
+    """A `name[bot]` login, GitLab Duo, or a login in `bots`, compared whole: never a substring of a person's name."""
+    return is_service_login(author) or author.lower() in bots
+
+
+def human_comments(handoff: dict, *, owner: str | None = None, bots: frozenset[str] = KNOWN_BOTS) -> list[dict]:
+    comparison = handoff.get("comparison")
+    entries = comparison.get("human_comments") if isinstance(comparison, dict) else None
     keep = []
-    for e in (handoff.get("comparison") or {}).get("human_comments") or []:
-        author = (e.get("author") or "").lower()
-        if any(b in author for b in bots) or (owner and author == owner.lower()):
+    for e in entries if isinstance(entries, list) else []:
+        if not isinstance(e, dict):
+            continue
+        author = e.get("author") if isinstance(e.get("author"), str) else ""
+        if is_bot(author, bots) or (owner and author.lower() == owner.lower()):
             continue
         keep.append({k: e.get(k) for k in ("thread_id", "path", "line", "author", "in_review")})
     return keep
 
 
-def case_from_handoff(ctx, shadow_dir: Path, run_id: str, clone: Path, *, owner: str | None = None) -> dict:
+def read_handoff(shadow_dir: Path, run_id: str) -> tuple[dict, str]:
+    """The hand-off object and saved diff of a run, or a CodeCheckError for anything unreadable or mistyped."""
     if not re.fullmatch(r"[0-9a-f]{12}", run_id):
         raise CodeCheckError(f"run id {run_id!r} is not a 12-character hex id")
     shadow = Path(shadow_dir).expanduser()
@@ -232,14 +248,30 @@ def case_from_handoff(ctx, shadow_dir: Path, run_id: str, clone: Path, *, owner:
         diff = (shadow / f"{run_id}.diff").read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
         raise CodeCheckError(f"run {run_id}: no readable hand-off or diff in {shadow}: {e}") from e
+    if not isinstance(handoff, dict):
+        raise CodeCheckError(f"run {run_id}: the hand-off is not a JSON object")
+    return handoff, diff
+
+
+def case_from_handoff(ctx, shadow_dir: Path, run_id: str, clone: Path | dict[str, Path], *,
+                      owner: str | None = None) -> dict:
+    """`clone` is one clone, or a mapping of OWNER/REPO to clone for the run's repository."""
+    handoff, diff = read_handoff(shadow_dir, run_id)
     head = handoff.get("head_sha")
     if not isinstance(head, str) or not SHA.fullmatch(head):
         raise CodeCheckError(f"run {run_id}: hand-off has no head commit")
-    clone = Path(clone).expanduser()
+    repo = handoff.get("repo")
+    if not isinstance(repo, str) or not repo:
+        raise CodeCheckError(f"run {run_id}: hand-off has no repository")
+    if isinstance(clone, dict):
+        if repo not in clone:
+            raise CodeCheckError(f"run {run_id}: no --clone for {repo}")
+        clone = clone[repo]
+    clone = Path(clone).expanduser().resolve()  # a case needs an absolute path, whatever the caller typed
     base = resolve_base(ctx, clone, head, diff)
     pr = str(handoff.get("pr"))
-    name = f"{pr if '#' in pr else handoff.get('repo') + '#' + pr}@{run_id}"  # `pr` is OWNER/REPO#N in newer hand-offs
-    return {"name": name, "repo": handoff.get("repo"), "clone": str(clone), "head": head, "base": base,
+    name = f"{pr if '#' in pr else repo + '#' + pr}@{run_id}"  # `pr` is OWNER/REPO#N in newer hand-offs
+    return {"name": name, "repo": repo, "clone": str(clone), "head": head, "base": base,
             "diff": diff, "comments": human_comments(handoff, owner=owner), "recorded_tool_version": handoff.get("tool_version")}
 
 
@@ -279,24 +311,19 @@ def main(argv: list[str] | None = None) -> int:
                 repo, sep, path = spec.partition("=")
                 if not sep:
                     raise CodeCheckError(f"--clone {spec!r}: expected OWNER/REPO=PATH")
-                clones[repo] = Path(path)
-            cases = []
-            for run_id in args.runs:
-                handoff = json.loads((args.shadow.expanduser() / f"{run_id}.handoff" / "handoff.json").read_text(encoding="utf-8"))
-                clone = clones.get(handoff.get("repo"))
-                if clone is None:
-                    raise CodeCheckError(f"run {run_id}: no --clone for {handoff.get('repo')}")
-                cases.append(case_from_handoff(ctx, args.shadow, run_id, clone, owner=args.owner))
+                clones[repo] = Path(path).expanduser().resolve()
+            cases = [case_from_handoff(ctx, args.shadow, run_id, clones, owner=args.owner) for run_id in args.runs]
             json.dump(cases, sys.stdout, indent=2)
             print()
             return 0
+        def save(result: dict) -> None:
+            if args.out is not None:
+                with args.out.expanduser().open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(result) + "\n")
+
         result = run_cases(ctx, load_cases(args.cases), dry_run=args.dry_run, limit=args.limit, budget_usd=args.budget,
                            only=args.only, fixed_panel=args.fixed_panel, tolerance=args.tolerance,
-                           max_per_author=args.max_per_author)
-        if args.out is not None:
-            with args.out.expanduser().open("a", encoding="utf-8") as fh:
-                for c in result["cases"]:
-                    fh.write(json.dumps(c) + "\n")
+                           max_per_author=args.max_per_author, on_result=save)
         print(json.dumps(result, indent=2))
         return 0
     except (CodeCheckError, OSError, json.JSONDecodeError) as e:

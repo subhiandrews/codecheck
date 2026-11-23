@@ -282,3 +282,92 @@ def test_the_command_line_runs_a_dry_run_and_reports_errors_as_json(tmp_path, so
     assert json.loads(out_file.read_text().splitlines()[0])["name"] == "pr1"
     assert replay.main(["run", str(tmp_path / "missing.json")]) == 1
     assert "error" in json.loads(capsys.readouterr().out)
+
+
+def test_a_person_whose_name_contains_bot_or_duo_is_not_taken_for_a_bot():
+    people = ["abbott", "Talbot", "duong", "robot-fan"]
+    bots = ["github-actions", "GitHub-Actions", "dependabot[bot]", "GitLabDuo", "gitlab-duo", "copilot", "coderabbitai"]
+    entries = [{"thread_id": a, "path": "a.py", "line": 1, "author": a} for a in people + bots]
+    kept = [c["author"] for c in human_comments({"comparison": {"human_comments": entries}})]
+    assert kept == people
+
+
+def test_human_comments_tolerate_a_mistyped_hand_off():
+    assert human_comments({"comparison": ["x"]}) == [] and human_comments({"comparison": {"human_comments": "x"}}) == []
+    odd = {"comparison": {"human_comments": ["text", {"thread_id": "1", "author": None, "path": "a.py", "line": 1}]}}
+    assert [c["thread_id"] for c in human_comments(odd)] == ["1"]
+
+
+def write_handoff(tmp_path, handoff, run_id="abcdef123456", diff=""):
+    shadow = tmp_path / "shadow"
+    (shadow / f"{run_id}.handoff").mkdir(parents=True, exist_ok=True)
+    path = shadow / f"{run_id}.handoff" / "handoff.json"
+    if isinstance(handoff, bytes):
+        path.write_bytes(handoff)
+    else:
+        path.write_text(json.dumps(handoff))
+    (shadow / f"{run_id}.diff").write_text(diff)
+    return shadow
+
+
+def test_a_relative_clone_path_gives_an_absolute_case_clone(tmp_path, source, monkeypatch):
+    shadow = write_handoff(tmp_path, {"repo": "o/r", "pr": 7, "head_sha": source["head"]}, diff=source["diff"])
+    ctx = _ctx(tmp_path, LiveRunner(FakeRunner()))
+    monkeypatch.chdir(source["path"].parent)
+    case = case_from_handoff(ctx, shadow, "abcdef123456", Path(source["path"].name))
+    assert case["clone"] == str(source["path"].resolve())
+    validate_case(case)  # the clone must be an absolute path
+
+
+def test_the_manifest_reads_each_hand_off_once_and_reports_bad_ones_as_json(tmp_path, source, monkeypatch, capsys):
+    ctx = _ctx(tmp_path, LiveRunner(FakeRunner()))
+    monkeypatch.setattr(replay, "_context", lambda: ctx)
+    clone = f"o/r={source['path']}"
+    good = {"repo": "o/r", "pr": 7, "head_sha": source["head"], "comparison": {"human_comments": []}}
+    shadow = write_handoff(tmp_path, good, diff=source["diff"])
+    assert replay.main(["manifest", "--shadow", str(shadow), "--clone", clone, "abcdef123456"]) == 0
+    assert json.loads(capsys.readouterr().out)[0]["repo"] == "o/r"
+    for bad, text in ((["not", "an", "object"], "not a JSON object"), (b"\xff\xfe", "no readable hand-off"),
+                      ({**good, "repo": None}, "no repository"), ({**good, "repo": "x/y"}, "no --clone for x/y"),
+                      ({"repo": "o/r", "head_sha": 5}, "no head commit")):
+        write_handoff(tmp_path, bad, diff=source["diff"])
+        assert replay.main(["manifest", "--shadow", str(shadow), "--clone", clone, "abcdef123456"]) == 1
+        assert text in json.loads(capsys.readouterr().out)["error"]
+    assert replay.main(["manifest", "--shadow", str(shadow), "--clone", "nopath", "abcdef123456"]) == 1
+    assert "expected OWNER/REPO=PATH" in json.loads(capsys.readouterr().out)["error"]
+
+
+def test_each_result_is_handed_over_as_soon_as_it_exists(tmp_path, source, monkeypatch):
+    ctx, _ = reviewing_ctx(tmp_path, [FOUND])
+    seen = []
+    real = replay.run_case
+
+    def flaky(ctx, case, workdir, **kw):
+        if case["name"] == "b":
+            raise RuntimeError("the runner died")  # not a CodeCheckError: nothing catches it
+        return real(ctx, case, workdir, **kw)
+
+    monkeypatch.setattr(replay, "run_case", flaky)
+    cases = [make_case(source, name="a"), make_case(source, name="b")]
+    with pytest.raises(RuntimeError):
+        run_cases(ctx, cases, on_result=seen.append)
+    assert [r["name"] for r in seen] == ["a"]  # the finished, paid review was not lost
+
+
+def test_the_out_file_keeps_finished_cases_when_a_later_one_dies(tmp_path, source, monkeypatch):
+    ctx, _ = reviewing_ctx(tmp_path, [FOUND])
+    monkeypatch.setattr(replay, "_context", lambda: ctx)
+    real = replay.run_case
+
+    def flaky(ctx, case, workdir, **kw):
+        if case["name"] == "b":
+            raise KeyboardInterrupt
+        return real(ctx, case, workdir, **kw)
+
+    monkeypatch.setattr(replay, "run_case", flaky)
+    cases = tmp_path / "cases.json"
+    cases.write_text(json.dumps([make_case(source, name="a"), make_case(source, name="b")]))
+    out_file = tmp_path / "results.jsonl"
+    with pytest.raises(KeyboardInterrupt):
+        replay.main(["run", str(cases), "--out", str(out_file)])
+    assert [json.loads(line)["name"] for line in out_file.read_text().splitlines()] == ["a"]
