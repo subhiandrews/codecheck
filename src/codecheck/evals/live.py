@@ -32,7 +32,7 @@ GIT_REPO_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
                  "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_QUARANTINE_PATH")
 UNSET_GIT_REPO_VARS = tuple(a for name in GIT_REPO_VARS for a in ("-u", name))
 # Fixed identity and no user hooks or signing for the throwaway repositories, whatever the user's git config says.
-_GIT = ("env", *UNSET_GIT_REPO_VARS, "git", "-c", "user.name=code-check eval", "-c", "user.email=eval@code-check.invalid",
+GIT = ("env", *UNSET_GIT_REPO_VARS, "git", "-c", "user.name=code-check eval", "-c", "user.email=eval@code-check.invalid",
         "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "-c", "init.defaultBranch=main")
 
 
@@ -100,8 +100,9 @@ def claude_reachable(ctx) -> bool:
 # --- one snippet -------------------------------------------------------------------------------------------------
 
 
-def _git(ctx, cwd: Path, *args: str) -> None:
-    run_checked(ctx.runner, [*_GIT, *args], cwd=cwd)
+def git(ctx, cwd: Path, *args: str) -> None:
+    """Run git with the eval's fixed identity and no inherited repository variables; raises on failure."""
+    run_checked(ctx.runner, [*GIT, *args], cwd=cwd)
 
 
 def _write_files(repo: Path, files: dict) -> None:
@@ -116,13 +117,13 @@ def _write_files(repo: Path, files: dict) -> None:
 def _setup_repo(ctx, snippet: dict, workdir: Path) -> Path:
     """Bare origin with `base` committed on main, and a clone with `change` applied but not committed."""
     origin, seed, repo = workdir / "origin.git", workdir / "seed", workdir / "repo"
-    _git(ctx, workdir, "init", "--quiet", "--bare", "-b", "main", str(origin))
-    _git(ctx, workdir, "clone", "--quiet", str(origin), str(seed))
+    git(ctx, workdir, "init", "--quiet", "--bare", "-b", "main", str(origin))
+    git(ctx, workdir, "clone", "--quiet", str(origin), str(seed))
     _write_files(seed, snippet["base"])
-    _git(ctx, seed, "add", "-A")  # never file names: nothing from the snippet goes into argv
-    _git(ctx, seed, "commit", "--quiet", "--allow-empty", "-m", "base")
-    _git(ctx, seed, "push", "--quiet", "origin", "HEAD:main")
-    _git(ctx, workdir, "clone", "--quiet", str(origin), str(repo))  # a fresh clone knows origin/HEAD is main
+    git(ctx, seed, "add", "-A")  # never file names: nothing from the snippet goes into argv
+    git(ctx, seed, "commit", "--quiet", "--allow-empty", "-m", "base")
+    git(ctx, seed, "push", "--quiet", "origin", "HEAD:main")
+    git(ctx, workdir, "clone", "--quiet", str(origin), str(repo))  # a fresh clone knows origin/HEAD is main
     _write_files(repo, snippet["change"])
     return repo
 
@@ -147,7 +148,7 @@ def review_argv(ctx, workdir: Path, *, fixed_panel: bool = True) -> list[str]:
             "--add-dir", str(workdir), "--allowedTools", *cfg.review_allowed_tools]
 
 
-def _findings(store: ShadowStore) -> tuple[list[dict], list[str], str | None]:
+def review_findings(store: ShadowStore) -> tuple[list[dict], list[str], str | None]:
     """The newest hand-off's aggregator findings as (got, validation errors, error)."""
     raw = next((r for rid in reversed(store.ordered_run_ids()) if (r := store.read_raw(rid)) is not None), None)
     if raw is None:
@@ -168,7 +169,7 @@ def run_snippet(ctx, snippet: dict, workdir: Path) -> dict:
         raise CodeCheckError(f"snippet {snippet['name']}: could not build its repository: {e}") from e
     res = ctx.runner.run(review_argv(ctx, workdir), cwd=repo, timeout=ctx.config.run_pr.timeout_seconds, input="")
     claude = parse_result(res.stdout, res.returncode, res.stderr)
-    got, invalid, error = _findings(ShadowStore(workdir / "shadow"))
+    got, invalid, error = review_findings(ShadowStore(workdir / "shadow"))
     if not claude["ok"]:
         error = f"claude run failed: {claude['summary']}"
     if error is None and invalid and not got:

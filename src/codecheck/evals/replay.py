@@ -13,6 +13,7 @@ touched. Use `--dry-run` to rebuild and check every case without calling a model
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -24,6 +25,7 @@ from codecheck.commands.run_pr import parse_result
 from codecheck.errors import CodeCheckError
 from codecheck.evals import live
 from codecheck.models import is_service_login
+from codecheck.runner import run_checked
 from codecheck.shadow.store import ShadowStore
 
 SHA = re.compile(r"[0-9a-f]{40}")
@@ -80,21 +82,21 @@ def load_cases(path: Path) -> list[dict]:
 
 
 def _ok(ctx, cwd: Path, *args: str) -> bool:
-    return ctx.runner.run([*live._GIT, *args], cwd=cwd).returncode == 0
+    return ctx.runner.run([*live.GIT, *args], cwd=cwd).returncode == 0
 
 
 def _out(ctx, cwd: Path, *args: str) -> str:
-    return live.run_checked(ctx.runner, [*live._GIT, *args], cwd=cwd).stdout
+    return run_checked(ctx.runner, [*live.GIT, *args], cwd=cwd).stdout
 
 
 def resolve_base(ctx, clone: Path, head: str, diff: str) -> str:
     """The merge-base of `head` and the clone's base branch whose three-dot diff is exactly the saved one."""
     for ref in BASE_REFS:
-        res = ctx.runner.run([*live._GIT, "merge-base", head, ref], cwd=clone)
+        res = ctx.runner.run([*live.GIT, "merge-base", head, ref], cwd=clone)
         base = res.stdout.strip()
         if res.returncode != 0 or not SHA.fullmatch(base):
             continue
-        shown = ctx.runner.run([*live._GIT, "diff", "--no-color", "--no-ext-diff", f"{base}...{head}"], cwd=clone)
+        shown = ctx.runner.run([*live.GIT, "diff", "--no-color", "--no-ext-diff", f"{base}...{head}"], cwd=clone)
         if shown.returncode == 0 and _same_diff(shown.stdout, diff):
             return base
     raise CodeCheckError(f"no base of {head[:10]} in {clone} reproduces the saved diff; the clone may lack the history")
@@ -105,7 +107,7 @@ def build_repo(ctx, case: dict, workdir: Path) -> Path:
     source = _clone_path(case)
     repo, origin = workdir / "repo", workdir / "origin.git"
     head, base = case["head"], case["base"]
-    live._git(ctx, workdir, "clone", "--quiet", "--no-checkout", "--", str(source), str(repo))
+    live.git(ctx, workdir, "clone", "--quiet", "--no-checkout", "--", str(source), str(repo))
     for sha in (head, base):
         if not _ok(ctx, repo, "cat-file", "-e", f"{sha}^{{commit}}"):
             raise CodeCheckError(f"case {case['name']}: commit {sha[:10]} is not in {source}")
@@ -114,13 +116,13 @@ def build_repo(ctx, case: dict, workdir: Path) -> Path:
     shown = _out(ctx, repo, "diff", "--no-color", "--no-ext-diff", f"{base}...{head}")
     if not _same_diff(shown, case["diff"]):
         raise CodeCheckError(f"case {case['name']}: git diff {base[:10]}...{head[:10]} is not the saved diff")
-    live._git(ctx, workdir, "init", "--quiet", "--bare", "-b", "main", str(origin))
-    live._git(ctx, repo, "push", "--quiet", str(origin), f"{base}:refs/heads/main")
-    live._git(ctx, repo, "remote", "remove", "origin")
-    live._git(ctx, repo, "remote", "add", "origin", str(origin))
-    live._git(ctx, repo, "fetch", "--quiet", "origin")
-    live._git(ctx, repo, "remote", "set-head", "origin", "main")
-    live._git(ctx, repo, "checkout", "--quiet", "-b", "replay", head)
+    live.git(ctx, workdir, "init", "--quiet", "--bare", "-b", "main", str(origin))
+    live.git(ctx, repo, "push", "--quiet", str(origin), f"{base}:refs/heads/main")
+    live.git(ctx, repo, "remote", "remove", "origin")
+    live.git(ctx, repo, "remote", "add", "origin", str(origin))
+    live.git(ctx, repo, "fetch", "--quiet", "origin")
+    live.git(ctx, repo, "remote", "set-head", "origin", "main")
+    live.git(ctx, repo, "checkout", "--quiet", "-b", "replay", head)
     return repo
 
 
@@ -158,6 +160,12 @@ def score(findings: list[dict], comments: list[dict], *, tolerance: int = 3, max
 # --- running -----------------------------------------------------------------------------------------------------
 
 
+def _cost(value) -> float | None:
+    """A review's cost when the model reported a real number, else None (never a guess that it was free)."""
+    ok = isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value) and value >= 0
+    return float(value) if ok else None
+
+
 def run_case(ctx, case: dict, workdir: Path, *, fixed_panel: bool = False, dry_run: bool = False,
              tolerance: int = 3, max_per_author: int | None = None) -> dict:
     workdir = Path(workdir).resolve()
@@ -169,10 +177,10 @@ def run_case(ctx, case: dict, workdir: Path, *, fixed_panel: bool = False, dry_r
     res = ctx.runner.run(live.review_argv(ctx, workdir, fixed_panel=fixed_panel), cwd=repo,
                          timeout=ctx.config.run_pr.timeout_seconds, input="")
     claude = parse_result(res.stdout, res.returncode, res.stderr)
-    got, invalid, error = live._findings(ShadowStore(workdir / "shadow"))
+    got, invalid, error = live.review_findings(ShadowStore(workdir / "shadow"))
     if not claude["ok"]:
         error = f"claude run failed: {claude['summary']}"
-    out |= {"got": got, "claude": {"ok": claude["ok"], "summary": claude["summary"], "cost_usd": claude["cost"]},
+    out |= {"got": got, "claude": {"ok": claude["ok"], "summary": claude["summary"], "cost_usd": _cost(claude["cost"])},
             "score": score(got, case["comments"], tolerance=tolerance, max_per_author=max_per_author)}
     if invalid:
         out["invalid"] = invalid[:5]
@@ -185,7 +193,7 @@ def run_cases(ctx, cases: list[dict], *, dry_run: bool = False, limit: int | Non
               only: str | None = None, fixed_panel: bool = False, tolerance: int = 3, max_per_author: int | None = None,
               on_result=None) -> dict:
     """One review per case, one after another, never retried. The budget is checked before each case, so the last
-    case can overshoot it by one review's cost. `on_result` is called with each result as soon as it exists, so a
+    case can overshoot it by one review's cost; `unpriced` lists reviews that reported no cost. `on_result` is called with each result as soon as it exists, so a
     caller can save a paid review before a later case fails."""
     if only is not None:
         cases = [c for c in cases if c["name"] == only]
@@ -197,9 +205,11 @@ def run_cases(ctx, cases: list[dict], *, dry_run: bool = False, limit: int | Non
         reason = live.unreachable_reason(ctx)
         if reason is not None:
             raise CodeCheckError(f"model not reachable: {reason}")
-    results, spent, skipped = [], 0.0, []
+    results, spent, skipped, unpriced = [], 0.0, [], []
     for case in cases:
-        if budget_usd is not None and spent >= budget_usd:
+        # A review with no reported cost (a timeout, non-JSON output) may still have spent tokens, so with a budget set
+        # nothing new starts once one has run: the total is no longer known.
+        if budget_usd is not None and (spent >= budget_usd or unpriced):
             skipped.append(case["name"])
             continue
         with tempfile.TemporaryDirectory(prefix="code-check-replay-", ignore_cleanup_errors=True) as workdir:
@@ -208,11 +218,17 @@ def run_cases(ctx, cases: list[dict], *, dry_run: bool = False, limit: int | Non
                                   tolerance=tolerance, max_per_author=max_per_author)
             except CodeCheckError as e:
                 result = {"name": case["name"], "error": str(e)}
-        spent += float((result.get("claude") or {}).get("cost_usd") or 0)
+        if "claude" in result:  # a review ran (a case that failed to build has no `claude` entry)
+            cost = result["claude"].get("cost_usd")
+            if cost is None:
+                unpriced.append(case["name"])
+            else:
+                spent += cost
         results.append(result)
         if on_result is not None:
             on_result(result)
-    return {"cases": results, "cost_usd": round(spent, 4), "skipped_for_budget": skipped, "dry_run": dry_run,
+    return {"cases": results, "cost_usd": round(spent, 4), "skipped_for_budget": skipped,
+            "unpriced": unpriced, "dry_run": dry_run,
             "tool_version": __version__}
 
 

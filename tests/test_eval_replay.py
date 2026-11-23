@@ -371,3 +371,34 @@ def test_the_out_file_keeps_finished_cases_when_a_later_one_dies(tmp_path, sourc
     with pytest.raises(KeyboardInterrupt):
         replay.main(["run", str(cases), "--out", str(out_file)])
     assert [json.loads(line)["name"] for line in out_file.read_text().splitlines()] == ["a"]
+
+
+def reviewing_ctx_with_cost(tmp_path, findings, cost_field):
+    """A review whose JSON result carries `cost_field` as total_cost_usd (the key is left out when it is `...`)."""
+    result = {"type": "result", "is_error": False, "result": "ok"}
+    if cost_field is not ...:
+        result["total_cost_usd"] = cost_field
+    ok = json.dumps(result)
+    probe = json.dumps({"type": "result", "is_error": False, "result": "ok", "total_cost_usd": 0.0})
+    fake = FakeRunner().on(*PROBE, stdout=probe).on_prefix("env", stdout=ok)
+    return _ctx(tmp_path, ReviewingRunner(fake, findings))
+
+
+@pytest.mark.parametrize("reported", [..., None, "free", True, -1.0, float("nan"), float("inf")])
+def test_a_cost_that_is_missing_or_not_a_real_number_is_unpriced_not_free(tmp_path, source, reported):
+    ctx = reviewing_ctx_with_cost(tmp_path, [FOUND], reported)
+    out = run_cases(ctx, [make_case(source, name="a"), make_case(source, name="b")])
+    assert [c["name"] for c in out["cases"]] == ["a", "b"] and out["unpriced"] == ["a", "b"]  # no budget: all run
+    assert out["cases"][0]["claude"]["cost_usd"] is None and out["cost_usd"] == 0.0
+
+
+def test_with_a_budget_nothing_new_starts_after_an_unpriced_review(tmp_path, source):
+    ctx = reviewing_ctx_with_cost(tmp_path, [FOUND], None)
+    out = run_cases(ctx, [make_case(source, name="a"), make_case(source, name="b")], budget_usd=5.0)
+    assert [c["name"] for c in out["cases"]] == ["a"] and out["skipped_for_budget"] == ["b"] and out["unpriced"] == ["a"]
+
+
+def test_a_case_that_fails_to_build_is_not_counted_as_an_unpriced_review(tmp_path, source):
+    ctx, _ = reviewing_ctx(tmp_path, [FOUND])
+    out = run_cases(ctx, [make_case(source, name="bad", head="0" * 40), make_case(source, name="good")], budget_usd=5.0)
+    assert [c["name"] for c in out["cases"]] == ["bad", "good"] and out["unpriced"] == []
