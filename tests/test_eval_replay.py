@@ -409,6 +409,24 @@ def test_a_label_introduced_by_a_later_commit_is_left_out_of_earlier_heads(tmp_p
 
 def test_the_hermetic_pr6_labels_are_well_formed():
     labels = json.loads((Path(__file__).parent.parent / "evals/replay-labels/hermetic-pr6.json").read_text())
-    assert len({x["id"] for x in labels}) == len(labels) == 11
-    assert {x["round"] for x in labels} == {1, 2, 3}
+    assert len({x["id"] for x in labels}) == len(labels) == 26
+    assert {x["round"] for x in labels} == {1, 2, 3, 4, 5, 6, 7}
     assert all({"id", "round", "path", "needle"} <= set(x) and x["needle"] for x in labels)
+
+
+def test_score_reports_recall_by_kind_of_label():
+    findings = [{"file": "a.py", "line": 1}]
+    comments = [comment(1, path="a.py", kind="first-head"), comment(50, path="a.py", kind="fix"),
+                comment(90, path="a.py", kind="tail")]
+    assert score(findings, comments)["by_kind"] == {"fix": {"comments": 1, "matched": 0},
+                                                    "first-head": {"comments": 1, "matched": 1},
+                                                    "tail": {"comments": 1, "matched": 0}}
+
+
+def test_cases_from_git_give_each_label_a_kind(tmp_path, reviewed_twice):
+    r = reviewed_twice
+    labels = [{"id": "a", "round": 1, "path": "ci.yml", "needle": "uses: x"},
+              {"id": "b", "round": 2, "path": "docs.md", "needle": "repeats", "tail": True},
+              {"id": "c", "round": 2, "path": "docs.md", "needle": "new line", "introduced_in": r["second"]}]
+    cases = replay.cases_from_git(_ctx(tmp_path, LiveRunner(FakeRunner())), r["path"], "o/r", r["base"], labels, [r["second"]])
+    assert {c["thread_id"]: c["kind"] for c in cases[0]["comments"]} == {"a": "first-head", "b": "tail", "c": "fix"}

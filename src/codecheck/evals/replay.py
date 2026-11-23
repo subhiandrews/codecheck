@@ -144,7 +144,8 @@ def score(findings: list[dict], comments: list[dict], *, tolerance: int = 3, max
 
     Comments outside the reviewed files (`in_review` false) and comments without a line are left out of the
     denominator. `max_per_author` keeps only each author's first comments so one reviewer cannot dominate. A
-    comment with a `round` (the review round that first reported it) also counts in `by_round`."""
+    comment with a `round` (the review round that first reported it) also counts in `by_round`, and one with a
+    `kind` (`first-head`, `fix` or `tail`) in `by_kind`."""
     kept, per_author = [], {}
     for c in comments:
         if c.get("in_review") is False or not isinstance(c.get("line"), int) or not isinstance(c.get("path"), str):
@@ -165,17 +166,22 @@ def score(findings: list[dict], comments: list[dict], *, tolerance: int = 3, max
                "matched": hit is not None}
         if c.get("round") is not None:
             row["round"] = c["round"]
+        if c.get("kind") is not None:
+            row["kind"] = c["kind"]
         rows.append(row)
     matched = sum(r["matched"] for r in rows)
     by_round: dict = {}
+    by_kind: dict = {}
     for r in rows:
-        if "round" in r:
-            entry = by_round.setdefault(r["round"], {"comments": 0, "matched": 0})
-            entry["comments"] += 1
-            entry["matched"] += r["matched"]
+        for key, groups in (("round", by_round), ("kind", by_kind)):
+            if key in r:
+                entry = groups.setdefault(r[key], {"comments": 0, "matched": 0})
+                entry["comments"] += 1
+                entry["matched"] += r["matched"]
     return {"comments": len(rows), "matched": matched, "recall": (matched / len(rows)) if rows else None,
             "findings": len(findings), "findings_on_a_comment": len(used), "findings_elsewhere": len(findings) - len(used),
-            "by_round": {k: by_round[k] for k in sorted(by_round)}, "per_comment": rows}
+            "by_round": {k: by_round[k] for k in sorted(by_round)},
+            "by_kind": {k: by_kind[k] for k in sorted(by_kind)}, "per_comment": rows}
 
 
 def _near(findings: list[dict], comment: dict, tolerance: int) -> list[dict]:
@@ -324,7 +330,8 @@ def cases_from_git(ctx, clone: Path, repo: str, base: str, labels: list[dict], h
     `labels` are the findings the reviews made over time, found again by text so each head gets its own line
     numbers: {"id", "round" (when it was first reported), "path", "needle" (a line of the file that holds the
     problem), "occurrence" (default 1), "introduced_in" (optional commit: earlier heads do not have the problem yet),
-    "fixed_in" (optional commit: heads that contain it no longer have the problem)}. Any other head must still hold the needle, or the case is refused. The diff is taken from git, so
+    "fixed_in" (optional commit: heads that contain it no longer have the problem), "tail" (optional: a rare edge
+    case the panel is not expected to find)}. A label with `introduced_in` has kind `fix`. Any other head must still hold the needle, or the case is refused. The diff is taken from git, so
     the case always passes the rebuild check."""
     clone = Path(clone).expanduser()
     if not _ok(ctx, clone, "cat-file", "-e", f"{base}^{{commit}}"):
@@ -352,7 +359,8 @@ def cases_from_git(ctx, clone: Path, repo: str, base: str, labels: list[dict], h
             if len(hits) < want:
                 raise CodeCheckError(f"label {label['id']}: occurrence {want} of {label['needle']!r} not in {label['path']} at {head}")
             comments.append({"thread_id": label["id"], "path": label["path"], "line": hits[want - 1], "author": "labelled",
-                             "in_review": True, "round": label.get("round")})
+                             "in_review": True, "round": label.get("round"),
+                             "kind": "fix" if label.get("introduced_in") else ("tail" if label.get("tail") else "first-head")})
         cases.append({"name": f"{name}@{full[:7]}", "repo": repo, "clone": str(clone.resolve()), "head": full, "base": base,
                       "diff": diff, "comments": comments})
     return cases
