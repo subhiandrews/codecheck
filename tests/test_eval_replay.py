@@ -660,3 +660,13 @@ def test_from_git_refuses_a_commit_that_would_read_as_an_option(tmp_path, where)
         label[where] = "-y"
     with pytest.raises(CodeCheckError, match="does not start with"):
         replay.cases_from_git(_ctx(tmp_path, LiveRunner(FakeRunner())), tmp_path, "o/r", base, [label], heads)
+
+
+def test_a_failed_claude_run_keeps_its_error_when_scoring_also_fails(tmp_path, source, monkeypatch):
+    probe = json.dumps({"type": "result", "is_error": False, "result": "ok", "total_cost_usd": 0.0})
+    bad = json.dumps({"type": "result", "is_error": True, "result": "boom", "total_cost_usd": 0.01})
+    fake = FakeRunner().on(*PROBE, stdout=probe).on_prefix("env", stdout=bad)
+    ctx = _ctx(tmp_path, ReviewingRunner(fake, [FOUND]))
+    monkeypatch.setattr(replay, "score", lambda *a, **k: 1 / 0)
+    out = run_case(ctx, make_case(source), workdir(tmp_path))
+    assert out["error"].startswith("claude run failed") and out["claude"]["cost_usd"] == 0.01

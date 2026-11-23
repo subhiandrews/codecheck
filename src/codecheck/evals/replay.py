@@ -257,9 +257,11 @@ def run_case(ctx, case: dict, workdir: Path, *, fixed_panel: bool = False, dry_r
     claude = parse_result(res.stdout, res.returncode, res.stderr)
     # The review has been paid for: record it before anything below can fail, so its cost is always counted.
     out["claude"] = {"ok": claude["ok"], "summary": claude["summary"], "cost_usd": _cost(claude["cost"])}
+    error = None if claude["ok"] else f"claude run failed: {claude['summary']}"
     try:
         store = ShadowStore(workdir / "shadow")
-        got, invalid, error = live.review_findings(store, keep_message=True)
+        got, invalid, found_error = live.review_findings(store, keep_message=True)
+        error = error or found_error
         raw = live.newest_raw(store)
         saved_raw = None
         if raw is not None and raw_dir is not None:
@@ -270,8 +272,6 @@ def run_case(ctx, case: dict, workdir: Path, *, fixed_panel: bool = False, dry_r
                 saved.write_text(json.dumps(raw, indent=2), encoding="utf-8")
             except OSError as e:
                 saved_raw = f"raw output not saved: {e}"
-        if not claude["ok"]:
-            error = f"claude run failed: {claude['summary']}"
         out |= {"got": got, "score": score(got, case["comments"], tolerance=tolerance, max_per_author=max_per_author),
                 "funnel": funnel(raw, case["comments"], tolerance=tolerance)}
         if saved_raw:
@@ -279,7 +279,7 @@ def run_case(ctx, case: dict, workdir: Path, *, fixed_panel: bool = False, dry_r
         if invalid:
             out["invalid"] = invalid[:5]
     except Exception as e:  # noqa: BLE001 - whatever breaks reading or scoring must not lose the paid review's cost
-        error = f"{type(e).__name__}: {e}"
+        error = error or f"{type(e).__name__}: {e}"
     if error:
         out["error"] = error
     return out
@@ -289,8 +289,8 @@ def run_cases(ctx, cases: list[dict], *, dry_run: bool = False, limit: int | Non
               only: str | None = None, fixed_panel: bool = False, tolerance: int = 3, max_per_author: int | None = None,
               raw_dir: Path | None = None, on_result=None) -> dict:
     """One review per case, one after another, never retried. The budget is checked before each case, so the last
-    case can overshoot it by one review's cost; `unpriced` lists reviews that reported no cost. `on_result` is called with each result as soon as it exists, so a
-    caller can save a paid review before a later case fails."""
+    case can overshoot it by one review's cost; `unpriced` lists reviews that reported no cost. `on_result` is
+    called with each result as soon as it exists, so a caller can save a paid review before a later case fails."""
     if only is not None:
         cases = [c for c in cases if c["name"] == only]
         if not cases:
