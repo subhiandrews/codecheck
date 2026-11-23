@@ -153,7 +153,8 @@ def score(findings: list[dict], comments: list[dict], *, tolerance: int = 3, max
 
     Comments outside the reviewed files (`in_review` false) and comments without a line are left out of the
     denominator. `max_per_author` keeps only each author's first comments so one reviewer cannot dominate. Every
-    finding near any kept comment counts as on a comment; a finding without an integer line lands on none. A
+    finding near any kept comment counts as on a comment; a finding with no integer line can land only through a
+    `file:line` its message names. A
     comment with a `round` (the review round that first reported it) also counts in `by_round`, and one with a
     `kind` (`first-head`, `fix` or `tail`) in `by_kind`."""
     kept, per_author = [], {}
