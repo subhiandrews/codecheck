@@ -5,7 +5,7 @@ User-visible changes per release, newest first. Earlier releases: `git log`. The
 ## [1.4.1]
 
 ### Added
-- `review-pr` can propose `CODE_CHECK.md` improvements from what past reviews learned, as a patch file to open as a separate PR. Off by default (`review.learn_guidance` in your user config); it never touches the PR it reviewed, a working tree or the remote. `guidance evidence|apply` take `--base REF` (and `apply` `--run RUN_ID`) for this, and `context` now reports `base_ref`.
+- `review-pr` can propose `CODE_CHECK.md` improvements learned from past reviews as a patch file for a separate PR. Off by default (`review.learn_guidance`, user config only).
 
 ## [1.4.0]
 

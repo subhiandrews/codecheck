@@ -130,7 +130,7 @@ def run(args, ctx) -> dict:
         return {"enabled": True, "proposable": False, "reason": "shadow recording is off (shadow.enabled)"}
     base = args.base
     if applying and bool(base) != bool(args.run):
-        raise CodeCheckError("--base and --run go together: a patch is proposed against a ref and written into a run directory")
+        raise CodeCheckError("--base and --run go together: a patch is proposed against a ref and named after a run")
     if applying and args.run:
         _run_dir(ctx, args.run)  # must be a real run; its id names the patch
     root, rel = _scope(ctx, args.dir)
