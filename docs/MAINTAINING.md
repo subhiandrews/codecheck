@@ -90,6 +90,20 @@ Matching is tolerant, because live reviews vary from run to run. A reported find
 
 **Calibration.** Four of the five shipped snippets are marked `"calibrated": true`; `rust-shutdown-race` is not yet (`"calibrated": false`). The four were run by hand twice against a real model on 2026-11-13 and passed every time, with the expected finding at the expected line (`weaker-access-override` is reported under the category `compile`; `docs-only-api` yields at most a suggestion, such as the `isBlank` versus `trim()` semantics point). Live results still vary from run to run, so rerun a snippet that fails once before changing it.
 
+### PR replay (developer tooling)
+
+`python -m codecheck.evals.replay` re-reviews a real pull request with the real model and scores the findings against the human comments it received. It is a module, not a `code-check` subcommand, **it costs tokens**, and nothing runs it in CI or in the gates.
+
+```
+python -m codecheck.evals.replay manifest --shadow DIR --clone OWNER/REPO=PATH --owner YOU RUN_ID... > cases.json
+python -m codecheck.evals.replay run cases.json --dry-run                 # rebuild and check every case, no model
+python -m codecheck.evals.replay run cases.json --budget 10 --out results.jsonl
+```
+
+`manifest` builds one case per hand-off run (`shadow.handoff` must have been on) from a local clone: the head commit, its merge-base, the saved diff and the human comments with their file and line (no comment text). Bot logins (`name[bot]`, GitLab Duo, and a short list of known review bots, compared whole) and your own login are left out. `run` rebuilds a throwaway repository per case (`origin/main` at the base, `HEAD` at the head), refuses a case whose `git diff` is not the saved diff, runs one headless review in isolated state and counts a comment as found when a finding lands on the same file within `--tolerance` lines (default 3). It never touches your clones, state or shadow store.
+
+Other options: `--limit N`, `--only NAME`, `--fixed-panel` (the live-eval panel with routing off, instead of the panel as shipped), `--max-per-author N` (so one reviewer cannot dominate the score). Each result is appended to `--out` as soon as its review ends, so a crash keeps the finished cases. `--budget USD` stops new cases once the total is reached; a review that reports no cost (a timeout, output that is not JSON) is listed under `unpriced`, and with a budget set no further case starts after one, because the spend is no longer known. The last case can overshoot the budget by one review.
+
 ### Judge calibration (developer tooling)
 
 `eval --calibrate` measures an LLM judge before anything relies on it. It asks the judge model (`models.judge`, default `opus`) about every human-labelled finding in `tests/golden` (`expected` means a person acted on or agreed with it, `not_expected` means a person disputed it): is this finding worth raising for this diff? It prints `{"passed", "agreement": {"n", "agree", "rate", "kappa", "errors"}, "controls": {"n", "said_same", "errors"}, "cost_usd", "cases": [...]}`. It passes when the judge agrees with the humans on at least 80% of the findings and no answer was unusable. The human comments the review missed are asked against the findings in the same file as negative controls; they are listed for a person to read and do not decide `passed`.
