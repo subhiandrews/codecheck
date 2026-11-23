@@ -2,6 +2,14 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.4.3]
+
+### Changed
+- Reviewers report a repeatable problem once, naming every place it occurs, and `address-comments` checks that a fix covers the whole failure and adds no new gap of its own.
+
+### Added
+- Maintainer tooling to replay a real PR through the review flow and score the findings against what people and later review rounds found (`python -m codecheck.evals.replay`; see `docs/MAINTAINING.md`).
+
 ## [1.4.2]
 
 ### Fixed

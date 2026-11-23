@@ -135,7 +135,7 @@ def build_repo(ctx, case: dict, workdir: Path) -> Path:
 # --- scoring -----------------------------------------------------------------------------------------------------
 
 
-SITE = re.compile(r"([\w./-]+):(\d{1,9})(?!\d)")  # also files without an extension, such as docker/Dockerfile
+SITE = re.compile(r"(?<![\w./-])([\w./-]+):(\d{1,9})(?!\d)")  # also files without an extension, such as docker/Dockerfile
 
 
 def _sites(finding: dict) -> list[tuple[str, int]]:
