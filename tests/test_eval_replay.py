@@ -183,7 +183,7 @@ def test_run_case_reviews_the_rebuilt_repo_and_scores_the_findings(tmp_path, sou
     isolation = argv[: argv.index("claude")]
     assert f"CODE_CHECK_STATE_DIR={work.resolve()}/state" in isolation
     assert "CODE_CHECK_REVIEW__ROUTING__MODE=off" not in isolation  # the shipped panel, routing included
-    assert out["got"] == [{"file": "calc.py", "line": 2, "category": "bug", "severity": "warning"}]
+    assert out["got"] == [{"file": "calc.py", "line": 2, "category": "bug", "severity": "warning", "message": FOUND["message"]}]
     assert out["score"]["recall"] == 1.0 and out["claude"]["cost_usd"] == 0.01 and "error" not in out
 
 
@@ -283,6 +283,154 @@ def test_the_command_line_runs_a_dry_run_and_reports_errors_as_json(tmp_path, so
     assert json.loads(out_file.read_text().splitlines()[0])["name"] == "pr1"
     assert replay.main(["run", str(tmp_path / "missing.json")]) == 1
     assert "error" in json.loads(capsys.readouterr().out)
+
+
+# --- a PR reviewed several times ---------------------------------------------------------------------------------
+
+
+def test_score_credits_every_site_a_finding_names_and_groups_recall_by_round():
+    findings = [{"file": "release.yml", "line": 10, "message": "Unpinned: also ci.yml:20 and docker/Dockerfile:1."}]
+    comments = [comment(10, path="release.yml", round=1), comment(21, path="ci.yml", round=2),
+                comment(1, path="docker/Dockerfile", round=2), comment(40, path="ci.yml", round=3)]
+    out = score(findings, comments)
+    assert [r["matched"] for r in out["per_comment"]] == [True, True, True, False]
+    assert out["by_round"] == {1: {"comments": 1, "matched": 1}, 2: {"comments": 2, "matched": 2},
+                               3: {"comments": 1, "matched": 0}}
+    assert out["findings_on_a_comment"] == 1  # one finding covered three comments
+
+
+def test_score_without_rounds_has_no_by_round_entries():
+    assert score([{"file": "a.py", "line": 1}], [comment(1, path="a.py")])["by_round"] == {}
+
+
+@pytest.fixture
+def reviewed_twice(tmp_path, git_env):
+    """A PR whose first head has two problems; the second head fixes one and moves the other down."""
+    src = tmp_path / "multi"
+    src.mkdir()
+    git(src, "init", "-q", "-b", "main")
+    (src / "a.txt").write_text("keep\n")
+    git(src, "add", "-A")
+    git(src, "commit", "-qm", "base")
+    base = git(src, "rev-parse", "HEAD").strip()
+    git(src, "checkout", "-qb", "feature")
+    (src / "ci.yml").write_text("uses: x@v1\nuses: y@v1\n")
+    (src / "docs.md").write_text("intro\nrepeats the commands\n")
+    git(src, "add", "-A")
+    git(src, "commit", "-qm", "first")
+    first = git(src, "rev-parse", "HEAD").strip()
+    (src / "ci.yml").write_text("uses: x@sha\nuses: y@sha\n")
+    git(src, "commit", "-qam", "pin")
+    fix = git(src, "rev-parse", "HEAD").strip()
+    (src / "docs.md").write_text("new line\nintro\nrepeats the commands\n")
+    git(src, "commit", "-qam", "docs")
+    second = git(src, "rev-parse", "HEAD").strip()
+    labels = [
+        {"id": "pins", "round": 1, "path": "ci.yml", "needle": "uses: y", "fixed_in": fix[:7]},
+        {"id": "dup", "round": 2, "path": "docs.md", "needle": "repeats the commands"},
+    ]
+    return {"path": src, "base": base, "first": first, "second": second, "labels": labels}
+
+
+def test_cases_from_git_map_each_label_to_its_line_at_each_head(tmp_path, reviewed_twice):
+    r = reviewed_twice
+    ctx = _ctx(tmp_path, LiveRunner(FakeRunner()))
+    first, second = replay.cases_from_git(ctx, r["path"], "o/r", r["base"], r["labels"], [r["first"], r["second"]], name="multi")
+    assert first["name"] == f"multi@{r['first'][:7]}" and first["head"] == r["first"]
+    assert [(c["thread_id"], c["line"], c["round"]) for c in first["comments"]] == [("pins", 2, 1), ("dup", 2, 2)]
+    assert [(c["thread_id"], c["line"]) for c in second["comments"]] == [("dup", 3)]  # fixed label gone, line moved
+    validate_case(first)
+
+
+def test_cases_from_git_refuse_a_label_the_head_no_longer_holds(tmp_path, reviewed_twice):
+    r = reviewed_twice
+    gone = [{"id": "x", "round": 1, "path": "docs.md", "needle": "never there"}]
+    with pytest.raises(CodeCheckError, match="never there"):
+        replay.cases_from_git(_ctx(tmp_path, LiveRunner(FakeRunner())), r["path"], "o/r", r["base"], gone, [r["first"]])
+    twice = [{"id": "y", "round": 1, "path": "ci.yml", "needle": "uses:", "occurrence": 3}]
+    with pytest.raises(CodeCheckError, match="occurrence 3"):
+        replay.cases_from_git(_ctx(tmp_path, LiveRunner(FakeRunner())), r["path"], "o/r", r["base"], twice, [r["first"]])
+    assert replay.cases_from_git(_ctx(tmp_path, LiveRunner(FakeRunner())), r["path"], "o/r", r["base"],
+                                 [{**twice[0], "occurrence": 2}], [r["first"]])[0]["comments"][0]["line"] == 2
+
+
+def test_from_git_cases_pass_the_rebuild_check(tmp_path, reviewed_twice):
+    r = reviewed_twice
+    ctx = _ctx(tmp_path, LiveRunner(FakeRunner()))
+    cases = replay.cases_from_git(ctx, r["path"], "o/r", r["base"], r["labels"], [r["first"], r["second"]])
+    for case in cases:
+        assert run_case(ctx, case, workdir(tmp_path, case["head"][:7]), dry_run=True)["built"] is True
+
+
+def test_the_hermetic_pr_labels_are_well_formed():
+    labels = json.loads((Path(__file__).parent.parent / "evals/replay-labels/hermetic-pr2.json").read_text())
+    assert len({x["id"] for x in labels}) == len(labels) == 17
+    assert {x["round"] for x in labels} == {1, 2, 3, 4, 5}
+    assert all({"id", "round", "path", "needle"} <= set(x) and x["needle"] for x in labels)
+
+
+def test_a_replay_keeps_each_finding_message_for_scoring(tmp_path, source):
+    ctx, _ = reviewing_ctx(tmp_path, [FOUND])
+    out = run_case(ctx, make_case(source), workdir(tmp_path))
+    assert out["got"][0]["message"] == "returns 2, not 1"
+
+
+def test_funnel_says_where_each_label_was_lost():
+    raw = {"reviewers": {"skeptic": [{"file": "a.yml", "line": 5, "message": "m"}, {"file": "b.md", "line": 9}],
+                         "doc-skeptic": [{"file": "c.md", "line": 3}], "pragmatist": []},
+           "aggregator": {"findings": [{"file": "a.yml", "line": 5, "message": "m"}],
+                          "dropped": [{"reviewers": ["skeptic"], "file": "b.md", "line": 9, "reason": "low-value"}]}}
+    comments = [comment(5, path="a.yml", round=1), comment(9, path="b.md", round=2), comment(3, path="c.md", round=2),
+                comment(70, path="d.py", round=3)]
+    out = replay.funnel(raw, comments)
+    assert [r["stage"] for r in out["per_comment"]] == ["kept", "dropped:low-value", "lost-in-aggregation", "not-reported"]
+    assert out["per_comment"][2]["reported_by"] == ["doc-skeptic"]
+    assert out["stages"] == {"dropped:low-value": 1, "kept": 1, "lost-in-aggregation": 1, "not-reported": 1}
+    assert out["reviewer_findings"] == {"doc-skeptic": 1, "pragmatist": 0, "skeptic": 2}
+    assert (out["kept"], out["dropped"]) == (1, 1) and out["dropped_findings"][0]["reason"] == "low-value"
+    assert replay.funnel(None, comments) == {"error": "no raw output"}
+
+
+def test_run_case_saves_the_raw_output_and_reports_the_funnel(tmp_path, source):
+    ctx, _ = reviewing_ctx(tmp_path, [FOUND])
+    raw_dir = tmp_path / "raw"
+    out = run_case(ctx, make_case(source), workdir(tmp_path), raw_dir=raw_dir)
+    assert out["funnel"]["stages"] == {"kept": 1}
+    [saved] = raw_dir.glob("*.raw.json")
+    assert saved.name == "pr1.raw.json" and "aggregator" in json.loads(saved.read_text())
+
+
+def test_a_label_introduced_by_a_later_commit_is_left_out_of_earlier_heads(tmp_path, reviewed_twice):
+    r = reviewed_twice
+    ctx = _ctx(tmp_path, LiveRunner(FakeRunner()))
+    labels = [{"id": "late", "round": 2, "path": "docs.md", "needle": "new line", "introduced_in": r["second"]}]
+    first, second = replay.cases_from_git(ctx, r["path"], "o/r", r["base"], labels, [r["first"], r["second"]])
+    assert first["comments"] == [] and [c["thread_id"] for c in second["comments"]] == ["late"]
+
+
+def test_the_hermetic_pr6_labels_are_well_formed():
+    labels = json.loads((Path(__file__).parent.parent / "evals/replay-labels/hermetic-pr6.json").read_text())
+    assert len({x["id"] for x in labels}) == len(labels) == 26
+    assert {x["round"] for x in labels} == {1, 2, 3, 4, 5, 6, 7}
+    assert all({"id", "round", "path", "needle"} <= set(x) and x["needle"] for x in labels)
+
+
+def test_score_reports_recall_by_kind_of_label():
+    findings = [{"file": "a.py", "line": 1}]
+    comments = [comment(1, path="a.py", kind="first-head"), comment(50, path="a.py", kind="fix"),
+                comment(90, path="a.py", kind="tail")]
+    assert score(findings, comments)["by_kind"] == {"fix": {"comments": 1, "matched": 0},
+                                                    "first-head": {"comments": 1, "matched": 1},
+                                                    "tail": {"comments": 1, "matched": 0}}
+
+
+def test_cases_from_git_give_each_label_a_kind(tmp_path, reviewed_twice):
+    r = reviewed_twice
+    labels = [{"id": "a", "round": 1, "path": "ci.yml", "needle": "uses: x"},
+              {"id": "b", "round": 2, "path": "docs.md", "needle": "repeats", "tail": True},
+              {"id": "c", "round": 2, "path": "docs.md", "needle": "new line", "introduced_in": r["second"]}]
+    cases = replay.cases_from_git(_ctx(tmp_path, LiveRunner(FakeRunner())), r["path"], "o/r", r["base"], labels, [r["second"]])
+    assert {c["thread_id"]: c["kind"] for c in cases[0]["comments"]} == {"a": "first-head", "b": "tail", "c": "fix"}
 
 
 def test_a_person_whose_name_contains_bot_or_duo_is_not_taken_for_a_bot():
@@ -405,6 +553,49 @@ def test_a_case_that_fails_to_build_is_not_counted_as_an_unpriced_review(tmp_pat
     assert [c["name"] for c in out["cases"]] == ["bad", "good"] and out["unpriced"] == []
 
 
+@pytest.mark.parametrize("labels, text", [
+    ({"id": "a"}, "expected a list"),
+    (["x"], "expected an object"),
+    ([{"id": "a", "round": 1, "path": "f"}], "missing needle"),
+    ([{"id": "a", "round": 1, "path": "f", "needle": ""}], "non-empty strings"),
+    ([{"id": 5, "round": 1, "path": "f", "needle": "n"}], "non-empty strings"),
+    ([{"id": "a", "round": 1, "path": "f", "needle": "n", "occurrence": "2"}], "positive integer"),
+    ([{"id": "a", "round": 1, "path": "f", "needle": "n", "occurrence": 0}], "positive integer"),
+    ([{"id": "a", "round": 1, "path": "f", "needle": "n"}] * 2, "duplicate ids"),
+    ([{"id": "a", "round": "2a", "path": "f", "needle": "n"}], "round must be an integer"),
+    ([{"id": "a", "round": True, "path": "f", "needle": "n"}], "round must be an integer"),
+])
+def test_bad_labels_are_refused_with_a_message(labels, text):
+    with pytest.raises(CodeCheckError, match=text):
+        replay.validate_labels(labels)
+
+
+def test_from_git_reports_a_bad_labels_file_as_json_and_accepts_a_relative_clone(tmp_path, reviewed_twice, monkeypatch, capsys):
+    r = reviewed_twice
+    monkeypatch.setattr(replay, "_context", lambda: _ctx(tmp_path, LiveRunner(FakeRunner())))
+    args = ["from-git", "--repo", "o/r", "--base", r["base"], "--labels"]
+    for content in (b"\xff\xfe", b"{not json", b'{"id": "a"}', b'["x"]'):
+        bad = tmp_path / "bad.json"
+        bad.write_bytes(content)
+        assert replay.main([*args, str(bad), "--clone", str(r["path"]), r["first"]]) == 1
+        assert "error" in json.loads(capsys.readouterr().out)
+    good = tmp_path / "labels.json"
+    good.write_text(json.dumps(r["labels"]))
+    monkeypatch.chdir(r["path"].parent)
+    assert replay.main([*args, str(good), "--clone", r["path"].name, r["first"]]) == 0
+    case = json.loads(capsys.readouterr().out)[0]
+    assert case["clone"] == str(r["path"].resolve())
+    validate_case(case)
+
+
+def test_an_unwritable_raw_dir_does_not_throw_away_a_paid_review(tmp_path, source):
+    ctx, _ = reviewing_ctx(tmp_path, [FOUND])
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file, not a directory")
+    out = run_case(ctx, make_case(source), workdir(tmp_path), raw_dir=blocker)
+    assert "raw output not saved" in out["raw_error"] and out["score"]["recall"] == 1.0 and "error" not in out
+
+
 def test_every_finding_near_a_comment_counts_as_on_a_comment():
     findings = [{"file": "calc.py", "line": 10}, {"file": "calc.py", "line": 11}, {"file": "calc.py", "line": 12},
                 {"file": "calc.py", "line": 90}]
@@ -439,3 +630,43 @@ def test_an_unwritable_out_path_fails_before_any_paid_review(tmp_path, source, m
 def test_a_comment_author_that_is_not_a_string_does_not_raise_in_score():
     comments = [{"path": "a.py", "line": 3, "author": ["x"]}, {"path": "a.py", "line": 9, "author": {"k": 1}}]
     assert score([{"file": "a.py", "line": 3}], comments)["comments"] == 2
+
+
+def test_anchor_recall_ignores_sites_a_message_merely_names():
+    finding = {"file": "a.py", "line": 50, "message": "same flaw at a.py:3"}
+    out = score([finding], [comment(3, path="a.py")])
+    assert (out["matched"], out["anchor_matched"], out["anchor_recall"]) == (1, 0, 0.0)
+
+
+def test_score_does_not_raise_on_rounds_of_mixed_types():
+    comments = [{**comment(3), "round": 1}, {**comment(9), "round": "2a"}]
+    assert sorted(score([], comments)["by_round"], key=str) == [1, "2a"]
+
+
+def test_a_message_with_a_huge_number_after_a_colon_does_not_raise_in_score():
+    finding = {"file": "a.py", "line": 3, "message": "see a.py:" + "9" * 5000}
+    assert score([finding], [comment(3, path="a.py")])["matched"] == 1
+
+
+@pytest.mark.parametrize("where", ["base", "head", "introduced_in", "fixed_in"])
+def test_from_git_refuses_a_commit_that_would_read_as_an_option(tmp_path, where):
+    label = {"id": "a", "round": 1, "path": "f", "needle": "n"}
+    base, heads = "a" * 40, ["b" * 40]
+    if where == "base":
+        base = "--output=x"
+    elif where == "head":
+        heads = ["-x"]
+    else:
+        label[where] = "-y"
+    with pytest.raises(CodeCheckError, match="does not start with"):
+        replay.cases_from_git(_ctx(tmp_path, LiveRunner(FakeRunner())), tmp_path, "o/r", base, [label], heads)
+
+
+def test_a_failed_claude_run_keeps_its_error_when_scoring_also_fails(tmp_path, source, monkeypatch):
+    probe = json.dumps({"type": "result", "is_error": False, "result": "ok", "total_cost_usd": 0.0})
+    bad = json.dumps({"type": "result", "is_error": True, "result": "boom", "total_cost_usd": 0.01})
+    fake = FakeRunner().on(*PROBE, stdout=probe).on_prefix("env", stdout=bad)
+    ctx = _ctx(tmp_path, ReviewingRunner(fake, [FOUND]))
+    monkeypatch.setattr(replay, "score", lambda *a, **k: 1 / 0)
+    out = run_case(ctx, make_case(source), workdir(tmp_path))
+    assert out["error"].startswith("claude run failed") and out["claude"]["cost_usd"] == 0.01

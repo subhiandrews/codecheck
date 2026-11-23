@@ -63,6 +63,10 @@ Each run is isolated. State, the shadow store and review bookkeeping point into 
 
 The repository ships **5 snippets**: `clean-code` (which should produce nothing), `docs-only-api`, `off-by-one`, `weaker-access-override` and `rust-shutdown-race`. Four are marked `"calibrated": true`, meaning they were run by hand against a real model and passed every time. The race snippet is not calibrated yet. Each snippet is worth a fifth of the score, so one flaky run moves the headline by 20 points.
 
+### PR replay: does one review find what later rounds found
+
+`python -m codecheck.evals.replay` rebuilds a saved PR, runs one review and scores it against the findings and comments later rounds made; no gate runs it. The commands, scoring and label files are described in the "PR replay" section of `docs/MAINTAINING.md`.
+
 ### Calibrate: measuring the measuring stick
 
 Matching findings by file, category and line is deterministic but blunt. It misses the right problem reported under another category, and it cannot express a concern about a pattern. A judge model could answer "is this the same issue?" in plain language. A judge is also a model, so it has to be measured before anything relies on it.

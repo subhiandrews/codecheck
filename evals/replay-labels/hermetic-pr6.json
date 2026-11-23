@@ -1,0 +1,197 @@
+[
+  {
+    "id": "canonical-hash-typeerror",
+    "round": 1,
+    "path": "src/hermetic/ingest/openapi.py",
+    "needle": "json.dumps(value",
+    "fixed_in": "b2aa021"
+  },
+  {
+    "id": "validate-before-ref-check",
+    "round": 1,
+    "path": "src/hermetic/ingest/openapi.py",
+    "needle": "validate(spec)",
+    "fixed_in": "b2aa021"
+  },
+  {
+    "id": "deref-unbounded-expansion",
+    "round": 1,
+    "path": "src/hermetic/ingest/openapi.py",
+    "needle": "return deref(_resolve_pointer",
+    "fixed_in": "b2aa021"
+  },
+  {
+    "id": "hash-encode-outside-try",
+    "round": 2,
+    "path": "src/hermetic/ingest/openapi.py",
+    "needle": "blob.encode",
+    "fixed_in": "9f17a46"
+  },
+  {
+    "id": "expansion-cap-per-item-not-total",
+    "round": 2,
+    "path": "src/hermetic/ingest/openapi.py",
+    "needle": "item = deref(raw_item, spec)",
+    "fixed_in": "9f17a46"
+  },
+  {
+    "id": "spec-extensions-crash",
+    "round": 2,
+    "path": "src/hermetic/ingest/openapi.py",
+    "needle": "if method not in item",
+    "fixed_in": "9f17a46"
+  },
+  {
+    "id": "docs-walk-hidden-trees",
+    "round": 2,
+    "path": "src/hermetic/ingest/docs.py",
+    "needle": "root.rglob",
+    "fixed_in": "502aacf"
+  },
+  {
+    "id": "docs-oserror-escapes",
+    "round": 3,
+    "path": "src/hermetic/ingest/docs.py",
+    "needle": "path.stat().st_size > MAX_DOC_BYTES",
+    "fixed_in": "ecf9347"
+  },
+  {
+    "id": "int-digit-limit-valueerror",
+    "round": 3,
+    "path": "src/hermetic/ingest/openapi.py",
+    "needle": "except (json.JSONDecodeError, yaml.YAMLError",
+    "tail": true,
+    "fixed_in": "1bb7cc5"
+  },
+  {
+    "id": "str-key-renames-yaml-keywords",
+    "round": 3,
+    "path": "src/hermetic/ingest/openapi.py",
+    "needle": "str(key)",
+    "introduced_in": "b2aa021",
+    "fixed_in": "1bb7cc5"
+  },
+  {
+    "id": "fragment-hash-ignores-default-security",
+    "round": 3,
+    "path": "src/hermetic/ingest/openapi.py",
+    "needle": "fragment_hash=canonical_hash(",
+    "fixed_in": "1bb7cc5"
+  },
+  {
+    "id": "docs-os-walk-silent",
+    "round": 4,
+    "path": "src/hermetic/ingest/docs.py",
+    "needle": "os.walk(root, followlinks=False)",
+    "introduced_in": "502aacf",
+    "fixed_in": "13dfd24"
+  },
+  {
+    "id": "param-content-schema-lost",
+    "round": 4,
+    "path": "src/hermetic/ingest/openapi.py",
+    "needle": "json_schema=raw.get(\"schema\", {})",
+    "fixed_in": "894320f"
+  },
+  {
+    "id": "security-schemes-fresh-budget",
+    "round": 4,
+    "path": "src/hermetic/ingest/openapi.py",
+    "needle": "return {name: deref(defined[name], spec) for name in names if name in defined}",
+    "introduced_in": "1bb7cc5",
+    "fixed_in": "894320f"
+  },
+  {
+    "id": "hash-omits-servers",
+    "round": 4,
+    "path": "src/hermetic/ingest/openapi.py",
+    "needle": "fragment_hash=canonical_hash(",
+    "fixed_in": "894320f"
+  },
+  {
+    "id": "spec-no-byte-cap",
+    "round": 5,
+    "path": "src/hermetic/ingest/openapi.py",
+    "needle": "text = path.read_text(encoding=\"utf-8\")",
+    "fixed_in": "a1168bc"
+  },
+  {
+    "id": "pointer-no-percent-decode",
+    "round": 5,
+    "path": "src/hermetic/ingest/openapi.py",
+    "needle": ".replace(\"~1\", \"/\").replace(\"~0\", \"~\")",
+    "fixed_in": "a1168bc",
+    "tail": true
+  },
+  {
+    "id": "self-ref-path-item-silent",
+    "round": 5,
+    "path": "src/hermetic/ingest/openapi.py",
+    "needle": "if method not in item:",
+    "fixed_in": "a1168bc",
+    "tail": true
+  },
+  {
+    "id": "pointer-array-index",
+    "round": 6,
+    "path": "src/hermetic/ingest/openapi.py",
+    "needle": "if isinstance(node, dict) and key in node:",
+    "fixed_in": "7df9431",
+    "tail": true
+  },
+  {
+    "id": "docs-no-count-cap",
+    "round": 6,
+    "path": "src/hermetic/ingest/docs.py",
+    "needle": "for path in sorted(",
+    "fixed_in": "ee7be3b"
+  },
+  {
+    "id": "int-and-string-key-collide",
+    "round": 6,
+    "path": "src/hermetic/ingest/openapi.py",
+    "needle": "normalised[str(key)] = _normalise(value, budget)",
+    "introduced_in": "1bb7cc5",
+    "fixed_in": "7df9431"
+  },
+  {
+    "id": "id-bypasses-external-ref-check",
+    "round": 6,
+    "path": "src/hermetic/ingest/openapi.py",
+    "needle": "if isinstance(ref, str) and not ref.startswith(\"#/\"):",
+    "introduced_in": "b2aa021",
+    "tail": true
+  },
+  {
+    "id": "duplicate-mapping-keys-collapse",
+    "round": 7,
+    "path": "src/hermetic/ingest/openapi.py",
+    "needle": "data = json.loads(text) if path.suffix.lower() == \".json\" else yaml.safe_load(text)",
+    "fixed_in": "35819af",
+    "tail": true
+  },
+  {
+    "id": "ref-siblings-dropped",
+    "round": 7,
+    "path": "src/hermetic/ingest/openapi.py",
+    "needle": "return deref(_resolve_pointer(root, ref), root, (*_stack, ref)",
+    "fixed_in": "35819af",
+    "tail": true
+  },
+  {
+    "id": "architecture-ingest-restates-code",
+    "round": 7,
+    "path": "docs/architecture.md",
+    "needle": "The spec is untrusted input.",
+    "introduced_in": "650b862",
+    "fixed_in": "218d362"
+  },
+  {
+    "id": "recursive-ref-left-in-model",
+    "round": 7,
+    "path": "src/hermetic/ingest/openapi.py",
+    "needle": "return {\"$ref\": ref}",
+    "fixed_in": "218d362",
+    "tail": true
+  }
+]
