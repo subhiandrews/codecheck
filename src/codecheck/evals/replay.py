@@ -191,7 +191,7 @@ def run_case(ctx, case: dict, workdir: Path, *, fixed_panel: bool = False, dry_r
         out |= {"got": got, "score": score(got, case["comments"], tolerance=tolerance, max_per_author=max_per_author)}
         if invalid:
             out["invalid"] = invalid[:5]
-    except Exception as e:  # whatever breaks reading or scoring must not lose the paid review's cost
+    except Exception as e:  # noqa: BLE001 - whatever breaks reading or scoring must not lose the paid review's cost
         error = f"{type(e).__name__}: {e}"
     if error:
         out["error"] = error
