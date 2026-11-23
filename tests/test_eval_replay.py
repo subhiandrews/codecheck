@@ -402,3 +402,17 @@ def test_a_case_that_fails_to_build_is_not_counted_as_an_unpriced_review(tmp_pat
     ctx, _ = reviewing_ctx(tmp_path, [FOUND])
     out = run_cases(ctx, [make_case(source, name="bad", head="0" * 40), make_case(source, name="good")], budget_usd=5.0)
     assert [c["name"] for c in out["cases"]] == ["bad", "good"] and out["unpriced"] == []
+
+
+def test_every_finding_near_a_comment_counts_as_on_a_comment():
+    findings = [{"file": "calc.py", "line": 10}, {"file": "calc.py", "line": 11}, {"file": "calc.py", "line": 12},
+                {"file": "calc.py", "line": 90}]
+    out = score(findings, [comment(10), comment(11)])
+    assert (out["matched"], out["findings_on_a_comment"], out["findings_elsewhere"]) == (2, 3, 1)
+
+
+def test_a_finding_without_an_integer_line_lands_on_no_comment_and_does_not_raise():
+    findings = [{"file": "calc.py", "line": None}, {"file": "calc.py"}, {"file": "calc.py", "line": "2"},
+                {"file": "calc.py", "line": 2}]
+    out = score(findings, [comment(2)])
+    assert (out["matched"], out["findings_on_a_comment"], out["findings_elsewhere"]) == (1, 1, 3)

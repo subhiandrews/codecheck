@@ -7,8 +7,9 @@ does, in isolated state. Findings are scored against the human comments recorded
 (same file, line within a tolerance). Nothing is posted and the user's own clones, state and shadow store are never
 touched. Use `--dry-run` to rebuild and check every case without calling a model.
 
-    python -m codecheck.evals.replay manifest --shadow DIR --clone OWNER/REPO=PATH RUN_ID... > cases.json
-    python -m codecheck.evals.replay run cases.json [--dry-run] [--limit N] [--budget USD] [--out results.jsonl]
+    python -m codecheck.evals.replay manifest|run --help
+
+The commands and options are described in the "PR replay" section of docs/MAINTAINING.md.
 """
 
 import argparse
@@ -133,7 +134,8 @@ def score(findings: list[dict], comments: list[dict], *, tolerance: int = 3, max
     """Which human comments a finding landed on: same file, lines within `tolerance`.
 
     Comments outside the reviewed files (`in_review` false) and comments without a line are left out of the
-    denominator. `max_per_author` keeps only each author's first comments so one reviewer cannot dominate."""
+    denominator. `max_per_author` keeps only each author's first comments so one reviewer cannot dominate. Every
+    finding near any kept comment counts as on a comment; a finding without an integer line lands on none."""
     kept, per_author = [], {}
     for c in comments:
         if c.get("in_review") is False or not isinstance(c.get("line"), int) or not isinstance(c.get("path"), str):
@@ -145,12 +147,11 @@ def score(findings: list[dict], comments: list[dict], *, tolerance: int = 3, max
         kept.append(c)
     rows, used = [], set()
     for c in kept:
-        hit = next((i for i, f in enumerate(findings)
-                    if f.get("file") == c["path"] and abs(int(f.get("line", -10**9)) - c["line"]) <= tolerance), None)
-        if hit is not None:
-            used.add(hit)
+        hits = [i for i, f in enumerate(findings)
+                if f.get("file") == c["path"] and isinstance(f.get("line"), int) and abs(f["line"] - c["line"]) <= tolerance]
+        used.update(hits)
         rows.append({"thread_id": c.get("thread_id"), "path": c["path"], "line": c["line"], "author": c.get("author"),
-                     "matched": hit is not None})
+                     "matched": bool(hits)})
     matched = sum(r["matched"] for r in rows)
     return {"comments": len(rows), "matched": matched, "recall": (matched / len(rows)) if rows else None,
             "findings": len(findings), "findings_on_a_comment": len(used), "findings_elsewhere": len(findings) - len(used),
