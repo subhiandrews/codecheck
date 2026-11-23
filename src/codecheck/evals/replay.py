@@ -255,27 +255,31 @@ def run_case(ctx, case: dict, workdir: Path, *, fixed_panel: bool = False, dry_r
     res = ctx.runner.run(live.review_argv(ctx, workdir, fixed_panel=fixed_panel), cwd=repo,
                          timeout=ctx.config.run_pr.timeout_seconds, input="")
     claude = parse_result(res.stdout, res.returncode, res.stderr)
-    store = ShadowStore(workdir / "shadow")
-    got, invalid, error = live.review_findings(store, keep_message=True)
-    raw = live.newest_raw(store)
-    saved_raw = None
-    if raw is not None and raw_dir is not None:
-        try:  # a raw file that cannot be written must not throw away a review that was paid for
-            target = Path(raw_dir).expanduser()
-            target.mkdir(parents=True, exist_ok=True)
-            saved = target / (re.sub(r"[^\w.@-]", "_", case["name"]) + ".raw.json")
-            saved.write_text(json.dumps(raw, indent=2), encoding="utf-8")
-        except OSError as e:
-            saved_raw = f"raw output not saved: {e}"
-    if not claude["ok"]:
-        error = f"claude run failed: {claude['summary']}"
-    out |= {"got": got, "claude": {"ok": claude["ok"], "summary": claude["summary"], "cost_usd": _cost(claude["cost"])},
-            "score": score(got, case["comments"], tolerance=tolerance, max_per_author=max_per_author),
-            "funnel": funnel(raw, case["comments"], tolerance=tolerance)}
-    if saved_raw:
-        out["raw_error"] = saved_raw
-    if invalid:
-        out["invalid"] = invalid[:5]
+    # The review has been paid for: record it before anything below can fail, so its cost is always counted.
+    out["claude"] = {"ok": claude["ok"], "summary": claude["summary"], "cost_usd": _cost(claude["cost"])}
+    try:
+        store = ShadowStore(workdir / "shadow")
+        got, invalid, error = live.review_findings(store, keep_message=True)
+        raw = live.newest_raw(store)
+        saved_raw = None
+        if raw is not None and raw_dir is not None:
+            try:  # a raw file that cannot be written must not throw away a review that was paid for
+                target = Path(raw_dir).expanduser()
+                target.mkdir(parents=True, exist_ok=True)
+                saved = target / (re.sub(r"[^\w.@-]", "_", case["name"]) + ".raw.json")
+                saved.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+            except OSError as e:
+                saved_raw = f"raw output not saved: {e}"
+        if not claude["ok"]:
+            error = f"claude run failed: {claude['summary']}"
+        out |= {"got": got, "score": score(got, case["comments"], tolerance=tolerance, max_per_author=max_per_author),
+                "funnel": funnel(raw, case["comments"], tolerance=tolerance)}
+        if saved_raw:
+            out["raw_error"] = saved_raw
+        if invalid:
+            out["invalid"] = invalid[:5]
+    except Exception as e:  # noqa: BLE001 - whatever breaks reading or scoring must not lose the paid review's cost
+        error = f"{type(e).__name__}: {e}"
     if error:
         out["error"] = error
     return out
@@ -318,7 +322,10 @@ def run_cases(ctx, cases: list[dict], *, dry_run: bool = False, limit: int | Non
                 spent += cost
         results.append(result)
         if on_result is not None:
-            on_result(result)
+            try:
+                on_result(result)
+            except OSError as e:  # the result is still in the summary below
+                print(f"replay: could not save the result of {case['name']}: {e}", file=sys.stderr)
     return {"cases": results, "cost_usd": round(spent, 4), "skipped_for_budget": skipped,
             "unpriced": unpriced, "dry_run": dry_run,
             "tool_version": __version__}
