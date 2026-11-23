@@ -51,7 +51,7 @@ def test_hold_back_only_drops_suggestions_outside_the_changed_lines_from_the_qui
     assert hold_back(fs, None, 3)[1] == []  # local mode
 
 
-def test_a_late_round_holds_back_suggestions_on_old_lines_end_to_end(tmp_path):
+def test_a_late_round_holds_back_suggestions_on_old_lines_end_to_end(tmp_path, git_env):
     ctx, provider, pr = pr_setup(tmp_path, review=ReviewConfig(quiet_after_round=2))
     me = provider.me
     first = run_pr_context(ctx, pr)
@@ -84,7 +84,7 @@ def test_the_base_is_our_last_marked_review_not_any_review_by_our_login():
     assert last_review_commit([later_plain], "bot") == ""
 
 
-def test_a_missing_last_commit_records_why_nothing_is_held_back(tmp_path):
+def test_a_missing_last_commit_records_why_nothing_is_held_back(tmp_path, git_env):
     ctx, provider, pr = pr_setup(tmp_path)
     gone = "0" * 40
     provider.reviews[pr.ref] = [Review(provider.me, gone, "2026-01-01T00:00:00Z", "COMMENTED", RUN_MARKER.format("old"))]
