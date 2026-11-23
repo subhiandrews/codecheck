@@ -7,9 +7,9 @@ does, in isolated state. Findings are scored against the human comments recorded
 (same file, line within a tolerance). Nothing is posted and the user's own clones, state and shadow store are never
 touched. Use `--dry-run` to rebuild and check every case without calling a model.
 
-    python -m codecheck.evals.replay manifest --shadow DIR --clone OWNER/REPO=PATH RUN_ID... > cases.json
-    python -m codecheck.evals.replay from-git --clone PATH --repo OWNER/REPO --base SHA --labels FILE HEAD... > cases.json
-    python -m codecheck.evals.replay run cases.json [--dry-run] [--limit N] [--budget USD] [--out results.jsonl]
+    python -m codecheck.evals.replay manifest|from-git|run --help
+
+The commands and options are described in the "PR replay" section of docs/MAINTAINING.md.
 """
 
 import argparse
@@ -59,8 +59,12 @@ def validate_case(case: dict) -> dict:
     for key in ("head", "base"):
         if not isinstance(case[key], str) or not SHA.fullmatch(case[key]):
             raise CodeCheckError(f"case {case['name']}: {key} must be a full lowercase 40-character commit id")
-    if not isinstance(case["comments"], list):
-        raise CodeCheckError(f"case {case['name']}: comments must be a list")
+    if not isinstance(case["name"], str):
+        raise CodeCheckError("a case name must be a string")
+    if not isinstance(case["comments"], list) or not all(isinstance(c, dict) for c in case["comments"]):
+        raise CodeCheckError(f"case {case['name']}: comments must be a list of objects")
+    if not isinstance(case["diff"], str) or not isinstance(case["repo"], str):
+        raise CodeCheckError(f"case {case['name']}: repo and diff must be strings")
     _clone_path(case)
     return case
 
@@ -147,14 +151,15 @@ def score(findings: list[dict], comments: list[dict], *, tolerance: int = 3, max
     a `file:line` its message names.
 
     Comments outside the reviewed files (`in_review` false) and comments without a line are left out of the
-    denominator. `max_per_author` keeps only each author's first comments so one reviewer cannot dominate. A
+    denominator. `max_per_author` keeps only each author's first comments so one reviewer cannot dominate. Every
+    finding near any kept comment counts as on a comment; a finding without an integer line lands on none. A
     comment with a `round` (the review round that first reported it) also counts in `by_round`, and one with a
     `kind` (`first-head`, `fix` or `tail`) in `by_kind`."""
     kept, per_author = [], {}
     for c in comments:
         if c.get("in_review") is False or not isinstance(c.get("line"), int) or not isinstance(c.get("path"), str):
             continue
-        author = c.get("author")
+        author = c.get("author") if isinstance(c.get("author"), str) else ""
         per_author[author] = per_author.get(author, 0) + 1
         if max_per_author is not None and per_author[author] > max_per_author:
             continue
@@ -162,12 +167,11 @@ def score(findings: list[dict], comments: list[dict], *, tolerance: int = 3, max
     sites = [_sites(f) for f in findings]
     rows, used = [], set()
     for c in kept:
-        hit = next((i for i, ss in enumerate(sites)
-                    if any(p == c["path"] and abs(n - c["line"]) <= tolerance for p, n in ss)), None)
-        if hit is not None:
-            used.add(hit)
+        hits = [i for i, ss in enumerate(sites)
+                if any(p == c["path"] and abs(n - c["line"]) <= tolerance for p, n in ss)]
+        used.update(hits)
         row = {"thread_id": c.get("thread_id"), "path": c["path"], "line": c["line"], "author": c.get("author"),
-               "matched": hit is not None}
+               "matched": bool(hits)}
         if c.get("round") is not None:
             row["round"] = c["round"]
         if c.get("kind") is not None:
@@ -454,6 +458,19 @@ def _context():
     return build_context(Path.cwd().resolve(), os.environ, Path.home())
 
 
+def _non_negative(kind):
+    """An argparse type: a finite number >= 0 (rejects nan, inf and negatives, which would disable a cap or slice from the end)."""
+    def parse(text: str):
+        try:
+            value = kind(text)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"{text!r} is not a valid number") from None
+        if not math.isfinite(value) or value < 0:
+            raise argparse.ArgumentTypeError(f"{text!r} must be a finite number >= 0")
+        return value
+    return parse
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m codecheck.evals.replay", description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -472,13 +489,13 @@ def main(argv: list[str] | None = None) -> int:
     r = sub.add_parser("run", help="rebuild each case and review it (costs tokens unless --dry-run)")
     r.add_argument("cases", type=Path)
     r.add_argument("--dry-run", action="store_true", help="rebuild and check every case; no model")
-    r.add_argument("--limit", type=int, default=None)
-    r.add_argument("--budget", type=float, default=None, metavar="USD", help="stop starting new cases past this total")
+    r.add_argument("--limit", type=_non_negative(int), default=None)
+    r.add_argument("--budget", type=_non_negative(float), default=None, metavar="USD", help="stop starting new cases past this total")
     r.add_argument("--only", default=None, metavar="NAME")
     r.add_argument("--fixed-panel", action="store_true", help="the live-eval panel (routing off) instead of the shipped one")
     r.add_argument("--raw-dir", type=Path, default=None, help="save each case's raw reviewer and aggregator output here")
-    r.add_argument("--tolerance", type=int, default=3)
-    r.add_argument("--max-per-author", type=int, default=None)
+    r.add_argument("--tolerance", type=_non_negative(int), default=3)
+    r.add_argument("--max-per-author", type=_non_negative(int), default=None)
     r.add_argument("--out", type=Path, default=None, help="append one JSON line per case here")
     args = parser.parse_args(argv)
     try:
@@ -503,13 +520,17 @@ def main(argv: list[str] | None = None) -> int:
             json.dump(cases, sys.stdout, indent=2)
             print()
             return 0
+        out = args.out.expanduser() if args.out is not None else None
+        cases = load_cases(args.cases)
+        if out is not None:
+            out.open("a", encoding="utf-8").close()  # a bad path fails here, before the first paid review
 
         def save(result: dict) -> None:
-            if args.out is not None:
-                with args.out.expanduser().open("a", encoding="utf-8") as fh:
+            if out is not None:
+                with out.open("a", encoding="utf-8") as fh:
                     fh.write(json.dumps(result) + "\n")
 
-        result = run_cases(ctx, load_cases(args.cases), dry_run=args.dry_run, limit=args.limit, budget_usd=args.budget,
+        result = run_cases(ctx, cases, dry_run=args.dry_run, limit=args.limit, budget_usd=args.budget,
                            only=args.only, fixed_panel=args.fixed_panel, tolerance=args.tolerance,
                            max_per_author=args.max_per_author, raw_dir=args.raw_dir, on_result=save)
         print(json.dumps(result, indent=2))

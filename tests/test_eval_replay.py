@@ -97,7 +97,8 @@ def test_commits_missing_or_not_in_the_right_order_are_refused(tmp_path, source)
 
 
 @pytest.mark.parametrize("over", [{"head": "abc"}, {"base": "A" * 40}, {"clone": "-evil"}, {"clone": "relative/path"},
-                                  {"clone": "/no/such/dir"}, {"comments": "nope"}])
+                                  {"clone": "/no/such/dir"}, {"comments": "nope"}, {"comments": ["a string"]},
+                                  {"diff": None}, {"repo": 5}, {"name": 3}])
 def test_invalid_cases_are_refused(source, over):
     with pytest.raises(CodeCheckError):
         validate_case(make_case(source, **over))
@@ -591,3 +592,39 @@ def test_an_unwritable_raw_dir_does_not_throw_away_a_paid_review(tmp_path, sourc
     blocker.write_text("a file, not a directory")
     out = run_case(ctx, make_case(source), workdir(tmp_path), raw_dir=blocker)
     assert "raw output not saved" in out["raw_error"] and out["score"]["recall"] == 1.0 and "error" not in out
+
+
+def test_every_finding_near_a_comment_counts_as_on_a_comment():
+    findings = [{"file": "calc.py", "line": 10}, {"file": "calc.py", "line": 11}, {"file": "calc.py", "line": 12},
+                {"file": "calc.py", "line": 90}]
+    out = score(findings, [comment(10), comment(11)])
+    assert (out["matched"], out["findings_on_a_comment"], out["findings_elsewhere"]) == (2, 3, 1)
+
+
+def test_a_finding_without_an_integer_line_lands_on_no_comment_and_does_not_raise():
+    findings = [{"file": "calc.py", "line": None}, {"file": "calc.py"}, {"file": "calc.py", "line": "2"},
+                {"file": "calc.py", "line": 2}]
+    out = score(findings, [comment(2)])
+    assert (out["matched"], out["findings_on_a_comment"], out["findings_elsewhere"]) == (1, 1, 3)
+
+
+@pytest.mark.parametrize("flag, value", [("--budget", "nan"), ("--budget", "inf"), ("--budget", "-1"), ("--limit", "-1"),
+                                         ("--tolerance", "-1"), ("--max-per-author", "-2"), ("--limit", "x")])
+def test_caps_that_would_disable_or_invert_themselves_are_refused_at_parse_time(tmp_path, flag, value):
+    with pytest.raises(SystemExit):
+        replay.main(["run", str(tmp_path / "cases.json"), flag, value])
+
+
+def test_an_unwritable_out_path_fails_before_any_paid_review(tmp_path, source, monkeypatch, capsys):
+    ctx = _ctx(tmp_path, LiveRunner(FakeRunner()))
+    monkeypatch.setattr(replay, "_context", lambda: ctx)
+    cases = tmp_path / "cases.json"
+    cases.write_text(json.dumps([make_case(source)]))
+    monkeypatch.setattr(replay, "run_cases", lambda *a, **k: pytest.fail("a review was started"))
+    assert replay.main(["run", str(cases), "--out", str(tmp_path / "no" / "dir" / "r.jsonl")]) == 1
+    assert "error" in json.loads(capsys.readouterr().out)
+
+
+def test_a_comment_author_that_is_not_a_string_does_not_raise_in_score():
+    comments = [{"path": "a.py", "line": 3, "author": ["x"]}, {"path": "a.py", "line": 9, "author": {"k": 1}}]
+    assert score([{"file": "a.py", "line": 3}], comments)["comments"] == 2
