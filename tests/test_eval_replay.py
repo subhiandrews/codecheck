@@ -182,7 +182,7 @@ def test_run_case_reviews_the_rebuilt_repo_and_scores_the_findings(tmp_path, sou
     isolation = argv[: argv.index("claude")]
     assert f"CODE_CHECK_STATE_DIR={work.resolve()}/state" in isolation
     assert "CODE_CHECK_REVIEW__ROUTING__MODE=off" not in isolation  # the shipped panel, routing included
-    assert out["got"] == [{"file": "calc.py", "line": 2, "category": "bug", "severity": "warning"}]
+    assert out["got"] == [{"file": "calc.py", "line": 2, "category": "bug", "severity": "warning", "message": FOUND["message"]}]
     assert out["score"]["recall"] == 1.0 and out["claude"]["cost_usd"] == 0.01 and "error" not in out
 
 
@@ -366,3 +366,9 @@ def test_the_hermetic_pr_labels_are_well_formed():
     assert len({x["id"] for x in labels}) == len(labels) == 17
     assert {x["round"] for x in labels} == {1, 2, 3, 4, 5}
     assert all({"id", "round", "path", "needle"} <= set(x) and x["needle"] for x in labels)
+
+
+def test_a_replay_keeps_each_finding_message_for_scoring(tmp_path, source):
+    ctx, _ = reviewing_ctx(tmp_path, [FOUND])
+    out = run_case(ctx, make_case(source), workdir(tmp_path))
+    assert out["got"][0]["message"] == "returns 2, not 1"

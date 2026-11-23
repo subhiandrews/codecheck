@@ -192,7 +192,7 @@ def run_case(ctx, case: dict, workdir: Path, *, fixed_panel: bool = False, dry_r
     res = ctx.runner.run(live.review_argv(ctx, workdir, fixed_panel=fixed_panel), cwd=repo,
                          timeout=ctx.config.run_pr.timeout_seconds, input="")
     claude = parse_result(res.stdout, res.returncode, res.stderr)
-    got, invalid, error = live._findings(ShadowStore(workdir / "shadow"))
+    got, invalid, error = live._findings(ShadowStore(workdir / "shadow"), keep_message=True)
     if not claude["ok"]:
         error = f"claude run failed: {claude['summary']}"
     out |= {"got": got, "claude": {"ok": claude["ok"], "summary": claude["summary"], "cost_usd": claude["cost"]},

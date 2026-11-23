@@ -147,16 +147,17 @@ def review_argv(ctx, workdir: Path, *, fixed_panel: bool = True) -> list[str]:
             "--add-dir", str(workdir), "--allowedTools", *cfg.review_allowed_tools]
 
 
-def _findings(store: ShadowStore) -> tuple[list[dict], list[str], str | None]:
-    """The newest hand-off's aggregator findings as (got, validation errors, error)."""
+def _findings(store: ShadowStore, *, keep_message: bool = False) -> tuple[list[dict], list[str], str | None]:
+    """The newest hand-off's aggregator findings as (got, validation errors, error). A replay keeps each message,
+    because the sites a finding names count for scoring."""
     raw = next((r for rid in reversed(store.ordered_run_ids()) if (r := store.read_raw(rid)) is not None), None)
     if raw is None:
         return [], [], "no hand-off output in the shadow store: the review did not reach its hand-off step"
     if "aggregator" not in raw:
         return [], [], "the hand-off has no aggregator output"
     findings, errors = validate_findings(finding_items(raw["aggregator"]), reviewer="aggregator", root=raw.get("root"))
-    got = [{"file": f.file, "line": f.line, "category": f.category, "severity": f.severity.value}
-           for f in merge_exact_duplicates(findings)]
+    got = [{"file": f.file, "line": f.line, "category": f.category, "severity": f.severity.value,
+            **({"message": f.message} if keep_message else {})} for f in merge_exact_duplicates(findings)]
     return got, errors, None
 
 
