@@ -170,14 +170,17 @@ def score(findings: list[dict], comments: list[dict], *, tolerance: int = 3, max
         hits = [i for i, ss in enumerate(sites)
                 if any(p == c["path"] and abs(n - c["line"]) <= tolerance for p, n in ss)]
         used.update(hits)
+        at_anchor = any(isinstance(f.get("line"), int) and f.get("file") == c["path"]
+                        and abs(f["line"] - c["line"]) <= tolerance for f in findings)
         row = {"thread_id": c.get("thread_id"), "path": c["path"], "line": c["line"], "author": c.get("author"),
-               "matched": bool(hits)}
+               "matched": bool(hits), "anchor_matched": at_anchor}
         if c.get("round") is not None:
             row["round"] = c["round"]
         if c.get("kind") is not None:
             row["kind"] = c["kind"]
         rows.append(row)
     matched = sum(r["matched"] for r in rows)
+    anchored = sum(r["anchor_matched"] for r in rows)
     by_round: dict = {}
     by_kind: dict = {}
     for r in rows:
@@ -187,9 +190,10 @@ def score(findings: list[dict], comments: list[dict], *, tolerance: int = 3, max
                 entry["comments"] += 1
                 entry["matched"] += r["matched"]
     return {"comments": len(rows), "matched": matched, "recall": (matched / len(rows)) if rows else None,
+            "anchor_matched": anchored, "anchor_recall": (anchored / len(rows)) if rows else None,
             "findings": len(findings), "findings_on_a_comment": len(used), "findings_elsewhere": len(findings) - len(used),
-            "by_round": {k: by_round[k] for k in sorted(by_round)},
-            "by_kind": {k: by_kind[k] for k in sorted(by_kind)}, "per_comment": rows}
+            "by_round": {k: by_round[k] for k in sorted(by_round, key=str)},
+            "by_kind": {k: by_kind[k] for k in sorted(by_kind, key=str)}, "per_comment": rows}
 
 
 def _near(findings: list[dict], comment: dict, tolerance: int) -> list[dict]:
@@ -396,6 +400,8 @@ def validate_labels(labels) -> list[dict]:
             raise CodeCheckError(f"label {label.get('id', i)}: missing {', '.join(missing)}")
         if not all(isinstance(label[k], str) and label[k] for k in ("id", "path", "needle")):
             raise CodeCheckError(f"label {label['id']}: id, path and needle must be non-empty strings")
+        if isinstance(label["round"], bool) or not isinstance(label["round"], int):
+            raise CodeCheckError(f"label {label['id']}: round must be an integer")
         occurrence = label.get("occurrence", 1)
         if isinstance(occurrence, bool) or not isinstance(occurrence, int) or occurrence < 1:
             raise CodeCheckError(f"label {label['id']}: occurrence must be a positive integer")

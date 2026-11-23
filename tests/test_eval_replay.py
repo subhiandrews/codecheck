@@ -562,6 +562,8 @@ def test_a_case_that_fails_to_build_is_not_counted_as_an_unpriced_review(tmp_pat
     ([{"id": "a", "round": 1, "path": "f", "needle": "n", "occurrence": "2"}], "positive integer"),
     ([{"id": "a", "round": 1, "path": "f", "needle": "n", "occurrence": 0}], "positive integer"),
     ([{"id": "a", "round": 1, "path": "f", "needle": "n"}] * 2, "duplicate ids"),
+    ([{"id": "a", "round": "2a", "path": "f", "needle": "n"}], "round must be an integer"),
+    ([{"id": "a", "round": True, "path": "f", "needle": "n"}], "round must be an integer"),
 ])
 def test_bad_labels_are_refused_with_a_message(labels, text):
     with pytest.raises(CodeCheckError, match=text):
@@ -628,3 +630,14 @@ def test_an_unwritable_out_path_fails_before_any_paid_review(tmp_path, source, m
 def test_a_comment_author_that_is_not_a_string_does_not_raise_in_score():
     comments = [{"path": "a.py", "line": 3, "author": ["x"]}, {"path": "a.py", "line": 9, "author": {"k": 1}}]
     assert score([{"file": "a.py", "line": 3}], comments)["comments"] == 2
+
+
+def test_anchor_recall_ignores_sites_a_message_merely_names():
+    finding = {"file": "a.py", "line": 50, "message": "same flaw at a.py:3"}
+    out = score([finding], [comment(3, path="a.py")])
+    assert (out["matched"], out["anchor_matched"], out["anchor_recall"]) == (1, 0, 0.0)
+
+
+def test_score_does_not_raise_on_rounds_of_mixed_types():
+    comments = [{**comment(3), "round": 1}, {**comment(9), "round": "2a"}]
+    assert sorted(score([], comments)["by_round"], key=str) == [1, "2a"]
