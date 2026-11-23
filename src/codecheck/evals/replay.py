@@ -59,8 +59,12 @@ def validate_case(case: dict) -> dict:
     for key in ("head", "base"):
         if not isinstance(case[key], str) or not SHA.fullmatch(case[key]):
             raise CodeCheckError(f"case {case['name']}: {key} must be a full lowercase 40-character commit id")
-    if not isinstance(case["comments"], list):
-        raise CodeCheckError(f"case {case['name']}: comments must be a list")
+    if not isinstance(case["name"], str):
+        raise CodeCheckError("a case name must be a string")
+    if not isinstance(case["comments"], list) or not all(isinstance(c, dict) for c in case["comments"]):
+        raise CodeCheckError(f"case {case['name']}: comments must be a list of objects")
+    if not isinstance(case["diff"], str) or not isinstance(case["repo"], str):
+        raise CodeCheckError(f"case {case['name']}: repo and diff must be strings")
     _clone_path(case)
     return case
 
@@ -140,7 +144,7 @@ def score(findings: list[dict], comments: list[dict], *, tolerance: int = 3, max
     for c in comments:
         if c.get("in_review") is False or not isinstance(c.get("line"), int) or not isinstance(c.get("path"), str):
             continue
-        author = c.get("author")
+        author = c.get("author") if isinstance(c.get("author"), str) else ""
         per_author[author] = per_author.get(author, 0) + 1
         if max_per_author is not None and per_author[author] > max_per_author:
             continue
@@ -301,6 +305,19 @@ def _context():
     return build_context(Path.cwd().resolve(), os.environ, Path.home())
 
 
+def _non_negative(kind):
+    """An argparse type: a finite number >= 0 (rejects nan, inf and negatives, which would disable a cap or slice from the end)."""
+    def parse(text: str):
+        try:
+            value = kind(text)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"{text!r} is not a valid number") from None
+        if not math.isfinite(value) or value < 0:
+            raise argparse.ArgumentTypeError(f"{text!r} must be a finite number >= 0")
+        return value
+    return parse
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m codecheck.evals.replay", description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -312,12 +329,12 @@ def main(argv: list[str] | None = None) -> int:
     r = sub.add_parser("run", help="rebuild each case and review it (costs tokens unless --dry-run)")
     r.add_argument("cases", type=Path)
     r.add_argument("--dry-run", action="store_true", help="rebuild and check every case; no model")
-    r.add_argument("--limit", type=int, default=None)
-    r.add_argument("--budget", type=float, default=None, metavar="USD", help="stop starting new cases past this total")
+    r.add_argument("--limit", type=_non_negative(int), default=None)
+    r.add_argument("--budget", type=_non_negative(float), default=None, metavar="USD", help="stop starting new cases past this total")
     r.add_argument("--only", default=None, metavar="NAME")
     r.add_argument("--fixed-panel", action="store_true", help="the live-eval panel (routing off) instead of the shipped one")
-    r.add_argument("--tolerance", type=int, default=3)
-    r.add_argument("--max-per-author", type=int, default=None)
+    r.add_argument("--tolerance", type=_non_negative(int), default=3)
+    r.add_argument("--max-per-author", type=_non_negative(int), default=None)
     r.add_argument("--out", type=Path, default=None, help="append one JSON line per case here")
     args = parser.parse_args(argv)
     try:
@@ -333,12 +350,17 @@ def main(argv: list[str] | None = None) -> int:
             json.dump(cases, sys.stdout, indent=2)
             print()
             return 0
+        out = args.out.expanduser() if args.out is not None else None
+        cases = load_cases(args.cases)
+        if out is not None:
+            out.open("a", encoding="utf-8").close()  # a bad path fails here, before the first paid review
+
         def save(result: dict) -> None:
-            if args.out is not None:
-                with args.out.expanduser().open("a", encoding="utf-8") as fh:
+            if out is not None:
+                with out.open("a", encoding="utf-8") as fh:
                     fh.write(json.dumps(result) + "\n")
 
-        result = run_cases(ctx, load_cases(args.cases), dry_run=args.dry_run, limit=args.limit, budget_usd=args.budget,
+        result = run_cases(ctx, cases, dry_run=args.dry_run, limit=args.limit, budget_usd=args.budget,
                            only=args.only, fixed_panel=args.fixed_panel, tolerance=args.tolerance,
                            max_per_author=args.max_per_author, on_result=save)
         print(json.dumps(result, indent=2))
