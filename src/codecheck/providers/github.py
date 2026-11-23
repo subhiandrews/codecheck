@@ -109,6 +109,12 @@ def _anchor_rejected(stderr: str) -> bool:
     return bool(_ANCHOR_REJECTED.search(stderr or ""))
 
 
+def _failure_detail(res: CommandResult) -> str:
+    """stderr plus stdout: `gh api` prints the API's JSON error body (the actual reason) on stdout."""
+    parts = [p for p in ((res.stderr or "").strip()[:500], (res.stdout or "").strip()[:1000]) if p]
+    return " | ".join(parts)
+
+
 class GitHubProvider:
     name = "github"
     nested_repos = False
@@ -265,12 +271,12 @@ class GitHubProvider:
         if not comments or not _anchor_rejected(res.stderr):
             # Only an unresolvable inline anchor (HTTP 422) is worth retrying as a body-only review;
             # auth, network or server errors would fail the retry too, or hide a real problem.
-            raise ProviderError(f"posting review failed ({res.returncode}): {res.stderr.strip()[:500]}")
+            raise ProviderError(f"posting review failed ({res.returncode}): {_failure_detail(res)}")
         folded = body + "\n\n---\n_The host rejected the inline anchors, so the findings are listed here instead._\n\n"
         folded += "\n\n".join(f"**`{c.path}:{c.line}`**\n{c.body}" for c in comments)
         retry = self.runner.run(argv, input=payload(folded, []), cwd=self.cwd)
         if retry.returncode != 0:
-            raise ProviderError(f"posting review failed ({retry.returncode}): {retry.stderr.strip()[:500]}")
+            raise ProviderError(f"posting review failed ({retry.returncode}): {_failure_detail(retry)}")
         return PostResult(0, degraded=True)
 
     def reply(self, ref: PRRef, thread: Thread, body: str) -> None:

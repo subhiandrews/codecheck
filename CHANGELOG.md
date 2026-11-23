@@ -2,6 +2,11 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.4.2]
+
+### Fixed
+- A failed `post` now shows GitHub's error message, not just "Unprocessable Entity (HTTP 422)".
+
 ## [1.4.1]
 
 ### Added

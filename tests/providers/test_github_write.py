@@ -49,6 +49,22 @@ def test_degraded_retry_failure_raises():
         GitHubProvider(runner).post_review(REF, "abc", "s", [ReviewComment("a.py", 1, "RIGHT", "x")], Decision("COMMENT", "r"))
 
 
+def test_post_failure_includes_the_api_error_body_from_stdout():
+    body = '{"message":"Unprocessable Entity","errors":["Review cannot be submitted"]}'
+    runner = (
+        FakeRunner()
+        .on(*REVIEWS, returncode=1, stderr="gh: Unprocessable Entity (HTTP 422)", stdout=body)
+        .on(*REVIEWS, returncode=1, stderr="gh: Unprocessable Entity (HTTP 422)", stdout=body)
+    )
+    with pytest.raises(ProviderError) as exc:
+        GitHubProvider(runner).post_review(REF, "abc", "s", [ReviewComment("a.py", 1, "RIGHT", "x")], Decision("COMMENT", "r"))
+    assert "HTTP 422" in str(exc.value) and "Review cannot be submitted" in str(exc.value)
+
+    runner = FakeRunner().on(*REVIEWS, returncode=1, stderr="gh: Unprocessable Entity (HTTP 422)", stdout=body)
+    with pytest.raises(ProviderError, match="Review cannot be submitted"):
+        GitHubProvider(runner).post_review(REF, "abc", "s", [], Decision("COMMENT", "r"))
+
+
 def test_reply_resolve_request_review_commands():
     runner = (
         FakeRunner()
