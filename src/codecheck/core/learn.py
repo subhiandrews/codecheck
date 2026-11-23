@@ -96,7 +96,8 @@ def check_proposal(old: str | None, new: str) -> str | None:
 
 
 def diff_text(old: str | None, new: str, name: str) -> str:
-    return "".join(difflib.unified_diff((old or "").splitlines(True), new.splitlines(True), f"a/{name}", f"b/{name}"))
+    before = "/dev/null" if old is None else f"a/{name}"  # a new file, so that `git apply` creates it
+    return "".join(difflib.unified_diff((old or "").splitlines(True), new.splitlines(True), before, f"b/{name}"))
 
 
 def summary(evidence: Mapping) -> str:

@@ -130,6 +130,15 @@ class Git:
                     found.append(name)
         return found
 
+    def has_path(self, ref: str, path: str) -> bool:
+        """Whether anything (a file, symlink, submodule or tree) is at `path` in `ref`. Raises GitError when git fails (for
+        example a missing ref), so a lookup that did not finish is never mistaken for an absent path."""
+        _safe(ref)
+        res = self._run("--literal-pathspecs", "ls-tree", "--full-tree", "-z", ref, "--", path)
+        if res.returncode != 0:
+            raise GitError(f"git ls-tree failed: {res.stderr.strip()}")
+        return bool(res.stdout.strip("\0"))
+
     def toplevel(self) -> Path:
         return Path(self._out("rev-parse", "--show-toplevel"))
 
