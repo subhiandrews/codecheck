@@ -18,7 +18,7 @@ PUSH_WAIT = "Allow up to 10 minutes for the push because it runs the configured 
 REVIEW_RULES = (
     (r"^3\. Dispatch the panel in parallel:.*$", PANEL),
     (r"^4\. Run `code-check ingest .*\n^5\. Dispatch one Agent call .*\n", ""),
-    (r"^([6-9])\. ", lambda match: f"{int(match[1]) - 2}. "),
+    (r"^([6-9]|10)\. ", lambda match: f"{int(match[1]) - 2}. "),
     (r" If any subagent's final .* relaying those reasons\.", ""),
     (r"\. Note `run_id`, `run_dir`, (?:`panel`, `chunks`|`panel\.members`, `panel\.languages` and `chunks`)\.",
      ". Note `run_id`."),
@@ -33,7 +33,7 @@ SUBSTITUTIONS = {
         *REVIEW_RULES,
         (r" With no argument it reviews the open PRs .*? Use for", " Use for"),
         (r', or under /loop to keep reviewing teammates\' PRs\.', "."),
-        (r"\(step 8\)", "(step 6)"),
+        (r"\(step 9\)", "(step 7)"),
         (r" A keyword without a PR means repository mode, where it has no effect because configuration controls it\.", ""),
         (r", and `?\(ignored guidance: <reasons>\)`? when any subagent.*\.", "."),
         (r"Ask no questions, except the replies-only question in step 1, and only when run interactively\.",

@@ -1,10 +1,13 @@
 import json
 import os
+import re
+import shutil
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from clihelp import call, make_ctx
-from gitutil import make_origin_and_clone
+from gitutil import commit_file, make_origin_and_clone, sh
 
 from codecheck.config import ReviewConfig
 from codecheck.core.learn import (
@@ -187,3 +190,148 @@ def test_evidence_without_shadow_recording_says_why(tmp_path):
     ctx, _ = _ctx(tmp_path, learn_guidance=True)
     out = call(replace(ctx, shadow=None), "guidance", "evidence")[1]
     assert out["enabled"] is True and out["proposable"] is False and "shadow" in out["reason"]
+
+
+# --- patch mode: `--base REF --run RUN_ID` proposes against a git ref and writes a patch into the run directory ---
+
+
+def _patch_of(run_dir):
+    """Where the patch for a run goes: next to the runs, so that `cleanup` (which removes the run directory) keeps it."""
+    return run_dir.parent.parent / "proposals" / f"{run_dir.name}.patch"
+
+
+def _patch_ctx(tmp_path, base_text="1. Base rule.\n"):
+    """A clone whose HEAD carries a CODE_CHECK.md, a run directory, and evidence for two disputed PRs."""
+    ctx, clone = _ctx(tmp_path, learn_guidance=True)
+    if base_text is not None:
+        commit_file(clone, "CODE_CHECK.md", base_text, "add guidance")
+    rid = new_run_id()
+    run_dir = tmp_path / "state" / "runs" / rid
+    run_dir.mkdir(parents=True)
+    return ctx, clone, rid, run_dir
+
+
+def test_evidence_with_a_base_reads_the_current_file_from_that_ref_not_the_working_tree(tmp_path):
+    ctx, clone, _, _ = _patch_ctx(tmp_path)
+    (clone / "CODE_CHECK.md").write_text("DIRTY local edit\n")
+    ev = call(ctx, "guidance", "evidence", "--base", "HEAD")[1]
+    assert ev["current"] == "1. Base rule.\n" and ev["path"] == "CODE_CHECK.md"
+
+
+def test_apply_with_a_base_writes_a_patch_in_the_run_directory_and_never_touches_the_working_tree(tmp_path):
+    ctx, clone, rid, run_dir = _patch_ctx(tmp_path)
+    (clone / "CODE_CHECK.md").write_text("DIRTY local edit\n")
+    ev = _with_evidence(ctx)
+    code, out = call(ctx, "guidance", "apply", "--base", "HEAD", "--run", rid, "--digest", ev["digest"],
+                     stdin="1. Base rule.\n2. Style findings are not wanted here.\n")
+    assert code == 0 and out["patch"] == str(_patch_of(run_dir)) and out["created"] is False
+    shutil.rmtree(run_dir)  # what `cleanup` does at the end of a review
+    assert "+2. Style findings are not wanted here." in (_patch_of(run_dir)).read_text()
+    assert (clone / "CODE_CHECK.md").read_text() == "DIRTY local edit\n"  # the working tree is not written
+    assert sh(clone, "status", "--porcelain").strip() == "M CODE_CHECK.md"  # and nothing is staged or committed
+    assert "written" not in out
+
+
+def test_the_patch_applies_to_a_clean_checkout_of_the_base(tmp_path):
+    ctx, clone, rid, run_dir = _patch_ctx(tmp_path)
+    ev = _with_evidence(ctx)
+    new = "1. Base rule.\n2. Style findings are not wanted here.\n"
+    assert call(ctx, "guidance", "apply", "--base", "HEAD", "--run", rid, "--digest", ev["digest"], stdin=new)[0] == 0
+    sh(clone, "apply", "--check", str(_patch_of(run_dir)))
+    sh(clone, "apply", str(_patch_of(run_dir)))
+    assert (clone / "CODE_CHECK.md").read_text() == new
+
+
+def test_a_patch_can_create_a_file_the_base_does_not_have_and_a_directory_only_the_base_has(tmp_path):
+    ctx, clone, rid, run_dir = _patch_ctx(tmp_path, base_text=None)
+    commit_file(clone, "lib/mod.py", "x = 1\n", "add lib")  # `lib` exists at HEAD ...
+    sh(clone, "rm", "-r", "-q", "lib")  # ... but not in the working tree
+    repo = call(ctx, "guidance", "evidence")[1]["repo"]
+    seed(ctx.shadow, 1, [("a1", "lib/x.py", "style", "disputed")], repo=repo)
+    seed(ctx.shadow, 2, [("a2", "lib/y.py", "style", "disputed")], repo=repo)
+    ev = call(ctx, "guidance", "evidence", "--dir", "lib", "--base", "HEAD")[1]
+    assert ev["path"] == "lib/CODE_CHECK.md" and ev["current"] is None and ev["proposable"]
+    code, out = call(ctx, "guidance", "apply", "--dir", "lib", "--base", "HEAD", "--run", rid,
+                     "--digest", ev["digest"], stdin="1. Lib rule.\n")
+    assert code == 0 and out["created"] is True and "+++ b/lib/CODE_CHECK.md" in (_patch_of(run_dir)).read_text()
+    assert not (clone / "lib").exists()
+    sh(clone, "apply", "--check", str(_patch_of(run_dir)))  # a new file needs a /dev/null header to apply
+
+
+def test_a_patch_is_checked_like_a_written_proposal_and_a_refusal_leaves_no_patch(tmp_path):
+    ctx, _, rid, run_dir = _patch_ctx(tmp_path)
+    ev = _with_evidence(ctx)
+    for text, why in ((f"key {SECRET}\n", "secret"), ("1. Base rule.\n", "does not change")):
+        code, out = call(ctx, "guidance", "apply", "--base", "HEAD", "--run", rid, "--digest", ev["digest"], stdin=text)
+        assert code == 1 and why in json.dumps(out)
+    assert call(ctx, "guidance", "apply", "--base", "HEAD", "--run", rid, "--digest", "0" * 16, stdin="x\n")[0] == 1
+    assert not (_patch_of(run_dir)).exists()
+    assert call(ctx, "guidance", "evidence", "--base", "HEAD")[1]["changed"] is True  # a refusal is not remembered
+
+
+def test_the_same_evidence_is_not_proposed_again_after_a_patch(tmp_path):
+    ctx, _, rid, _ = _patch_ctx(tmp_path)
+    ev = _with_evidence(ctx)
+    assert call(ctx, "guidance", "apply", "--base", "HEAD", "--run", rid, "--digest", ev["digest"], stdin="1. New.\n")[0] == 0
+    assert call(ctx, "guidance", "evidence", "--base", "HEAD")[1]["changed"] is False
+
+
+def test_base_and_run_go_together_and_the_run_must_be_a_real_run_directory(tmp_path):
+    ctx, _, rid, run_dir = _patch_ctx(tmp_path)
+    ev = _with_evidence(ctx)
+    digest = ev["digest"]
+    assert call(ctx, "guidance", "apply", "--base", "HEAD", "--digest", digest, stdin="x\n")[0] == 1
+    assert call(ctx, "guidance", "apply", "--run", rid, "--digest", digest, stdin="x\n")[0] == 1
+    for bad in ("../escape", "/tmp", "nothex000000", new_run_id()):  # the last is well formed but has no directory
+        code, _ = call(ctx, "guidance", "apply", "--base", "HEAD", "--run", bad, "--digest", digest, stdin="x\n")
+        assert code == 1, bad
+    assert not any(run_dir.iterdir()) and not _patch_of(run_dir).exists()
+
+
+def test_a_base_that_could_act_as_an_option_or_does_not_exist_is_refused(tmp_path):
+    ctx, _, rid, _ = _patch_ctx(tmp_path)
+    ev = _with_evidence(ctx)
+    for base in ("--output=/tmp/x", "-n", "no-such-ref"):
+        assert call(ctx, "guidance", "evidence", f"--base={base}")[0] == 1, base  # `=` so argparse takes it as the value
+        code, _ = call(ctx, "guidance", "apply", f"--base={base}", "--run", rid, "--digest", ev["digest"], stdin="x\n")
+        assert code == 1, base
+
+
+def test_a_symlink_or_directory_named_code_check_md_at_the_base_is_refused_not_treated_as_missing(tmp_path):
+    ctx, clone, rid, run_dir = _patch_ctx(tmp_path, base_text=None)
+    ev = _with_evidence(ctx)  # gathered first: with the symlink committed, the working-tree reader refuses too
+    os.symlink("README.md", clone / "CODE_CHECK.md")
+    sh(clone, "add", "CODE_CHECK.md")
+    sh(clone, "commit", "-m", "symlinked guidance")
+    assert call(ctx, "guidance", "evidence", "--base", "HEAD")[0] == 1
+    code, _ = call(ctx, "guidance", "apply", "--base", "HEAD", "--run", rid, "--digest", ev["digest"], stdin="1. Rule.\n")
+    assert code == 1 and not (_patch_of(run_dir)).exists()
+
+
+def test_a_base_file_without_a_final_newline_gives_a_patch_that_applies(tmp_path):
+    ctx, clone, rid, run_dir = _patch_ctx(tmp_path, base_text="1. Base rule.")  # no trailing newline at the base
+    ev = _with_evidence(ctx)
+    new = "1. Base rule.\n2. Style findings are not wanted here.\n"
+    assert call(ctx, "guidance", "apply", "--base", "HEAD", "--run", rid, "--digest", ev["digest"], stdin=new)[0] == 0
+    patch = _patch_of(run_dir)
+    assert "\\ No newline at end of file" in patch.read_text()
+    sh(clone, "apply", "--check", str(patch))
+    sh(clone, "apply", str(patch))
+    assert (clone / "CODE_CHECK.md").read_text() == new
+
+
+def test_a_directory_that_is_a_symlink_at_the_base_is_refused_not_treated_as_missing(tmp_path):
+    ctx, clone, rid, run_dir = _patch_ctx(tmp_path, base_text=None)
+    ev = _with_evidence(ctx)
+    os.symlink("app", clone / "lib")
+    sh(clone, "add", "lib")
+    sh(clone, "commit", "-m", "lib is a symlink")
+    assert call(ctx, "guidance", "evidence", "--dir", "lib", "--base", "HEAD")[0] == 1
+    code, _ = call(ctx, "guidance", "apply", "--dir", "lib", "--base", "HEAD", "--run", rid, "--digest", ev["digest"], stdin="1. Rule.\n")
+    assert code == 1 and not _patch_of(run_dir).exists()
+
+
+def test_review_pr_step_8_says_to_skip_when_base_warning_is_set():
+    step = next(line for line in (Path(__file__).parent.parent / "skills" / "review-pr" / "SKILL.md").read_text().splitlines()
+                if line.startswith("8. "))
+    assert re.search(r"If `base_warning` is set.*skip this step", step)

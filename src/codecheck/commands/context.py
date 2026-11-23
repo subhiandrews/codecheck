@@ -172,7 +172,7 @@ def _build(args, ctx, run_id, run_dir) -> dict:
     if ctx.shadow is not None:
         ctx.guarded(record_run, ctx.shadow, meta, diff, cfg)
     out = {"run_id": run_id, "run_dir": str(run_dir), "root": meta["root"], "mode": args.mode,
-            "base_warning": sync.warning, "files": len(files), "chunks": chunks, "panel": meta["panel"],
+            "base_ref": sync.base_ref, "base_warning": sync.warning, "files": len(files), "chunks": chunks, "panel": meta["panel"],
             "guidance": meta["guidance"], "project_context": meta["project_context"], "run_files": meta["run_files"], "replies": replies, "existing_comments": existing_comments,
             "existing_comments_error": existing_comments_error}
     if handoff:

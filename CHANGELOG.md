@@ -2,6 +2,11 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.4.1]
+
+### Added
+- `review-pr` can propose `CODE_CHECK.md` improvements learned from past reviews as a patch file for a separate PR. Off by default (`review.learn_guidance`, user config only).
+
 ## [1.4.0]
 
 ### Changed
