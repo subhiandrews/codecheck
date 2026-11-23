@@ -323,8 +323,8 @@ def cases_from_git(ctx, clone: Path, repo: str, base: str, labels: list[dict], h
 
     `labels` are the findings the reviews made over time, found again by text so each head gets its own line
     numbers: {"id", "round" (when it was first reported), "path", "needle" (a line of the file that holds the
-    problem), "occurrence" (default 1), "fixed_in" (optional commit: heads that contain it no longer have the
-    problem)}. Any other head must still hold the needle, or the case is refused. The diff is taken from git, so
+    problem), "occurrence" (default 1), "introduced_in" (optional commit: earlier heads do not have the problem yet),
+    "fixed_in" (optional commit: heads that contain it no longer have the problem)}. Any other head must still hold the needle, or the case is refused. The diff is taken from git, so
     the case always passes the rebuild check."""
     clone = Path(clone).expanduser()
     if not _ok(ctx, clone, "cat-file", "-e", f"{base}^{{commit}}"):
@@ -335,6 +335,11 @@ def cases_from_git(ctx, clone: Path, repo: str, base: str, labels: list[dict], h
         diff = _out(ctx, clone, "diff", "--no-color", "--no-ext-diff", f"{base}...{full}")
         comments = []
         for label in labels:
+            introduced = label.get("introduced_in")
+            if introduced:
+                introduced_full = _out(ctx, clone, "rev-parse", "--verify", f"{introduced}^{{commit}}").strip()
+                if not _ok(ctx, clone, "merge-base", "--is-ancestor", introduced_full, full):
+                    continue
             fixed = label.get("fixed_in")
             if fixed:
                 fixed_full = _out(ctx, clone, "rev-parse", "--verify", f"{fixed}^{{commit}}").strip()

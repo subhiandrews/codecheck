@@ -397,3 +397,18 @@ def test_run_case_saves_the_raw_output_and_reports_the_funnel(tmp_path, source):
     assert out["funnel"]["stages"] == {"kept": 1}
     [saved] = raw_dir.glob("*.raw.json")
     assert saved.name == "pr1.raw.json" and "aggregator" in json.loads(saved.read_text())
+
+
+def test_a_label_introduced_by_a_later_commit_is_left_out_of_earlier_heads(tmp_path, reviewed_twice):
+    r = reviewed_twice
+    ctx = _ctx(tmp_path, LiveRunner(FakeRunner()))
+    labels = [{"id": "late", "round": 2, "path": "docs.md", "needle": "new line", "introduced_in": r["second"]}]
+    first, second = replay.cases_from_git(ctx, r["path"], "o/r", r["base"], labels, [r["first"], r["second"]])
+    assert first["comments"] == [] and [c["thread_id"] for c in second["comments"]] == ["late"]
+
+
+def test_the_hermetic_pr6_labels_are_well_formed():
+    labels = json.loads((Path(__file__).parent.parent / "evals/replay-labels/hermetic-pr6.json").read_text())
+    assert len({x["id"] for x in labels}) == len(labels) == 11
+    assert {x["round"] for x in labels} == {1, 2, 3}
+    assert all({"id", "round", "path", "needle"} <= set(x) and x["needle"] for x in labels)
