@@ -14,6 +14,7 @@ touched. Use `--dry-run` to rebuild and check every case without calling a model
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -24,11 +25,14 @@ from codecheck import __version__
 from codecheck.commands.run_pr import parse_result
 from codecheck.errors import CodeCheckError
 from codecheck.evals import live
+from codecheck.models import is_service_login
+from codecheck.runner import run_checked
 from codecheck.shadow.store import ShadowStore
 
 SHA = re.compile(r"[0-9a-f]{40}")
-# Authors whose comments are not human review: matched as lowercase substrings of the login.
-BOT_HINTS = ("[bot]", "bot", "copilot", "coderabbit", "codecov", "github-actions", "dependabot", "duo")
+# Review bots whose login has no `[bot]` suffix, compared whole and in lowercase; `is_service_login` covers the rest.
+KNOWN_BOTS = frozenset({"copilot", "copilot-pull-request-reviewer", "coderabbitai", "codecov-commenter", "codecov",
+                        "github-actions", "dependabot"})
 BASE_REFS = ("origin/main", "origin/master", "main", "master")
 REQUIRED = ("name", "repo", "clone", "head", "base", "diff", "comments")
 
@@ -79,21 +83,21 @@ def load_cases(path: Path) -> list[dict]:
 
 
 def _ok(ctx, cwd: Path, *args: str) -> bool:
-    return ctx.runner.run([*live._GIT, *args], cwd=cwd).returncode == 0
+    return ctx.runner.run([*live.GIT, *args], cwd=cwd).returncode == 0
 
 
 def _out(ctx, cwd: Path, *args: str) -> str:
-    return live.run_checked(ctx.runner, [*live._GIT, *args], cwd=cwd).stdout
+    return run_checked(ctx.runner, [*live.GIT, *args], cwd=cwd).stdout
 
 
 def resolve_base(ctx, clone: Path, head: str, diff: str) -> str:
     """The merge-base of `head` and the clone's base branch whose three-dot diff is exactly the saved one."""
     for ref in BASE_REFS:
-        res = ctx.runner.run([*live._GIT, "merge-base", head, ref], cwd=clone)
+        res = ctx.runner.run([*live.GIT, "merge-base", head, ref], cwd=clone)
         base = res.stdout.strip()
         if res.returncode != 0 or not SHA.fullmatch(base):
             continue
-        shown = ctx.runner.run([*live._GIT, "diff", "--no-color", "--no-ext-diff", f"{base}...{head}"], cwd=clone)
+        shown = ctx.runner.run([*live.GIT, "diff", "--no-color", "--no-ext-diff", f"{base}...{head}"], cwd=clone)
         if shown.returncode == 0 and _same_diff(shown.stdout, diff):
             return base
     raise CodeCheckError(f"no base of {head[:10]} in {clone} reproduces the saved diff; the clone may lack the history")
@@ -104,7 +108,7 @@ def build_repo(ctx, case: dict, workdir: Path) -> Path:
     source = _clone_path(case)
     repo, origin = workdir / "repo", workdir / "origin.git"
     head, base = case["head"], case["base"]
-    live._git(ctx, workdir, "clone", "--quiet", "--no-checkout", "--", str(source), str(repo))
+    live.git(ctx, workdir, "clone", "--quiet", "--no-checkout", "--", str(source), str(repo))
     for sha in (head, base):
         if not _ok(ctx, repo, "cat-file", "-e", f"{sha}^{{commit}}"):
             raise CodeCheckError(f"case {case['name']}: commit {sha[:10]} is not in {source}")
@@ -113,13 +117,13 @@ def build_repo(ctx, case: dict, workdir: Path) -> Path:
     shown = _out(ctx, repo, "diff", "--no-color", "--no-ext-diff", f"{base}...{head}")
     if not _same_diff(shown, case["diff"]):
         raise CodeCheckError(f"case {case['name']}: git diff {base[:10]}...{head[:10]} is not the saved diff")
-    live._git(ctx, workdir, "init", "--quiet", "--bare", "-b", "main", str(origin))
-    live._git(ctx, repo, "push", "--quiet", str(origin), f"{base}:refs/heads/main")
-    live._git(ctx, repo, "remote", "remove", "origin")
-    live._git(ctx, repo, "remote", "add", "origin", str(origin))
-    live._git(ctx, repo, "fetch", "--quiet", "origin")
-    live._git(ctx, repo, "remote", "set-head", "origin", "main")
-    live._git(ctx, repo, "checkout", "--quiet", "-b", "replay", head)
+    live.git(ctx, workdir, "init", "--quiet", "--bare", "-b", "main", str(origin))
+    live.git(ctx, repo, "push", "--quiet", str(origin), f"{base}:refs/heads/main")
+    live.git(ctx, repo, "remote", "remove", "origin")
+    live.git(ctx, repo, "remote", "add", "origin", str(origin))
+    live.git(ctx, repo, "fetch", "--quiet", "origin")
+    live.git(ctx, repo, "remote", "set-head", "origin", "main")
+    live.git(ctx, repo, "checkout", "--quiet", "-b", "replay", head)
     return repo
 
 
@@ -225,6 +229,12 @@ def funnel(raw: dict | None, comments: list[dict], *, tolerance: int = 3) -> dic
 # --- running -----------------------------------------------------------------------------------------------------
 
 
+def _cost(value) -> float | None:
+    """A review's cost when the model reported a real number, else None (never a guess that it was free)."""
+    ok = isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value) and value >= 0
+    return float(value) if ok else None
+
+
 def run_case(ctx, case: dict, workdir: Path, *, fixed_panel: bool = False, dry_run: bool = False,
              tolerance: int = 3, max_per_author: int | None = None, raw_dir: Path | None = None) -> dict:
     workdir = Path(workdir).resolve()
@@ -237,17 +247,24 @@ def run_case(ctx, case: dict, workdir: Path, *, fixed_panel: bool = False, dry_r
                          timeout=ctx.config.run_pr.timeout_seconds, input="")
     claude = parse_result(res.stdout, res.returncode, res.stderr)
     store = ShadowStore(workdir / "shadow")
-    got, invalid, error = live._findings(store, keep_message=True)
+    got, invalid, error = live.review_findings(store, keep_message=True)
     raw = live.newest_raw(store)
+    saved_raw = None
     if raw is not None and raw_dir is not None:
-        target = Path(raw_dir).expanduser()
-        target.mkdir(parents=True, exist_ok=True)
-        (target / (re.sub(r"[^\w.@-]", "_", case["name"]) + ".raw.json")).write_text(json.dumps(raw, indent=2), encoding="utf-8")
+        try:  # a raw file that cannot be written must not throw away a review that was paid for
+            target = Path(raw_dir).expanduser()
+            target.mkdir(parents=True, exist_ok=True)
+            saved = target / (re.sub(r"[^\w.@-]", "_", case["name"]) + ".raw.json")
+            saved.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+        except OSError as e:
+            saved_raw = f"raw output not saved: {e}"
     if not claude["ok"]:
         error = f"claude run failed: {claude['summary']}"
-    out |= {"got": got, "claude": {"ok": claude["ok"], "summary": claude["summary"], "cost_usd": claude["cost"]},
+    out |= {"got": got, "claude": {"ok": claude["ok"], "summary": claude["summary"], "cost_usd": _cost(claude["cost"])},
             "score": score(got, case["comments"], tolerance=tolerance, max_per_author=max_per_author),
             "funnel": funnel(raw, case["comments"], tolerance=tolerance)}
+    if saved_raw:
+        out["raw_error"] = saved_raw
     if invalid:
         out["invalid"] = invalid[:5]
     if error:
@@ -257,9 +274,10 @@ def run_case(ctx, case: dict, workdir: Path, *, fixed_panel: bool = False, dry_r
 
 def run_cases(ctx, cases: list[dict], *, dry_run: bool = False, limit: int | None = None, budget_usd: float | None = None,
               only: str | None = None, fixed_panel: bool = False, tolerance: int = 3, max_per_author: int | None = None,
-              raw_dir: Path | None = None) -> dict:
+              raw_dir: Path | None = None, on_result=None) -> dict:
     """One review per case, one after another, never retried. The budget is checked before each case, so the last
-    case can overshoot it by one review's cost."""
+    case can overshoot it by one review's cost; `unpriced` lists reviews that reported no cost. `on_result` is called with each result as soon as it exists, so a
+    caller can save a paid review before a later case fails."""
     if only is not None:
         cases = [c for c in cases if c["name"] == only]
         if not cases:
@@ -270,9 +288,11 @@ def run_cases(ctx, cases: list[dict], *, dry_run: bool = False, limit: int | Non
         reason = live.unreachable_reason(ctx)
         if reason is not None:
             raise CodeCheckError(f"model not reachable: {reason}")
-    results, spent, skipped = [], 0.0, []
+    results, spent, skipped, unpriced = [], 0.0, [], []
     for case in cases:
-        if budget_usd is not None and spent >= budget_usd:
+        # A review with no reported cost (a timeout, non-JSON output) may still have spent tokens, so with a budget set
+        # nothing new starts once one has run: the total is no longer known.
+        if budget_usd is not None and (spent >= budget_usd or unpriced):
             skipped.append(case["name"])
             continue
         with tempfile.TemporaryDirectory(prefix="code-check-replay-", ignore_cleanup_errors=True) as workdir:
@@ -281,26 +301,44 @@ def run_cases(ctx, cases: list[dict], *, dry_run: bool = False, limit: int | Non
                                   tolerance=tolerance, max_per_author=max_per_author, raw_dir=raw_dir)
             except CodeCheckError as e:
                 result = {"name": case["name"], "error": str(e)}
-        spent += float((result.get("claude") or {}).get("cost_usd") or 0)
+        if "claude" in result:  # a review ran (a case that failed to build has no `claude` entry)
+            cost = result["claude"].get("cost_usd")
+            if cost is None:
+                unpriced.append(case["name"])
+            else:
+                spent += cost
         results.append(result)
-    return {"cases": results, "cost_usd": round(spent, 4), "skipped_for_budget": skipped, "dry_run": dry_run,
+        if on_result is not None:
+            on_result(result)
+    return {"cases": results, "cost_usd": round(spent, 4), "skipped_for_budget": skipped,
+            "unpriced": unpriced, "dry_run": dry_run,
             "tool_version": __version__}
 
 
 # --- building a manifest from hand-offs --------------------------------------------------------------------------
 
 
-def human_comments(handoff: dict, *, owner: str | None = None, bots: tuple[str, ...] = BOT_HINTS) -> list[dict]:
+def is_bot(author: str, bots: frozenset[str] = KNOWN_BOTS) -> bool:
+    """A `name[bot]` login, GitLab Duo, or a login in `bots`, compared whole: never a substring of a person's name."""
+    return is_service_login(author) or author.lower() in bots
+
+
+def human_comments(handoff: dict, *, owner: str | None = None, bots: frozenset[str] = KNOWN_BOTS) -> list[dict]:
+    comparison = handoff.get("comparison")
+    entries = comparison.get("human_comments") if isinstance(comparison, dict) else None
     keep = []
-    for e in (handoff.get("comparison") or {}).get("human_comments") or []:
-        author = (e.get("author") or "").lower()
-        if any(b in author for b in bots) or (owner and author == owner.lower()):
+    for e in entries if isinstance(entries, list) else []:
+        if not isinstance(e, dict):
+            continue
+        author = e.get("author") if isinstance(e.get("author"), str) else ""
+        if is_bot(author, bots) or (owner and author.lower() == owner.lower()):
             continue
         keep.append({k: e.get(k) for k in ("thread_id", "path", "line", "author", "in_review")})
     return keep
 
 
-def case_from_handoff(ctx, shadow_dir: Path, run_id: str, clone: Path, *, owner: str | None = None) -> dict:
+def read_handoff(shadow_dir: Path, run_id: str) -> tuple[dict, str]:
+    """The hand-off object and saved diff of a run, or a CodeCheckError for anything unreadable or mistyped."""
     if not re.fullmatch(r"[0-9a-f]{12}", run_id):
         raise CodeCheckError(f"run id {run_id!r} is not a 12-character hex id")
     shadow = Path(shadow_dir).expanduser()
@@ -309,18 +347,58 @@ def case_from_handoff(ctx, shadow_dir: Path, run_id: str, clone: Path, *, owner:
         diff = (shadow / f"{run_id}.diff").read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
         raise CodeCheckError(f"run {run_id}: no readable hand-off or diff in {shadow}: {e}") from e
+    if not isinstance(handoff, dict):
+        raise CodeCheckError(f"run {run_id}: the hand-off is not a JSON object")
+    return handoff, diff
+
+
+def case_from_handoff(ctx, shadow_dir: Path, run_id: str, clone: Path | dict[str, Path], *,
+                      owner: str | None = None) -> dict:
+    """`clone` is one clone, or a mapping of OWNER/REPO to clone for the run's repository."""
+    handoff, diff = read_handoff(shadow_dir, run_id)
     head = handoff.get("head_sha")
     if not isinstance(head, str) or not SHA.fullmatch(head):
         raise CodeCheckError(f"run {run_id}: hand-off has no head commit")
-    clone = Path(clone).expanduser()
+    repo = handoff.get("repo")
+    if not isinstance(repo, str) or not repo:
+        raise CodeCheckError(f"run {run_id}: hand-off has no repository")
+    if isinstance(clone, dict):
+        if repo not in clone:
+            raise CodeCheckError(f"run {run_id}: no --clone for {repo}")
+        clone = clone[repo]
+    clone = Path(clone).expanduser().resolve()  # a case needs an absolute path, whatever the caller typed
     base = resolve_base(ctx, clone, head, diff)
     pr = str(handoff.get("pr"))
-    name = f"{pr if '#' in pr else handoff.get('repo') + '#' + pr}@{run_id}"  # `pr` is OWNER/REPO#N in newer hand-offs
-    return {"name": name, "repo": handoff.get("repo"), "clone": str(clone), "head": head, "base": base,
+    name = f"{pr if '#' in pr else repo + '#' + pr}@{run_id}"  # `pr` is OWNER/REPO#N in newer hand-offs
+    return {"name": name, "repo": repo, "clone": str(clone), "head": head, "base": base,
             "diff": diff, "comments": human_comments(handoff, owner=owner), "recorded_tool_version": handoff.get("tool_version")}
 
 
 # --- building cases from a clone and a label file ------------------------------------------------------------------
+
+
+LABEL_KEYS = ("id", "round", "path", "needle")
+
+
+def validate_labels(labels) -> list[dict]:
+    """The label list, or a CodeCheckError naming the first thing wrong with it."""
+    if not isinstance(labels, list):
+        raise CodeCheckError("labels: expected a list")
+    for i, label in enumerate(labels):
+        if not isinstance(label, dict):
+            raise CodeCheckError(f"label {i}: expected an object")
+        missing = [k for k in LABEL_KEYS if k not in label]
+        if missing:
+            raise CodeCheckError(f"label {label.get('id', i)}: missing {', '.join(missing)}")
+        if not all(isinstance(label[k], str) and label[k] for k in ("id", "path", "needle")):
+            raise CodeCheckError(f"label {label['id']}: id, path and needle must be non-empty strings")
+        occurrence = label.get("occurrence", 1)
+        if isinstance(occurrence, bool) or not isinstance(occurrence, int) or occurrence < 1:
+            raise CodeCheckError(f"label {label['id']}: occurrence must be a positive integer")
+    ids = [label["id"] for label in labels]
+    if len(set(ids)) != len(ids):
+        raise CodeCheckError("labels: duplicate ids")
+    return labels
 
 
 def cases_from_git(ctx, clone: Path, repo: str, base: str, labels: list[dict], heads: list[str], *,
@@ -333,7 +411,8 @@ def cases_from_git(ctx, clone: Path, repo: str, base: str, labels: list[dict], h
     "fixed_in" (optional commit: heads that contain it no longer have the problem), "tail" (optional: a rare edge
     case the panel is not expected to find)}. A label with `introduced_in` has kind `fix`. Any other head must still hold the needle, or the case is refused. The diff is taken from git, so
     the case always passes the rebuild check."""
-    clone = Path(clone).expanduser()
+    validate_labels(labels)
+    clone = Path(clone).expanduser().resolve()
     if not _ok(ctx, clone, "cat-file", "-e", f"{base}^{{commit}}"):
         raise CodeCheckError(f"base {base!r} is not in {clone}")
     cases = []
@@ -352,7 +431,7 @@ def cases_from_git(ctx, clone: Path, repo: str, base: str, labels: list[dict], h
                 fixed_full = _out(ctx, clone, "rev-parse", "--verify", f"{fixed}^{{commit}}").strip()
                 if _ok(ctx, clone, "merge-base", "--is-ancestor", fixed_full, full):
                     continue
-            res = ctx.runner.run([*live._GIT, "show", f"{full}:{label['path']}"], cwd=clone)
+            res = ctx.runner.run([*live.GIT, "show", f"{full}:{label['path']}"], cwd=clone)
             lines = res.stdout.splitlines() if res.returncode == 0 else []
             hits = [i for i, text in enumerate(lines, 1) if label["needle"] in text]
             want = int(label.get("occurrence", 1))
@@ -405,7 +484,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         ctx = _context()
         if args.command == "from-git":
-            labels = json.loads(args.labels.expanduser().read_text(encoding="utf-8"))
+            try:
+                labels = json.loads(args.labels.expanduser().read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+                raise CodeCheckError(f"labels file {args.labels}: not readable JSON: {e}") from e
             cases = cases_from_git(ctx, args.clone, args.repo, args.base, labels, args.heads, name=args.name)
             json.dump(cases, sys.stdout, indent=2)
             print()
@@ -416,24 +498,20 @@ def main(argv: list[str] | None = None) -> int:
                 repo, sep, path = spec.partition("=")
                 if not sep:
                     raise CodeCheckError(f"--clone {spec!r}: expected OWNER/REPO=PATH")
-                clones[repo] = Path(path)
-            cases = []
-            for run_id in args.runs:
-                handoff = json.loads((args.shadow.expanduser() / f"{run_id}.handoff" / "handoff.json").read_text(encoding="utf-8"))
-                clone = clones.get(handoff.get("repo"))
-                if clone is None:
-                    raise CodeCheckError(f"run {run_id}: no --clone for {handoff.get('repo')}")
-                cases.append(case_from_handoff(ctx, args.shadow, run_id, clone, owner=args.owner))
+                clones[repo] = Path(path).expanduser().resolve()
+            cases = [case_from_handoff(ctx, args.shadow, run_id, clones, owner=args.owner) for run_id in args.runs]
             json.dump(cases, sys.stdout, indent=2)
             print()
             return 0
+
+        def save(result: dict) -> None:
+            if args.out is not None:
+                with args.out.expanduser().open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(result) + "\n")
+
         result = run_cases(ctx, load_cases(args.cases), dry_run=args.dry_run, limit=args.limit, budget_usd=args.budget,
                            only=args.only, fixed_panel=args.fixed_panel, tolerance=args.tolerance,
-                           max_per_author=args.max_per_author, raw_dir=args.raw_dir)
-        if args.out is not None:
-            with args.out.expanduser().open("a", encoding="utf-8") as fh:
-                for c in result["cases"]:
-                    fh.write(json.dumps(c) + "\n")
+                           max_per_author=args.max_per_author, raw_dir=args.raw_dir, on_result=save)
         print(json.dumps(result, indent=2))
         return 0
     except (CodeCheckError, OSError, json.JSONDecodeError) as e:

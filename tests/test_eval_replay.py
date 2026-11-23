@@ -430,3 +430,164 @@ def test_cases_from_git_give_each_label_a_kind(tmp_path, reviewed_twice):
               {"id": "c", "round": 2, "path": "docs.md", "needle": "new line", "introduced_in": r["second"]}]
     cases = replay.cases_from_git(_ctx(tmp_path, LiveRunner(FakeRunner())), r["path"], "o/r", r["base"], labels, [r["second"]])
     assert {c["thread_id"]: c["kind"] for c in cases[0]["comments"]} == {"a": "first-head", "b": "tail", "c": "fix"}
+
+
+def test_a_person_whose_name_contains_bot_or_duo_is_not_taken_for_a_bot():
+    people = ["abbott", "Talbot", "duong", "robot-fan"]
+    bots = ["github-actions", "GitHub-Actions", "dependabot[bot]", "GitLabDuo", "gitlab-duo", "copilot", "coderabbitai"]
+    entries = [{"thread_id": a, "path": "a.py", "line": 1, "author": a} for a in people + bots]
+    kept = [c["author"] for c in human_comments({"comparison": {"human_comments": entries}})]
+    assert kept == people
+
+
+def test_human_comments_tolerate_a_mistyped_hand_off():
+    assert human_comments({"comparison": ["x"]}) == [] and human_comments({"comparison": {"human_comments": "x"}}) == []
+    odd = {"comparison": {"human_comments": ["text", {"thread_id": "1", "author": None, "path": "a.py", "line": 1}]}}
+    assert [c["thread_id"] for c in human_comments(odd)] == ["1"]
+
+
+def write_handoff(tmp_path, handoff, run_id="abcdef123456", diff=""):
+    shadow = tmp_path / "shadow"
+    (shadow / f"{run_id}.handoff").mkdir(parents=True, exist_ok=True)
+    path = shadow / f"{run_id}.handoff" / "handoff.json"
+    if isinstance(handoff, bytes):
+        path.write_bytes(handoff)
+    else:
+        path.write_text(json.dumps(handoff))
+    (shadow / f"{run_id}.diff").write_text(diff)
+    return shadow
+
+
+def test_a_relative_clone_path_gives_an_absolute_case_clone(tmp_path, source, monkeypatch):
+    shadow = write_handoff(tmp_path, {"repo": "o/r", "pr": 7, "head_sha": source["head"]}, diff=source["diff"])
+    ctx = _ctx(tmp_path, LiveRunner(FakeRunner()))
+    monkeypatch.chdir(source["path"].parent)
+    case = case_from_handoff(ctx, shadow, "abcdef123456", Path(source["path"].name))
+    assert case["clone"] == str(source["path"].resolve())
+    validate_case(case)  # the clone must be an absolute path
+
+
+def test_the_manifest_reads_each_hand_off_once_and_reports_bad_ones_as_json(tmp_path, source, monkeypatch, capsys):
+    ctx = _ctx(tmp_path, LiveRunner(FakeRunner()))
+    monkeypatch.setattr(replay, "_context", lambda: ctx)
+    clone = f"o/r={source['path']}"
+    good = {"repo": "o/r", "pr": 7, "head_sha": source["head"], "comparison": {"human_comments": []}}
+    shadow = write_handoff(tmp_path, good, diff=source["diff"])
+    assert replay.main(["manifest", "--shadow", str(shadow), "--clone", clone, "abcdef123456"]) == 0
+    assert json.loads(capsys.readouterr().out)[0]["repo"] == "o/r"
+    for bad, text in ((["not", "an", "object"], "not a JSON object"), (b"\xff\xfe", "no readable hand-off"),
+                      ({**good, "repo": None}, "no repository"), ({**good, "repo": "x/y"}, "no --clone for x/y"),
+                      ({"repo": "o/r", "head_sha": 5}, "no head commit")):
+        write_handoff(tmp_path, bad, diff=source["diff"])
+        assert replay.main(["manifest", "--shadow", str(shadow), "--clone", clone, "abcdef123456"]) == 1
+        assert text in json.loads(capsys.readouterr().out)["error"]
+    assert replay.main(["manifest", "--shadow", str(shadow), "--clone", "nopath", "abcdef123456"]) == 1
+    assert "expected OWNER/REPO=PATH" in json.loads(capsys.readouterr().out)["error"]
+
+
+def test_each_result_is_handed_over_as_soon_as_it_exists(tmp_path, source, monkeypatch):
+    ctx, _ = reviewing_ctx(tmp_path, [FOUND])
+    seen = []
+    real = replay.run_case
+
+    def flaky(ctx, case, workdir, **kw):
+        if case["name"] == "b":
+            raise RuntimeError("the runner died")  # not a CodeCheckError: nothing catches it
+        return real(ctx, case, workdir, **kw)
+
+    monkeypatch.setattr(replay, "run_case", flaky)
+    cases = [make_case(source, name="a"), make_case(source, name="b")]
+    with pytest.raises(RuntimeError):
+        run_cases(ctx, cases, on_result=seen.append)
+    assert [r["name"] for r in seen] == ["a"]  # the finished, paid review was not lost
+
+
+def test_the_out_file_keeps_finished_cases_when_a_later_one_dies(tmp_path, source, monkeypatch):
+    ctx, _ = reviewing_ctx(tmp_path, [FOUND])
+    monkeypatch.setattr(replay, "_context", lambda: ctx)
+    real = replay.run_case
+
+    def flaky(ctx, case, workdir, **kw):
+        if case["name"] == "b":
+            raise KeyboardInterrupt
+        return real(ctx, case, workdir, **kw)
+
+    monkeypatch.setattr(replay, "run_case", flaky)
+    cases = tmp_path / "cases.json"
+    cases.write_text(json.dumps([make_case(source, name="a"), make_case(source, name="b")]))
+    out_file = tmp_path / "results.jsonl"
+    with pytest.raises(KeyboardInterrupt):
+        replay.main(["run", str(cases), "--out", str(out_file)])
+    assert [json.loads(line)["name"] for line in out_file.read_text().splitlines()] == ["a"]
+
+
+def reviewing_ctx_with_cost(tmp_path, findings, cost_field):
+    """A review whose JSON result carries `cost_field` as total_cost_usd (the key is left out when it is `...`)."""
+    result = {"type": "result", "is_error": False, "result": "ok"}
+    if cost_field is not ...:
+        result["total_cost_usd"] = cost_field
+    ok = json.dumps(result)
+    probe = json.dumps({"type": "result", "is_error": False, "result": "ok", "total_cost_usd": 0.0})
+    fake = FakeRunner().on(*PROBE, stdout=probe).on_prefix("env", stdout=ok)
+    return _ctx(tmp_path, ReviewingRunner(fake, findings))
+
+
+@pytest.mark.parametrize("reported", [..., None, "free", True, -1.0, float("nan"), float("inf")])
+def test_a_cost_that_is_missing_or_not_a_real_number_is_unpriced_not_free(tmp_path, source, reported):
+    ctx = reviewing_ctx_with_cost(tmp_path, [FOUND], reported)
+    out = run_cases(ctx, [make_case(source, name="a"), make_case(source, name="b")])
+    assert [c["name"] for c in out["cases"]] == ["a", "b"] and out["unpriced"] == ["a", "b"]  # no budget: all run
+    assert out["cases"][0]["claude"]["cost_usd"] is None and out["cost_usd"] == 0.0
+
+
+def test_with_a_budget_nothing_new_starts_after_an_unpriced_review(tmp_path, source):
+    ctx = reviewing_ctx_with_cost(tmp_path, [FOUND], None)
+    out = run_cases(ctx, [make_case(source, name="a"), make_case(source, name="b")], budget_usd=5.0)
+    assert [c["name"] for c in out["cases"]] == ["a"] and out["skipped_for_budget"] == ["b"] and out["unpriced"] == ["a"]
+
+
+def test_a_case_that_fails_to_build_is_not_counted_as_an_unpriced_review(tmp_path, source):
+    ctx, _ = reviewing_ctx(tmp_path, [FOUND])
+    out = run_cases(ctx, [make_case(source, name="bad", head="0" * 40), make_case(source, name="good")], budget_usd=5.0)
+    assert [c["name"] for c in out["cases"]] == ["bad", "good"] and out["unpriced"] == []
+
+
+@pytest.mark.parametrize("labels, text", [
+    ({"id": "a"}, "expected a list"),
+    (["x"], "expected an object"),
+    ([{"id": "a", "round": 1, "path": "f"}], "missing needle"),
+    ([{"id": "a", "round": 1, "path": "f", "needle": ""}], "non-empty strings"),
+    ([{"id": 5, "round": 1, "path": "f", "needle": "n"}], "non-empty strings"),
+    ([{"id": "a", "round": 1, "path": "f", "needle": "n", "occurrence": "2"}], "positive integer"),
+    ([{"id": "a", "round": 1, "path": "f", "needle": "n", "occurrence": 0}], "positive integer"),
+    ([{"id": "a", "round": 1, "path": "f", "needle": "n"}] * 2, "duplicate ids"),
+])
+def test_bad_labels_are_refused_with_a_message(labels, text):
+    with pytest.raises(CodeCheckError, match=text):
+        replay.validate_labels(labels)
+
+
+def test_from_git_reports_a_bad_labels_file_as_json_and_accepts_a_relative_clone(tmp_path, reviewed_twice, monkeypatch, capsys):
+    r = reviewed_twice
+    monkeypatch.setattr(replay, "_context", lambda: _ctx(tmp_path, LiveRunner(FakeRunner())))
+    args = ["from-git", "--repo", "o/r", "--base", r["base"], "--labels"]
+    for content in (b"\xff\xfe", b"{not json", b'{"id": "a"}', b'["x"]'):
+        bad = tmp_path / "bad.json"
+        bad.write_bytes(content)
+        assert replay.main([*args, str(bad), "--clone", str(r["path"]), r["first"]]) == 1
+        assert "error" in json.loads(capsys.readouterr().out)
+    good = tmp_path / "labels.json"
+    good.write_text(json.dumps(r["labels"]))
+    monkeypatch.chdir(r["path"].parent)
+    assert replay.main([*args, str(good), "--clone", r["path"].name, r["first"]]) == 0
+    case = json.loads(capsys.readouterr().out)[0]
+    assert case["clone"] == str(r["path"].resolve())
+    validate_case(case)
+
+
+def test_an_unwritable_raw_dir_does_not_throw_away_a_paid_review(tmp_path, source):
+    ctx, _ = reviewing_ctx(tmp_path, [FOUND])
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file, not a directory")
+    out = run_case(ctx, make_case(source), workdir(tmp_path), raw_dir=blocker)
+    assert "raw output not saved" in out["raw_error"] and out["score"]["recall"] == 1.0 and "error" not in out
