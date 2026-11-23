@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from clihelp import call, make_ctx
@@ -304,3 +305,32 @@ def test_a_symlink_or_directory_named_code_check_md_at_the_base_is_refused_not_t
     assert call(ctx, "guidance", "evidence", "--base", "HEAD")[0] == 1
     code, _ = call(ctx, "guidance", "apply", "--base", "HEAD", "--run", rid, "--digest", ev["digest"], stdin="1. Rule.\n")
     assert code == 1 and not (_patch_of(run_dir)).exists()
+
+
+def test_a_base_file_without_a_final_newline_gives_a_patch_that_applies(tmp_path):
+    ctx, clone, rid, run_dir = _patch_ctx(tmp_path, base_text="1. Base rule.")  # no trailing newline at the base
+    ev = _with_evidence(ctx)
+    new = "1. Base rule.\n2. Style findings are not wanted here.\n"
+    assert call(ctx, "guidance", "apply", "--base", "HEAD", "--run", rid, "--digest", ev["digest"], stdin=new)[0] == 0
+    patch = _patch_of(run_dir)
+    assert "\\ No newline at end of file" in patch.read_text()
+    sh(clone, "apply", "--check", str(patch))
+    sh(clone, "apply", str(patch))
+    assert (clone / "CODE_CHECK.md").read_text() == new
+
+
+def test_a_directory_that_is_a_symlink_at_the_base_is_refused_not_treated_as_missing(tmp_path):
+    ctx, clone, rid, run_dir = _patch_ctx(tmp_path, base_text=None)
+    ev = _with_evidence(ctx)
+    os.symlink("app", clone / "lib")
+    sh(clone, "add", "lib")
+    sh(clone, "commit", "-m", "lib is a symlink")
+    assert call(ctx, "guidance", "evidence", "--dir", "lib", "--base", "HEAD")[0] == 1
+    code, _ = call(ctx, "guidance", "apply", "--dir", "lib", "--base", "HEAD", "--run", rid, "--digest", ev["digest"], stdin="1. Rule.\n")
+    assert code == 1 and not _patch_of(run_dir).exists()
+
+
+def test_review_pr_skips_the_guidance_step_when_the_base_is_not_fresh():
+    step = next(line for line in (Path(__file__).parent.parent / "skills" / "review-pr" / "SKILL.md").read_text().splitlines()
+                if line.startswith("8. "))
+    assert "`base_warning`" in step

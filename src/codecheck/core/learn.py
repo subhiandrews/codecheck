@@ -97,7 +97,9 @@ def check_proposal(old: str | None, new: str) -> str | None:
 
 def diff_text(old: str | None, new: str, name: str) -> str:
     before = "/dev/null" if old is None else f"a/{name}"  # a new file, so that `git apply` creates it
-    return "".join(difflib.unified_diff((old or "").splitlines(True), new.splitlines(True), before, f"b/{name}"))
+    lines = difflib.unified_diff((old or "").splitlines(True), new.splitlines(True), before, f"b/{name}")
+    # difflib never says when a side lacks its final newline, which glues the next line onto it and corrupts the patch
+    return "".join(line if line.endswith("\n") else f"{line}\n\\ No newline at end of file\n" for line in lines)
 
 
 def summary(evidence: Mapping) -> str:

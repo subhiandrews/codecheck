@@ -71,7 +71,13 @@ def _current_at(ctx, ref: str, rel: str) -> str | None:
     """The file's text at `ref`, None when nothing is there. A symlink, a submodule, a directory or a non-UTF-8 blob at
     that path is an error, never "missing": a proposal must not be made against something it cannot replace."""
     name = f"{rel}/{GUIDANCE_FILE}" if rel else GUIDANCE_FILE
-    if not ctx.git.has_path(ref, name):
+    parts = rel.split("/") if rel else []
+    above = ["/".join(parts[:i]) for i in range(1, len(parts) + 1)]
+    entries = ctx.git.tree_entries(ref, [*above, name])  # one lookup, so the answer is classified in one place
+    for directory in above:
+        if directory in entries and entries[directory] != ("040000", "tree"):
+            raise CodeCheckError(f"{directory} at {ref} is not a directory (a symlink or submodule?); not proposing under it")
+    if name not in entries:
         return None
     text = ctx.git.show_file(ref, name)
     if text is None:
@@ -144,12 +150,11 @@ def run(args, ctx) -> dict:
     problem = check_proposal(current, proposal)
     if problem:
         raise CodeCheckError(problem)
+    diff = diff_text(current, proposal, name)
     if base:
-        patch = _write_patch(ctx, args.run, diff_text(current, proposal, name))
+        patch = _write_patch(ctx, args.run, diff)
         ctx.state.set(state_key, evidence["digest"])  # proposed, even if nobody opens the PR: it is not suggested twice
-        return {"patch": str(patch), "created": current is None, "changed_lines": changed_lines(current, proposal),
-                "diff": diff_text(current, proposal, name)}
+        return {"patch": str(patch), "created": current is None, "changed_lines": changed_lines(current, proposal), "diff": diff}
     _write(root, rel, proposal)
     ctx.state.set(state_key, evidence["digest"])  # the same evidence is not proposed on again
-    return {"written": name, "created": current is None, "changed_lines": changed_lines(current, proposal),
-            "diff": diff_text(current, proposal, name)}
+    return {"written": name, "created": current is None, "changed_lines": changed_lines(current, proposal), "diff": diff}

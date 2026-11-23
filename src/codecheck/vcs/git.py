@@ -130,14 +130,22 @@ class Git:
                     found.append(name)
         return found
 
-    def has_path(self, ref: str, path: str) -> bool:
-        """Whether anything (a file, symlink, submodule or tree) is at `path` in `ref`. Raises GitError when git fails (for
-        example a missing ref), so a lookup that did not finish is never mistaken for an absent path."""
+    def tree_entries(self, ref: str, paths: Sequence[str]) -> dict[str, tuple[str, str]]:
+        """What is at each of `paths` in `ref`, as {path: (mode, type)}; a path with nothing at it is left out. Paths are
+        taken literally and are entries of their own, so a directory is `("040000", "tree")` and a symlink or submodule
+        is something else. Raises GitError when git fails (for example a missing ref), so a lookup that did not finish
+        is never mistaken for an absent path."""
         _safe(ref)
-        res = self._run("--literal-pathspecs", "ls-tree", "--full-tree", "-z", ref, "--", path)
+        res = self._run("--literal-pathspecs", "ls-tree", "--full-tree", "-z", ref, "--", *paths)
         if res.returncode != 0:
             raise GitError(f"git ls-tree failed: {res.stderr.strip()}")
-        return bool(res.stdout.strip("\0"))
+        found: dict[str, tuple[str, str]] = {}
+        for entry in res.stdout.split("\0"):
+            meta, _, name = entry.partition("\t")
+            fields = meta.split()
+            if len(fields) == 3 and name:
+                found[name] = (fields[0], fields[1])
+        return found
 
     def toplevel(self) -> Path:
         return Path(self._out("rev-parse", "--show-toplevel"))
