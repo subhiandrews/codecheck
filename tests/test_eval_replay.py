@@ -670,3 +670,13 @@ def test_a_failed_claude_run_keeps_its_error_when_scoring_also_fails(tmp_path, s
     monkeypatch.setattr(replay, "score", lambda *a, **k: 1 / 0)
     out = run_case(ctx, make_case(source), workdir(tmp_path))
     assert out["error"].startswith("claude run failed") and out["claude"]["cost_usd"] == 0.01
+
+
+def test_a_route_named_by_a_short_path_lands_on_the_comment_in_that_file():
+    comments = [comment(41, path="src/pkg/execute/plugin.py"), comment(41, path="src/pkg/other.py")]
+    findings = [{"file": "src/pkg/execute/plugin.py", "line": 5, "message": "also reaches the error text (plugin.py:41)"}]
+    assert [r["matched"] for r in score(findings, comments)["per_comment"]] == [True, False]
+    named_with_dirs = [{"file": "x.py", "line": 1, "message": "see execute/plugin.py:41"}]
+    assert score(named_with_dirs, comments)["matched"] == 1
+    not_a_suffix = [{"file": "x.py", "line": 1, "message": "see myplugin.py:41"}]
+    assert score(not_a_suffix, comments)["matched"] == 0
