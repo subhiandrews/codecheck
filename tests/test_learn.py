@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 from dataclasses import replace
 from pathlib import Path
@@ -330,7 +331,7 @@ def test_a_directory_that_is_a_symlink_at_the_base_is_refused_not_treated_as_mis
     assert code == 1 and not _patch_of(run_dir).exists()
 
 
-def test_review_pr_skips_the_guidance_step_when_the_base_is_not_fresh():
+def test_review_pr_step_8_says_to_skip_when_base_warning_is_set():
     step = next(line for line in (Path(__file__).parent.parent / "skills" / "review-pr" / "SKILL.md").read_text().splitlines()
                 if line.startswith("8. "))
-    assert "`base_warning`" in step
+    assert re.search(r"If `base_warning` is set.*skip this step", step)
