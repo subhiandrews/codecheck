@@ -67,7 +67,7 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
             label = finding_label(f["id"], outcomes, humans)
             key = (pr, f["id"])  # runs are chronological: a later decided label replaces an earlier one
             if key not in seen or label in ("confirmed", "disputed"):
-                seen[key] = (str(f.get("category") or "other"), label)
+                seen[key] = (_clip(f.get("category")) or "other", label)  # clipped: stats is added after the scrub
             replied += label == "replied"
             if label not in ("confirmed", "disputed"):
                 continue
