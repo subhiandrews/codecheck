@@ -1,0 +1,3 @@
+# Settings the CI review (and every local run in this clone) reads. Security-sensitive keys belong in the user config.
+[review]
+full = true  # every reviewer on every review, routing skipped
