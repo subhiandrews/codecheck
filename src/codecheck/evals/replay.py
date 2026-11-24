@@ -261,18 +261,20 @@ def run_case(ctx, case: dict, workdir: Path, *, fixed_panel: bool = False, dry_r
     repo = build_repo(ctx, case, workdir)
     out = {"name": case["name"], "repo": case["repo"], "head": case["head"], "base": case["base"],
            "tool_version": __version__, "diff_bytes": len(case["diff"])}
-    if dry_run:
-        return {**out, "built": True}
-    seed = None
-    if case.get("seed_comments"):  # a later round: hand the review the earlier findings as existing comments
+    data = None
+    if case.get("seed_comments"):  # a later round: the earlier findings reach the review as existing comments
         # `context` only notes a seed it cannot read and reviews unseeded, which would score this round without it:
-        # refuse here, before the paid review, what it would refuse to read
+        # refuse here, dry run included, what it would refuse to read
         try:
             data = case["seed_comments"].encode("utf-8")
         except UnicodeEncodeError as e:
             raise CodeCheckError(f"case {case['name']}: seed_comments is not valid UTF-8 text: {e}") from e
         if len(data) > SEED_MAX_BYTES:
             raise CodeCheckError(f"case {case['name']}: seed_comments is {len(data)} bytes, over the {SEED_MAX_BYTES} a review reads")
+    if dry_run:
+        return {**out, "built": True}
+    seed = None
+    if data is not None:
         seed = workdir / "seed-comments.md"
         seed.write_bytes(data)
     res = ctx.runner.run(live.review_argv(ctx, workdir, fixed_panel=fixed_panel, seed=seed, pin_cli=True), cwd=repo,
@@ -316,6 +318,13 @@ def _render_seed(findings: list[dict]) -> str:
         comment = ExistingComment("code-check", body, "earlier review", False, True)
         threads.append(ExistingThread(f"seed-{i}", str(f.get("file", "")), f.get("line"), False, False, (comment,)))
     return render_existing(threads)
+
+
+def seed_gaps(cases: list[dict], results: list[dict]) -> list[str]:
+    """The cases before the last one that have no usable result (none, or a failed run), so a later round is seeded
+    without their findings. An empty review is a result."""
+    have = {r["name"] for r in results if isinstance(r, dict) and isinstance(r.get("name"), str) and isinstance(r.get("got"), list)}
+    return [c["name"] for c in cases[:-1] if c["name"] not in have]
 
 
 def seed_cases(cases: list[dict], results: list[dict]) -> list[dict]:
@@ -586,7 +595,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "seed":
             lines = args.results.expanduser().read_text(encoding="utf-8").splitlines()
-            json.dump(seed_cases(load_cases(args.cases), [json.loads(ln) for ln in lines if ln.strip()]), sys.stdout, indent=2)
+            cases, results = load_cases(args.cases), [json.loads(ln) for ln in lines if ln.strip()]
+            if gaps := seed_gaps(cases, results):
+                print(f"seed: no findings from {', '.join(gaps)}; the rounds after them are seeded without those", file=sys.stderr)
+            json.dump(seed_cases(cases, results), sys.stdout, indent=2)
             print()
             return 0
         if args.command == "manifest":

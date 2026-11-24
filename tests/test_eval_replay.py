@@ -20,6 +20,7 @@ from codecheck.evals.replay import (
     run_cases,
     score,
     seed_cases,
+    seed_gaps,
     validate_case,
 )
 
@@ -223,6 +224,21 @@ def test_a_seed_the_review_could_not_read_stops_the_replay_before_the_paid_revie
         with pytest.raises(CodeCheckError, match="seed"):
             run_case(ctx, make_case(source, seed_comments=bad), workdir(tmp_path, f"bad{n}"))
     assert fake.calls == []  # no claude run was started
+
+
+def test_a_dry_run_refuses_the_seed_the_real_run_would_refuse(tmp_path, source):
+    ctx, _fake = reviewing_ctx(tmp_path, [FOUND])
+    with pytest.raises(CodeCheckError, match="seed"):
+        run_case(ctx, make_case(source, seed_comments="x" * 200_001), workdir(tmp_path), dry_run=True)
+    assert run_case(ctx, make_case(source, seed_comments="fine"), workdir(tmp_path, "ok"), dry_run=True)["built"] is True
+
+
+def test_seed_gaps_names_the_earlier_cases_that_left_nothing_to_seed_with():
+    cases = [{"name": "a"}, {"name": "b"}, {"name": "c"}]
+    results = [{"name": "a", "got": [FOUND]}, {"name": "b", "error": "claude run failed"}]  # b failed, c is last
+    assert seed_gaps(cases, results) == ["b"]
+    assert seed_gaps(cases, [{"name": "a", "got": []}, {"name": "b", "got": []}]) == []  # an empty review is a result
+    assert seed_gaps(cases, []) == ["a", "b"]
 
 
 def test_a_seed_must_be_text(source):

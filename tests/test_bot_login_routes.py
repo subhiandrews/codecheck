@@ -23,6 +23,7 @@ from codecheck.models import (
     comment_is_ours,
     same_pr_author,
 )
+from codecheck.providers.gitlab import _MARKER as gitlab_marker
 from codecheck.shadow.collect import collect_outcomes
 from codecheck.shadow.store import ShadowStore
 
@@ -62,6 +63,16 @@ def test_our_marker_pattern_matches_every_marker_we_write():
     assert OWN_MARKER.search(marker("a" * 12)) and OWN_MARKER.search(RUN_MARKER.format("c4141e60f383"))
     assert OWN_MARKER.search(f"a reply\n\n{REPLY_MARKER}")
     assert not OWN_MARKER.search("<!-- code-check:finding:xyz -->")
+
+
+def test_gitlab_reviews_of_a_bot_user_are_still_ours():
+    # GitLab appends its own marker after the run marker, and an approval vote has no body at all
+    gitlab_body = f"summary\n\n{RUN_MARKER.format('c4141e60f383')}\n\n<!-- code-check:review:{'ab12' * 10} -->"
+    assert gitlab_marker.search(gitlab_body) and OWN_MARKER.search(gitlab_body)
+    summary = Review("project_7_bot", "abc", "2026-01-01T00:00:10Z", "COMMENTED", gitlab_body, True)
+    vote = Review("project_7_bot", "abc", "2026-01-01T00:00:11Z", "APPROVED", "", True)
+    assert our_reviews([summary, vote], "project_7_bot") == [summary]  # a vote has no run marker, as before
+    assert review_activity([summary, vote], [], "project_7_bot").last_review == vote  # but it is ours, as before
 
 
 def test_reviews_the_bot_posted_are_ours_whichever_way_review_login_is_spelled():
