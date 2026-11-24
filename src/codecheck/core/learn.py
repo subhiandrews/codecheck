@@ -75,17 +75,26 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
     out["proposable"] = bool(out["disputed"] or out["misses"])
     out["digest"] = hashlib.sha256(json.dumps(out, sort_keys=True).encode("utf-8")).hexdigest()[:16]
     if not out["proposable"]:  # after the digest: the reason explains the evidence, it is not part of it
-        out["reason"] = _why_empty(pr_runs, labelled)
+        contested = any(len(e["disputed"]) >= MIN_PRS and len(e["disputed"]) <= len(e["confirmed"]) for e in cats.values())
+        out["reason"] = _why_empty(pr_runs, labelled, len(miss_prs), contested)
     return out
 
 
-def _why_empty(pr_runs: int, labelled: int) -> str:
+def _why_empty(pr_runs: int, labelled: int, miss_prs: int, contested: bool) -> str:
+    """`contested`: some category was disputed in at least MIN_PRS PRs but confirmed in as many."""
     if not pr_runs:
         return ("no review-pr runs of this repository are recorded here; local reviews and address-comments runs "
                 "carry no evidence, which comes from reviews posted to a PR and the feedback they received")
+    parts = []
     if not labelled:
-        return f"{pr_runs} recorded PR runs, but none has a finding that an author or reviewer has responded to yet"
-    return f"not enough yet: a pattern needs at least {MIN_PRS} distinct PRs"
+        parts.append(f"{pr_runs} recorded PR runs, but none has a finding that an author or reviewer has responded to yet")
+    elif contested:
+        parts.append("a category was disputed in several PRs but confirmed in as many, so it is not a pattern")
+    else:
+        parts.append(f"no finding category was disputed in {MIN_PRS} or more PRs")
+    if miss_prs:
+        parts.append(f"missed human comments come from {miss_prs} PR (a pattern needs {MIN_PRS})")
+    return "; ".join(parts)
 
 
 def changed_lines(old: str | None, new: str) -> int:
