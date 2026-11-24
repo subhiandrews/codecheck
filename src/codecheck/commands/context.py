@@ -51,7 +51,7 @@ SEED_MAX_BYTES = 200_000
 
 def _seed_existing(run_dir, path: str) -> dict:
     """Copy the file named by `review.seed_comments` into the run as existing-comments.md, scrubbed like real comments.
-    An eval uses it to hand a local review the findings and replies of an earlier round."""
+    An eval uses it to hand a local review the findings of earlier rounds."""
     source = Path(path)
     if not source.is_file():
         raise OSError(f"{path} is not a file")

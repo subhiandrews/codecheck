@@ -141,8 +141,9 @@ def review_argv(ctx, workdir: Path, *, fixed_panel: bool = True, seed: Path | No
     if pin_cli and not ctx.env.get("CODE_CHECK_PYTHON"):
         # bin/code-check's venv is rebuilt only on a VERSION change; run this checkout's CLI (docs/MAINTAINING.md)
         isolate.append(f"CODE_CHECK_PYTHON={sys.executable}")
-    if seed is not None:  # a replay of a later round: the earlier findings arrive as existing-comments.md
-        isolate.append(f"CODE_CHECK_REVIEW__SEED_COMMENTS={seed}")
+    # A replay of a later round gets the earlier findings as existing-comments.md; every other review clears the key,
+    # so a seed in the maintainer's own config cannot skew an unseeded baseline.
+    isolate.append(f"CODE_CHECK_REVIEW__SEED_COMMENTS={seed if seed is not None else ''}")
     if fixed_panel:
         # A user's review.security, review.performance or review.full would add an extra agent to every snippet,
         # and routing would drop the architect from these small changes: the eval measures the fixed panel.

@@ -8,7 +8,7 @@ User-visible changes per release, newest first. Earlier releases: `git log`. The
 - `review.seed_comments` (user config only): local `context` copies the named file in as `existing-comments.md`, so a replay can show a review the findings of earlier rounds.
 
 ### Fixed
-- In CI, where reviews post as `github-actions[bot]`, later rounds now see their own earlier findings and notice replies to them. GitHub spells that login two ways, and the exact match missed it.
+- In CI, where reviews post as `github-actions[bot]`, later rounds now see their own earlier findings, notice replies to them and no longer post a finding inline twice. GitHub spells that login two ways, and the exact match missed it.
 
 ## [1.4.4]
 

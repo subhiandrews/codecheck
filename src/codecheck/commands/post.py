@@ -18,7 +18,7 @@ from codecheck.core.render import (
 )
 from codecheck.core.rounds import hold_back
 from codecheck.errors import CodeCheckError, ProviderError
-from codecheck.models import ReviewComment
+from codecheck.models import ReviewComment, same_login
 from codecheck.shadow.recorder import record_post
 
 NAME = "post"
@@ -40,7 +40,8 @@ def _reviewer_findings(run_dir, ingest, meta) -> dict:
 
 def _already_posted(threads, me: str) -> set[str]:
     """Finding IDs whose hidden marker is already in one of our own inline comments on this PR."""
-    return {fid for t in threads for c in t.comments if c.author == me for fid in FINDING_MARKER.findall(c.body)}
+    return {fid for t in threads for c in t.comments if same_login(c.author, me, c.is_bot)
+            for fid in FINDING_MARKER.findall(c.body)}
 
 
 def run(args, ctx) -> dict:

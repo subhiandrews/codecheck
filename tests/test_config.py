@@ -227,6 +227,13 @@ def test_seed_comments_must_be_an_absolute_path(tmp_path, path):
     assert ok.review.seed_comments == "/tmp/seed.md"
 
 
+def test_an_empty_environment_value_clears_a_seed_set_in_the_user_file(tmp_path):
+    write(tmp_path / "home/.config/code-check/config.toml", '[review]\nseed_comments = "/abs/seed.md"\n')
+    assert load_config(tmp_path / "repo", tmp_path / "home", {}).review.seed_comments == "/abs/seed.md"
+    cleared = load_config(tmp_path / "repo", tmp_path / "home", {"CODE_CHECK_REVIEW__SEED_COMMENTS": ""})
+    assert cleared.review.seed_comments == ""
+
+
 def test_performance_defaults_and_repo_file(tmp_path):
     cfg = load_config(tmp_path / "repo", tmp_path / "home", {})
     assert cfg.models.performance == "sonnet" and cfg.review.performance is False

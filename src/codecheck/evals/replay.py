@@ -605,7 +605,7 @@ def main(argv: list[str] | None = None) -> int:
                            max_per_author=args.max_per_author, raw_dir=args.raw_dir, on_result=save)
         print(json.dumps(result, indent=2))
         return 0
-    except (CodeCheckError, OSError, json.JSONDecodeError) as e:
+    except (CodeCheckError, OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
         print(json.dumps({"error": str(e)}))
         return 1
 

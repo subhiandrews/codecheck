@@ -200,7 +200,9 @@ def test_a_case_seed_is_written_and_handed_to_the_review(tmp_path, source):
     assert path.read_text() == seed
     ctx2, fake2 = reviewing_ctx(tmp_path, [FOUND])
     run_case(ctx2, make_case(source), workdir(tmp_path, "unseeded"))
-    assert not any("SEED_COMMENTS" in a for a in fake2.calls[0].argv)
+    argv2 = fake2.calls[0].argv
+    # an unseeded case clears the key, so a seed in the maintainer's own config cannot skew the baseline
+    assert "CODE_CHECK_REVIEW__SEED_COMMENTS=" in argv2[: argv2.index("claude")]
 
 
 def test_a_replay_runs_the_cli_of_this_checkout_not_a_cached_venv(tmp_path, source):
@@ -238,7 +240,7 @@ def test_the_fixed_panel_option_pins_the_review_like_the_live_eval(tmp_path):
     pinned = review_argv(ctx, tmp_path)
     shipped = review_argv(ctx, tmp_path, fixed_panel=False)
     assert "CODE_CHECK_REVIEW__ROUTING__MODE=off" in pinned and "CODE_CHECK_REVIEW__FULL=0" in pinned
-    assert not any("REVIEW__" in a for a in shipped)
+    assert not any("REVIEW__" in a and "SEED_COMMENTS" not in a for a in shipped)  # no panel override
     assert "CODE_CHECK_REMOTE=origin" in shipped and "CODE_CHECK_BASE_BRANCH=main" in shipped
 
 
@@ -328,6 +330,20 @@ def test_the_command_line_runs_a_dry_run_and_reports_errors_as_json(tmp_path, so
     assert json.loads(capsys.readouterr().out)["cases"][0]["built"] is True
     assert json.loads(out_file.read_text().splitlines()[0])["name"] == "pr1"
     assert replay.main(["run", str(tmp_path / "missing.json")]) == 1
+    assert "error" in json.loads(capsys.readouterr().out)
+
+
+def test_the_seed_command_prints_cases_and_reports_a_bad_results_file_as_json(tmp_path, source, monkeypatch, capsys):
+    monkeypatch.setattr(replay, "_context", lambda: _ctx(tmp_path, LiveRunner(FakeRunner())))
+    cases = tmp_path / "cases.json"
+    cases.write_text(json.dumps([make_case(source, name="a"), make_case(source, name="b")]))
+    results = tmp_path / "results.jsonl"
+    results.write_text(json.dumps({"name": "a", "got": [FOUND]}) + "\n")
+    assert replay.main(["seed", str(cases), str(results)]) == 0
+    seeded = json.loads(capsys.readouterr().out)
+    assert "seed_comments" not in seeded[0] and "returns 2, not 1" in seeded[1]["seed_comments"]
+    results.write_bytes(b"\xff\xfe not utf-8\n")  # a results file that is not text is an error, not a traceback
+    assert replay.main(["seed", str(cases), str(results)]) == 1
     assert "error" in json.loads(capsys.readouterr().out)
 
 
