@@ -473,6 +473,14 @@ def test_security_argument_is_documented_and_wired():
         assert "guidance" in (REPO / f"skills/{name}/SKILL.md").read_text()
 
 
+def test_address_comments_self_reviews_once_before_push():
+    text = (REPO / "skills/address-comments/SKILL.md").read_text()
+    assert text.count("`code-check:review-local`") == 1
+    assert text.index("`code-check:review-local`") < text.index("push --pr")
+    assert "exactly once" in text and "code-check --cwd <WS> <subcommand>" in text
+    assert "$review-local" in (REPO / "codex/skills/address-comments/SKILL.md").read_text()
+
+
 def test_wrapper_exports_the_plugin_root_on_both_paths():
     text = (REPO / "bin/code-check").read_text()
     export = 'export CODE_CHECK_PLUGIN_ROOT="$ROOT"'

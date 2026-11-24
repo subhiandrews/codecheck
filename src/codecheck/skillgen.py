@@ -41,6 +41,7 @@ SUBSTITUTIONS = {
         QUEUE_RULE,
     ),
     "address-comments": (
+        (r"`code-check:review-local`", "`$review-local`"),
         (r"Run it with the Bash tool's maximum timeout .*? wait for it instead\.", PUSH_WAIT),
     ),
     "babysit-pr": (
