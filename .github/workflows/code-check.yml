@@ -20,7 +20,7 @@ jobs:
       - uses: subhiandrews/code-check-action@c7ea220d8033092d50d1ff10306d84dd24d64aac # v1 (v0.1.3)
         with:
           # The code-check release CI reviews with. A bot keeps it current (.github/workflows/code-check-pin.yml).
-          code-check-ref: v1.4.3
+          code-check-ref: v1.4.4
           # Max subscription token from `claude setup-token`; no API credits needed
           claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           fail-on-error: true # a failed review shows as a red check, not a silent green one
