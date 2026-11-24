@@ -100,7 +100,8 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
 
 def _stats(reviews: int, seen: dict[tuple[str, str], tuple[str, str]]) -> dict:
     """Findings by what became of them: `dispute_rate` is disputed over decided (confirmed or disputed), None when
-    nothing is decided. Compare it before and after a learned rule is merged."""
+    nothing is decided. `reviews` counts every review of the repository, while the findings follow `directory`, and
+    `categories_truncated` says `by_category` was cut. Compare `dispute_rate` before and after a learned rule is merged."""
     def block(labels: list[str]) -> dict:
         counts = {k: labels.count(k) for k in ("confirmed", "disputed", "replied")}
         decided = counts["confirmed"] + counts["disputed"]
@@ -109,9 +110,10 @@ def _stats(reviews: int, seen: dict[tuple[str, str], tuple[str, str]]) -> dict:
     by_cat: dict[str, list[str]] = {}
     for cat, label in seen.values():
         by_cat.setdefault(cat, []).append(label)
-    top = sorted(by_cat.items(), key=lambda kv: (-len(kv[1]), kv[0]))[:MAX_CATEGORIES * 2]
+    ranked = sorted(by_cat.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    top = ranked[:MAX_CATEGORIES * 2]
     return {"reviews": reviews, **block([label for _, label in seen.values()]),
-            "by_category": {cat: block(labels) for cat, labels in top}}
+            "by_category": {cat: block(labels) for cat, labels in top}, "categories_truncated": len(ranked) > len(top)}
 
 
 def _why_empty(reviews: int, labelled: int, replied: int, miss_prs: int, contested: bool, scoped: bool) -> str:

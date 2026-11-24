@@ -12,6 +12,7 @@ from gitutil import commit_file, make_origin_and_clone, sh
 
 from codecheck.config import ReviewConfig
 from codecheck.core.learn import (
+    MAX_CATEGORIES,
     MAX_CHANGED_LINES,
     MAX_FILE_CHARS,
     check_proposal,
@@ -490,6 +491,20 @@ def test_stats_count_each_finding_once_with_its_latest_decided_label(shadow):
     assert (st["reviews"], st["findings"], st["confirmed"], st["disputed"], st["no_signal"]) == (3, 4, 1, 2, 1)
     assert st["dispute_rate"] == 0.67
     assert st["by_category"]["bug"] == {"findings": 3, "confirmed": 1, "disputed": 1, "replied": 0, "no_signal": 1, "dispute_rate": 0.5}
+
+
+def test_stats_later_decided_label_replaces_earlier_undecided(shadow):
+    seed(shadow, 1, [("a" * 12, "app/x.py", "style", "none")])
+    seed(shadow, 1, [("a" * 12, "app/x.py", "style", "disputed")])  # decided only in the later review
+    st = gather(shadow, REPO, "")["stats"]
+    assert (st["findings"], st["disputed"], st["no_signal"]) == (1, 1, 0)
+
+
+def test_stats_flag_cut_categories(shadow):
+    seed(shadow, 1, [(f"{i:012d}", "app/x.py", f"cat{i}", "none") for i in range(MAX_CATEGORIES * 2 + 1)])
+    st = gather(shadow, REPO, "")["stats"]
+    assert st["categories_truncated"] is True and len(st["by_category"]) == MAX_CATEGORIES * 2
+    assert gather(shadow, REPO, "")["stats"]["findings"] == MAX_CATEGORIES * 2 + 1
 
 
 def test_stats_are_not_part_of_the_digest(shadow):
