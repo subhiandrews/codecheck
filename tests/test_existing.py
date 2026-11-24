@@ -29,6 +29,13 @@ def test_our_own_bot_findings_are_kept_and_tagged_ours():
     assert [c.author for c in other[0].comments] == ["alice"]
 
 
+def test_our_bot_login_matches_graphql_form_without_the_suffix():
+    # review.login is "github-actions[bot]" (REST form); GraphQL thread comments say "github-actions"
+    t = th(tc("github-actions", T0, is_bot=True, body="**Warning** finding"), tc("dependabot", T0, 2, is_bot=True))
+    out = collect_existing([t], Activity(None, ()), me="github-actions[bot]")
+    assert [(c.author, c.is_mine) for c in out[0].comments] == [("github-actions", True)]
+
+
 def test_unresolved_threads_come_first():
     done = th(tc("alice", T0), tid="T1", resolved=True, outdated=True)
     open_ = th(tc("bob", T0), tid="T2")

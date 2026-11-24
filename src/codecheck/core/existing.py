@@ -1,10 +1,10 @@
-"""A PR's existing human review threads, shaped for reviewers (no LLM)."""
+"""A PR's existing review threads (people's comments and our own earlier ones), shaped for reviewers (no LLM)."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from codecheck.core.precheck import Activity
-from codecheck.models import Thread
+from codecheck.models import Thread, same_login
 from codecheck.shadow.scrub import scrub_text
 
 
@@ -31,8 +31,9 @@ def collect_existing(
     threads: Sequence[Thread], activity: Activity, *, me: str = "", max_threads: int = 20, max_chars: int = 1000,
     max_total: int = 100,
 ) -> tuple[ExistingThread, ...]:
-    """Human comments per thread, scrubbed then truncated. Threads with replies since our review come first, then
-    unresolved ones, so a cap never cuts what changed; `me` marks our own earlier comments."""
+    """Comments per thread, scrubbed then truncated: people's, plus our own earlier ones (`me`, tagged ours, even
+    when we post as a bot); other bots are left out. Threads with replies since our review come first, then
+    unresolved ones, so a cap never cuts what changed."""
     new = {(r.thread_id, r.created_at, r.author) for r in activity.replies}
     out: list[ExistingThread] = []
     total = 0
@@ -42,9 +43,9 @@ def collect_existing(
             break
         comments = tuple(
             ExistingComment(c.author, scrub_text(c.body)[:max_chars], c.created_at, (t.id, c.created_at, c.author) in new,
-                            bool(me) and c.author == me)
+                            same_login(c.author, me))
             for c in t.comments
-            if (bool(me) and c.author == me) or not (c.is_bot or c.author.endswith("[bot]"))  # our own bot login (CI) stays
+            if same_login(c.author, me) or not (c.is_bot or c.author.endswith("[bot]"))  # our own bot login (CI) stays
         )[: max_total - total]
         if comments:
             out.append(ExistingThread(t.id, t.path, t.line, t.is_resolved, t.is_outdated, comments))
