@@ -10,6 +10,7 @@ from codecheck.models import (
     Review,
     Thread,
     comment_is_ours,
+    review_is_ours,
     same_pr_author,
 )
 from codecheck.shadow.scrub import scrub_text
@@ -33,7 +34,7 @@ class Activity:
 
 def review_activity(reviews: Sequence[Review], threads: Sequence[Thread], me: str) -> Activity:
     """Our latest review and the human replies on our threads since it (resolved and outdated threads count)."""
-    mine = [r for r in reviews if r.author == me]
+    mine = [r for r in reviews if review_is_ours(r, me)]
     if not mine:
         return Activity(None, ())
     last = max(mine, key=lambda r: r.submitted_at)

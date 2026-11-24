@@ -7,13 +7,17 @@ from fakes import FakeProvider
 from test_shadow_collect import REF, RID, seed
 
 from codecheck.commands.post import _already_posted
+from codecheck.commands.reply import MARKER as REPLY_MARKER
 from codecheck.commands.threads import _reviewers
-from codecheck.core.precheck import cheap_skip
+from codecheck.core.precheck import cheap_skip, review_activity
+from codecheck.core.render import RUN_MARKER, marker
+from codecheck.core.rounds import our_reviews
 from codecheck.core.state import actionable_threads
 from codecheck.models import (
     OWN_MARKER,
     PRRef,
     PullRequest,
+    Review,
     Thread,
     ThreadComment,
     comment_is_ours,
@@ -54,11 +58,21 @@ def test_post_recognises_findings_we_already_posted_as_the_bot():
 
 
 def test_our_marker_pattern_matches_every_marker_we_write():
-    from codecheck.core.render import RUN_MARKER
-
-    assert OWN_MARKER.search(MARK) and OWN_MARKER.search("reply\n<!-- code-check:reply -->")
-    assert OWN_MARKER.search(RUN_MARKER.format("c4141e60f383"))
+    # the real writers, so a changed format fails here and not silently in comment_is_ours
+    assert OWN_MARKER.search(marker("a" * 12)) and OWN_MARKER.search(RUN_MARKER.format("c4141e60f383"))
+    assert OWN_MARKER.search(f"a reply\n\n{REPLY_MARKER}")
     assert not OWN_MARKER.search("<!-- code-check:finding:xyz -->")
+
+
+def test_reviews_the_bot_posted_are_ours_whichever_way_review_login_is_spelled():
+    # REST says github-actions[bot]; review.login may be that or the bare name
+    run = Review(ME, "abc", "2026-01-01T00:00:10Z", "COMMENTED", RUN_MARKER.format("c4141e60f383"), True)
+    other_workflow = Review(ME, "def", "2026-01-02T00:00:10Z", "COMMENTED", "coverage dropped", True)
+    for me in (ME, "github-actions"):
+        assert our_reviews([run, other_workflow], me) == [run]
+        assert review_activity([run, other_workflow], [], me).last_review == run
+    person = Review("alice", "ghi", "2026-01-03T00:00:10Z", "COMMENTED", "my own review")
+    assert review_activity([person], [], "alice").last_review == person  # a person's reviews need no marker
 
 
 def test_a_comment_from_the_shared_bot_account_is_ours_only_with_our_marker():

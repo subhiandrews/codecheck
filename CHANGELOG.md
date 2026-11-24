@@ -6,9 +6,12 @@ User-visible changes per release, newest first. Earlier releases: `git log`. The
 
 ### Added
 - `review.seed_comments` (user config only): a file of earlier findings that a local review is shown, so an eval can replay a later round of a PR.
+- `python -m codecheck.evals.replay seed` builds those files from an earlier run, and a replay now runs this checkout's CLI.
 
 ### Fixed
-- In CI (`github-actions[bot]`), later review rounds now see their own earlier findings and replies, no longer post a finding inline twice and no longer review the bot's own PRs.
+- In CI (`github-actions[bot]`), later review rounds now see their own earlier findings and replies.
+- In CI, a finding already posted inline is no longer posted again.
+- In CI, a PR the bot opened itself is no longer reviewed.
 
 ## [1.4.4]
 

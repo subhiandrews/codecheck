@@ -21,10 +21,10 @@ def same_login(author: str, me: str, is_bot: bool = False) -> bool:
     when the host says the author is a bot (users and apps have separate names, so a person may be called `name`)."""
     if not me:
         return False
-    return author == me or (is_bot and author == _BOT_SUFFIX.sub("", me))
+    return author == me or (is_bot and _BOT_SUFFIX.sub("", author) == _BOT_SUFFIX.sub("", me))
 
 
-# The hidden markers we put in our comments: a finding id, a run id (reviews) and a reply. core/render.py writes them.
+# The hidden markers we put in our comments: a finding id and a run id (core/render.py) and a reply (commands/reply.py).
 OWN_MARKER = re.compile(r"<!-- code-check:(?:finding:[0-9a-f]{12}|run:[0-9a-f]{12}|reply) -->")
 
 
@@ -34,6 +34,12 @@ def comment_is_ours(c: ThreadComment, me: str) -> bool:
     only when it carries one of our hidden markers. Text can be copied into a marker, so this narrows the doubt about a
     shared login; it cannot close it."""
     return same_login(c.author, me, c.is_bot) and (not c.is_bot or OWN_MARKER.search(c.body) is not None)
+
+
+def review_is_ours(r: Review, me: str) -> bool:
+    """Whether a review is ours, by the same rule as `comment_is_ours`. REST spells a bot `name[bot]`, whatever
+    `review.login` says, so a bot review counts under either spelling, and only with one of our markers."""
+    return same_login(r.author, me, r.is_bot) and (not r.is_bot or OWN_MARKER.search(r.body or "") is not None)
 
 
 def same_pr_author(author: str, me: str) -> bool:
