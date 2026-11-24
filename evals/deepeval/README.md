@@ -35,6 +35,18 @@ python3.14 -m venv ~/.venvs/codecheck-evals       # any venv outside the repo wo
 - A finding that is not on an added line is not necessarily wrong. A finding about a deletion, or about unchanged code the change breaks, can legitimately sit elsewhere.
 - The scorecard measures format and bookkeeping, not whether a finding is true or worth raising. For that, see the judge results in `FAILURE-MODES.md`: the model judges tried so far were not reliable enough to use as metrics.
 
+## What we do not evaluate
+
+One maintainer, no paid raters, and labels on repos or languages the maintainer does not read are weak. So these are not measured, and effort on them is not planned:
+
+- Whether a finding is worth posting, or precision at scale: one reader and no second rater.
+- A model judge as a metric (same-concern, claim-validity): measured against hand labels and it missed its bar. See `notes.md`.
+- Recall against human review comments on arbitrary PRs: few PRs, some human comments are AI-assisted, and one review finds only about half of what several runs find.
+- Whether authors act on reviews: there is no user population to sample.
+- Prompt-wording effects smaller than run-to-run noise: measured, no effect beyond noise.
+
+What is measured instead needs no judgement beyond what the code or git history decides: the deterministic scorecard, the replay gate, routing A/B, and replays of PRs against findings that were later fixed in the repository. Add a golden case only when its label comes from that kind of source, and record it in `labelled_by`.
+
 ## Routing A/B
 
 `routing_ab.py` runs the reviewer routing at a git ref (`--base-ref`, default `origin/main`) and the checkout's routing over every distinct diff in your shadow store, and lists the diffs where the performance decision, the architect or the docs reviewer changed. No model, no tokens; it prints counts, run ids and routing reasons only. It says whether routing changed, not whether the change was right: that needs the reviewers' findings on those runs. On the 1.2.3 routing it reproduced 72 distinct diffs, 14 of them turned off and none turned on for performance.
