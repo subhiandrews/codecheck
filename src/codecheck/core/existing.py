@@ -44,7 +44,7 @@ def collect_existing(
             ExistingComment(c.author, scrub_text(c.body)[:max_chars], c.created_at, (t.id, c.created_at, c.author) in new,
                             bool(me) and c.author == me)
             for c in t.comments
-            if not (c.is_bot or c.author.endswith("[bot]"))
+            if (bool(me) and c.author == me) or not (c.is_bot or c.author.endswith("[bot]"))  # our own bot login (CI) stays
         )[: max_total - total]
         if comments:
             out.append(ExistingThread(t.id, t.path, t.line, t.is_resolved, t.is_outdated, comments))

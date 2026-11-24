@@ -20,6 +20,15 @@ def test_bot_only_thread_is_omitted():
     assert collect_existing([t], Activity(None, ())) == ()
 
 
+def test_our_own_bot_findings_are_kept_and_tagged_ours():
+    # CI posts as github-actions[bot] (review.login); dropping its comments hides our earlier findings from the next round
+    t = th(tc("github-actions[bot]", T0, is_bot=True, body="**Warning** finding"), tc("alice", LATER, 2, body="Fixed in abc"))
+    out = collect_existing([t], Activity(None, ()), me="github-actions[bot]")
+    assert [(c.author, c.is_mine) for c in out[0].comments] == [("github-actions[bot]", True), ("alice", False)]
+    other = collect_existing([t], Activity(None, ()), me="someone-else")
+    assert [c.author for c in other[0].comments] == ["alice"]
+
+
 def test_unresolved_threads_come_first():
     done = th(tc("alice", T0), tid="T1", resolved=True, outdated=True)
     open_ = th(tc("bob", T0), tid="T2")
