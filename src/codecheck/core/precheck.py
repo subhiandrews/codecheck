@@ -5,7 +5,14 @@ from dataclasses import dataclass
 
 from codecheck.core.panel import filter_ignored
 from codecheck.core.state import StateStore
-from codecheck.models import PullRequest, Review, Thread
+from codecheck.models import (
+    PullRequest,
+    Review,
+    Thread,
+    comment_is_ours,
+    review_is_ours,
+    same_pr_author,
+)
 from codecheck.shadow.scrub import scrub_text
 
 
@@ -27,16 +34,16 @@ class Activity:
 
 def review_activity(reviews: Sequence[Review], threads: Sequence[Thread], me: str) -> Activity:
     """Our latest review and the human replies on our threads since it (resolved and outdated threads count)."""
-    mine = [r for r in reviews if r.author == me]
+    mine = [r for r in reviews if review_is_ours(r, me)]
     if not mine:
         return Activity(None, ())
     last = max(mine, key=lambda r: r.submitted_at)
     replies = []
     for t in threads:
-        if not t.comments or t.comments[0].author != me:
+        if not t.comments or not comment_is_ours(t.comments[0], me):
             continue
         for c in t.comments[1:]:
-            if c.author == me or c.is_bot or c.author.endswith("[bot]"):
+            if comment_is_ours(c, me) or c.is_bot or c.author.endswith("[bot]"):
                 continue
             if c.created_at > last.submitted_at:
                 replies.append(Reply(t.id, t.path, t.line, c.author, c.body, c.created_at))
@@ -151,7 +158,7 @@ def cheap_skip(pr: PullRequest, files: Sequence[str], *, ignore: Sequence[str], 
         return _skip(f"PR is {pr.state}")
     if pr.is_draft:
         return _skip("PR is a draft")
-    if pr.author == me:
+    if same_pr_author(pr.author, me):
         return _skip("own PR: use address-comments instead")
     if not filter_ignored(files, ignore):
         return _skip("no reviewable files after ignore patterns")

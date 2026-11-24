@@ -4,6 +4,7 @@ from codecheck.commands._common import approval_skip, busy_checkout, pr_activity
 from codecheck.core.precheck import review_verdict
 from codecheck.core.state import WorkItem, babysit_work, loop_key, select_work
 from codecheck.errors import CodeCheckError
+from codecheck.models import same_pr_author
 
 BATCH = 3  # PRs asked of the host at a time
 MAX_LISTED = 50  # most PRs of one repository looked at in an iteration
@@ -81,7 +82,7 @@ def _newest_first(provider, scope: str, repo: str):
 def _consider(ctx, mode: str, ref, me: str) -> tuple[WorkItem | None, str | None]:
     pr = ctx.provider.get_pr(ref)
     if mode == "review":
-        if pr.state != "open" or pr.is_draft or pr.author == me:
+        if pr.state != "open" or pr.is_draft or same_pr_author(pr.author, me):
             return None, None
         if pr.is_cross_repo and not ctx.config.loop.review_forks:
             return None, "fork-based PR: not reviewed unattended (set loop.review_forks = true to include forks)"

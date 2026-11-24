@@ -15,6 +15,48 @@ def is_service_login(login: str) -> bool:
     return bool(_BOT_SUFFIX.search(login)) or login.lower() in _AUTOMATED_LOGINS
 
 
+def same_login(author: str, me: str, is_bot: bool = False) -> bool:
+    """Whether `author` is `me`. GitHub's REST API (and `review.login`) spell a bot `name[bot]`, but GraphQL, which
+    supplies thread comments, drops the suffix; a bare login that equals ours minus the suffix is us too, but only
+    when the host says the author is a bot (users and apps have separate names, so a person may be called `name`)."""
+    if not me:
+        return False
+    return author == me or (is_bot and _BOT_SUFFIX.sub("", author) == _BOT_SUFFIX.sub("", me))
+
+
+# The hidden markers we put at the end of our comments: a finding id and a run id (core/render.py), a reply
+# (commands/reply.py) and GitLab's per-head review marker (providers/gitlab.py), which follows the run marker.
+_ONE_MARKER = r"<!-- code-check:(?:finding:[0-9a-f]{12}|run:[0-9a-f]{12}|review:[0-9a-f]{1,64}|reply) -->"
+OWN_MARKER = re.compile(rf"(?:{_ONE_MARKER}\s*)+\Z")
+
+
+def _carries_our_marker(body: str) -> bool:
+    """A bot's text is ours only when it ends with our markers. An empty body (an approval vote, or another
+    workflow's review) carries none, so it is not ours; approvals are handled by `approved_by` and `approval_skip`."""
+    return OWN_MARKER.search(body or "") is not None
+
+
+def comment_is_ours(c: ThreadComment, me: str) -> bool:
+    """Whether a thread comment is ours. A person's comment under our login is. A bot's login (the bare form GraphQL
+    gives, or `review.login` as configured) is shared by every workflow that uses the same token, so its comment counts
+    only when it carries one of our hidden markers. Text can be copied into a marker, so this narrows the doubt about a
+    shared login; it cannot close it."""
+    return same_login(c.author, me, c.is_bot) and (not c.is_bot or _carries_our_marker(c.body))
+
+
+def review_is_ours(r: Review, me: str) -> bool:
+    """Whether a review is ours, by the same rule as `comment_is_ours`. REST spells a bot `name[bot]`, whatever
+    `review.login` says, so a bot review counts under either spelling, and only with one of our markers."""
+    return same_login(r.author, me, r.is_bot) and (not r.is_bot or _carries_our_marker(r.body))
+
+
+def same_pr_author(author: str, me: str) -> bool:
+    """Whether a PR's author is `me`. `gh` spells a bot author `app/name`, while `review.login` says `name[bot]`."""
+    if not me:
+        return False
+    return author == me or author == "app/" + _BOT_SUFFIX.sub("", me)
+
+
 def is_bot_login(login: str) -> bool:
     """Wider, for sorting feedback only: also `name-bot` and `name_bot`, which a person could own. Never use it to
     drop someone's reply from a review decision."""

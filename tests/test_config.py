@@ -212,6 +212,33 @@ def test_login_is_validated(tmp_path, login):
         load_config(tmp_path / "repo", tmp_path / "home", {"CODE_CHECK_REVIEW__LOGIN": login})
 
 
+def test_seed_comments_defaults_to_empty_and_is_user_only(tmp_path):
+    assert load_config(tmp_path / "repo", tmp_path / "home", {}).review.seed_comments == ""
+    write(tmp_path / "repo/.code-check.toml", '[review]\nseed_comments = "/etc/passwd"\n')
+    with pytest.raises(ConfigError, match=r"review.seed_comments.*repository"):
+        load_config(tmp_path / "repo", tmp_path / "home", {})
+
+
+def test_seed_comments_accepts_a_home_relative_path_like_state_dir(tmp_path):
+    cfg = load_config(tmp_path / "repo", tmp_path / "home", {"CODE_CHECK_REVIEW__SEED_COMMENTS": "~/seed.md"})
+    assert cfg.review.seed_comments == "~/seed.md"  # expanded where it is read
+
+
+@pytest.mark.parametrize("path", ["relative/seed.md", "-x", "~user-less/../x"])
+def test_seed_comments_must_be_an_absolute_path(tmp_path, path):
+    with pytest.raises(ConfigError, match="review.seed_comments"):
+        load_config(tmp_path / "repo", tmp_path / "home", {"CODE_CHECK_REVIEW__SEED_COMMENTS": path})
+    ok = load_config(tmp_path / "repo", tmp_path / "home", {"CODE_CHECK_REVIEW__SEED_COMMENTS": "/tmp/seed.md"})
+    assert ok.review.seed_comments == "/tmp/seed.md"
+
+
+def test_an_empty_environment_value_clears_a_seed_set_in_the_user_file(tmp_path):
+    write(tmp_path / "home/.config/code-check/config.toml", '[review]\nseed_comments = "/abs/seed.md"\n')
+    assert load_config(tmp_path / "repo", tmp_path / "home", {}).review.seed_comments == "/abs/seed.md"
+    cleared = load_config(tmp_path / "repo", tmp_path / "home", {"CODE_CHECK_REVIEW__SEED_COMMENTS": ""})
+    assert cleared.review.seed_comments == ""
+
+
 def test_performance_defaults_and_repo_file(tmp_path):
     cfg = load_config(tmp_path / "repo", tmp_path / "home", {})
     assert cfg.models.performance == "sonnet" and cfg.review.performance is False

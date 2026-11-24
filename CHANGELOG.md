@@ -2,6 +2,16 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.4.5]
+
+### Added
+- `review.seed_comments` (user config only): a file of earlier findings that a local review is shown, so an eval can replay a later round of a PR.
+
+### Fixed
+- In CI (`github-actions[bot]`), later review rounds now see their own earlier findings and replies.
+- In CI, a finding already posted inline is no longer posted again.
+- In CI, a PR the bot opened itself is no longer reviewed.
+
 ## [1.4.4]
 
 ### Changed

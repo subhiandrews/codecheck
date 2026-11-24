@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from codecheck.errors import CodeCheckError
-from codecheck.models import Check, PRRef, PullRequest, Thread
+from codecheck.models import Check, PRRef, PullRequest, Thread, comment_is_ours
 
 # A loop work item that fails this many times for the same fingerprint is marked processed (given up on)
 # until something changes on the PR; earlier failures are retried on the next iteration.
@@ -226,7 +226,8 @@ def local_fingerprint(merge_base: str, head: str, diff: str) -> str:
 def actionable_threads(threads: Sequence[Thread], me: str) -> list[Thread]:
     return [
         t for t in threads
-        if not t.is_resolved and not t.is_outdated and t.comments and t.comments[-1].author != me
+        if not t.is_resolved and not t.is_outdated and t.comments
+        and not comment_is_ours(t.comments[-1], me)
     ]
 
 

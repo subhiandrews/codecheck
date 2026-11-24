@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,8 @@ from codecheck.evals.replay import (
     run_case,
     run_cases,
     score,
+    seed_cases,
+    seed_gaps,
     validate_case,
 )
 
@@ -187,12 +190,82 @@ def test_run_case_reviews_the_rebuilt_repo_and_scores_the_findings(tmp_path, sou
     assert out["score"]["recall"] == 1.0 and out["claude"]["cost_usd"] == 0.01 and "error" not in out
 
 
+def test_a_case_seed_is_written_and_handed_to_the_review(tmp_path, source):
+    seed = "## calc.py:2\n- code-check [ours]:\n  > **Warning** returns 2, not 1\n"
+    ctx, fake = reviewing_ctx(tmp_path, [FOUND])
+    work = workdir(tmp_path)
+    run_case(ctx, make_case(source, seed_comments=seed), work)
+    [call] = fake.calls
+    path = work.resolve() / "seed-comments.md"
+    assert f"CODE_CHECK_REVIEW__SEED_COMMENTS={path}" in call.argv[: call.argv.index("claude")]
+    assert path.read_text() == seed
+    ctx2, fake2 = reviewing_ctx(tmp_path, [FOUND])
+    run_case(ctx2, make_case(source), workdir(tmp_path, "unseeded"))
+    argv2 = fake2.calls[0].argv
+    # an unseeded case clears the key, so a seed in the maintainer's own config cannot skew the baseline
+    assert "CODE_CHECK_REVIEW__SEED_COMMENTS=" in argv2[: argv2.index("claude")]
+
+
+def test_a_replay_runs_the_cli_of_this_checkout_not_a_cached_venv(tmp_path, source):
+    # bin/code-check bootstraps a venv that is only rebuilt when VERSION changes, so a replay would otherwise measure
+    # (and silently drop a seed for) an older build
+    ctx, fake = reviewing_ctx(tmp_path, [FOUND])
+    run_case(ctx, make_case(source), workdir(tmp_path))
+    assert f"CODE_CHECK_PYTHON={sys.executable}" in fake.calls[0].argv[: fake.calls[0].argv.index("claude")]
+    ctx.env = {"CODE_CHECK_PYTHON": "/my/python"}  # the user's own choice is not overridden
+    assert not any(a.startswith("CODE_CHECK_PYTHON=") for a in review_argv(ctx, tmp_path, pin_cli=True))
+    assert not any(a.startswith("CODE_CHECK_PYTHON=") for a in review_argv(_ctx(tmp_path, FakeRunner()), tmp_path))  # live eval unchanged
+
+
+def test_a_seed_the_review_could_not_read_stops_the_replay_before_the_paid_review(tmp_path, source):
+    # context only notes an unreadable seed and reviews unseeded, which would score a later round without its seed
+    ctx, fake = reviewing_ctx(tmp_path, [FOUND])
+    for n, bad in enumerate(("x" * 200_001, "a lone surrogate \ud800")):
+        with pytest.raises(CodeCheckError, match="seed"):
+            run_case(ctx, make_case(source, seed_comments=bad), workdir(tmp_path, f"bad{n}"))
+    assert fake.calls == []  # no claude run was started
+
+
+def test_a_dry_run_refuses_the_seed_the_real_run_would_refuse(tmp_path, source):
+    ctx, _fake = reviewing_ctx(tmp_path, [FOUND])
+    with pytest.raises(CodeCheckError, match="seed"):
+        run_case(ctx, make_case(source, seed_comments="x" * 200_001), workdir(tmp_path), dry_run=True)
+    assert run_case(ctx, make_case(source, seed_comments="fine"), workdir(tmp_path, "ok"), dry_run=True)["built"] is True
+
+
+def test_seed_gaps_names_the_earlier_cases_that_left_nothing_to_seed_with():
+    cases = [{"name": "a"}, {"name": "b"}, {"name": "c"}]
+    results = [{"name": "a", "got": [FOUND]}, {"name": "b", "error": "claude run failed"}]  # b failed, c is last
+    assert seed_gaps(cases, results) == ["b"]
+    assert seed_gaps(cases, [{"name": "a", "got": []}, {"name": "b", "got": []}]) == []  # an empty review is a result
+    assert seed_gaps(cases, []) == ["a", "b"]
+
+
+def test_a_seed_must_be_text(source):
+    with pytest.raises(CodeCheckError, match="seed_comments"):
+        validate_case(make_case(source, seed_comments=5))
+
+
+def test_seed_cases_give_each_round_the_findings_of_the_rounds_before_it(source):
+    first, second, third = (make_case(source, name=n) for n in ("pr-1", "pr-2", "pr-3"))
+    f1 = {**FOUND, "message": "returns 2, not 1"}
+    f2 = {**FOUND, "line": 9, "severity": "critical", "category": "security", "message": "another bypass"}
+    results = [{"name": "pr-1", "got": [f1]}, {"name": "pr-2", "got": [f1, f2]}]
+    seeded = seed_cases([first, second, third], results)
+    assert "seed_comments" not in seeded[0]
+    assert "returns 2, not 1" in seeded[1]["seed_comments"] and "[ours]" in seeded[1]["seed_comments"]
+    assert "another bypass" not in seeded[1]["seed_comments"]
+    assert seeded[2]["seed_comments"].count("returns 2, not 1") == 1  # the same finding twice is one comment
+    assert "another bypass" in seeded[2]["seed_comments"] and "## calc.py:9" in seeded[2]["seed_comments"]
+    assert "seed_comments" not in first  # the input cases are not changed
+
+
 def test_the_fixed_panel_option_pins_the_review_like_the_live_eval(tmp_path):
     ctx = _ctx(tmp_path, FakeRunner())
     pinned = review_argv(ctx, tmp_path)
     shipped = review_argv(ctx, tmp_path, fixed_panel=False)
     assert "CODE_CHECK_REVIEW__ROUTING__MODE=off" in pinned and "CODE_CHECK_REVIEW__FULL=0" in pinned
-    assert not any("REVIEW__" in a for a in shipped)
+    assert not any("REVIEW__" in a and "SEED_COMMENTS" not in a for a in shipped)  # no panel override
     assert "CODE_CHECK_REMOTE=origin" in shipped and "CODE_CHECK_BASE_BRANCH=main" in shipped
 
 
@@ -282,6 +355,27 @@ def test_the_command_line_runs_a_dry_run_and_reports_errors_as_json(tmp_path, so
     assert json.loads(capsys.readouterr().out)["cases"][0]["built"] is True
     assert json.loads(out_file.read_text().splitlines()[0])["name"] == "pr1"
     assert replay.main(["run", str(tmp_path / "missing.json")]) == 1
+    assert "error" in json.loads(capsys.readouterr().out)
+
+
+def test_the_seed_command_prints_cases_and_reports_a_bad_results_file_as_json(tmp_path, source, monkeypatch, capsys):
+    monkeypatch.setattr(replay, "_context", lambda: _ctx(tmp_path, LiveRunner(FakeRunner())))
+    cases = tmp_path / "cases.json"
+    cases.write_text(json.dumps([make_case(source, name="a"), make_case(source, name="b")]))
+    results = tmp_path / "results.jsonl"
+    results.write_text(json.dumps({"name": "a", "got": [FOUND]}) + "\n")
+    assert replay.main(["seed", str(cases), str(results)]) == 0
+    seeded = json.loads(capsys.readouterr().out)
+    assert "seed_comments" not in seeded[0] and "returns 2, not 1" in seeded[1]["seed_comments"]
+    for odd in ('{"name": "a", "got": ["x", 3, null]}', '{"name": "a", "got": {"file": "x"}}', '[1, 2]', '"text"'):
+        results.write_text(odd + "\n")  # valid JSON of the wrong shape seeds nothing and is not a traceback
+        assert replay.main(["seed", str(cases), str(results)]) == 0
+        assert "seed_comments" not in json.loads(capsys.readouterr().out)[1]
+    results.write_text('{"name": "a", "got": [{"file": ["x"], "line": {"a": 1}, "message": [1]}, {"file": ["x"], "line": {"a": 1}, "message": [1]}]}\n')
+    assert replay.main(["seed", str(cases), str(results)]) == 0  # unhashable fields are not a traceback either
+    capsys.readouterr()
+    results.write_bytes(b"\xff\xfe not utf-8\n")  # a results file that is not text is an error, not a traceback
+    assert replay.main(["seed", str(cases), str(results)]) == 1
     assert "error" in json.loads(capsys.readouterr().out)
 
 

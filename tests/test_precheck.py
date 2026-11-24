@@ -86,6 +86,35 @@ def test_activity_counts_only_replies_after_the_review():
     assert replies[0].thread_id == "T1" and replies[0].path == "a.py" and replies[0].author == "alice"
 
 
+def test_activity_finds_replies_to_our_bot_threads_in_ci():
+    # CI: review.login is "github-actions[bot]" (REST form), thread comments come from GraphQL as "github-actions"
+    me = "github-actions[bot]"
+    reviews = [Review(me, "abc", T0, "COMMENTED")]
+    mark = "finding\n<!-- code-check:finding:aaaaaaaaaaaa -->"
+    threads = [th(ThreadComment(1, "github-actions", mark, T0, is_bot=True), tc("alice", "2026-01-01T00:00:11Z", 2),
+                  ThreadComment(3, "github-actions", mark, "2026-01-01T00:00:12Z", is_bot=True))]
+    replies = review_activity(reviews, threads, me).replies
+    assert [(r.author, r.thread_id) for r in replies] == [("alice", "T1")]
+
+
+def test_a_thread_another_workflow_opened_as_the_shared_bot_is_not_ours():
+    me = "github-actions[bot]"
+    reviews = [Review(me, "abc", T0, "COMMENTED")]
+    other = th(ThreadComment(1, "github-actions", "coverage dropped", T0, is_bot=True), tc("alice", "2026-01-01T00:00:11Z", 2))
+    assert review_activity(reviews, [other], me).replies == ()
+
+
+def test_a_person_named_like_our_bot_is_not_us_in_activity():
+    me = "github-actions[bot]"
+    reviews = [Review(me, "abc", T0, "COMMENTED")]
+    mark = "finding\n<!-- code-check:finding:aaaaaaaaaaaa -->"
+    ours = th(ThreadComment(1, "github-actions", mark, T0, is_bot=True), tc("github-actions", "2026-01-01T00:00:11Z", 2),
+              tid="T1")
+    theirs = th(tc("github-actions", T0, 3), tc("alice", "2026-01-01T00:00:11Z", 4), tid="T2")  # a person opened it
+    replies = review_activity(reviews, [ours, theirs], me).replies
+    assert [(r.thread_id, r.author) for r in replies] == [("T1", "github-actions")]
+
+
 def test_activity_picks_latest_own_review():
     reviews = [
         Review("me", "old", "2026-01-01T00:00:00Z", "COMMENTED"),

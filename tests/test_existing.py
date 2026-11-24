@@ -20,6 +20,32 @@ def test_bot_only_thread_is_omitted():
     assert collect_existing([t], Activity(None, ())) == ()
 
 
+def test_our_own_bot_findings_are_kept_and_tagged_ours():
+    # CI posts as github-actions[bot] (review.login); dropping its comments hides our earlier findings from the next round
+    finding = "**Warning** finding\n<!-- code-check:finding:aaaaaaaaaaaa -->"
+    t = th(tc("github-actions[bot]", T0, is_bot=True, body=finding), tc("alice", LATER, 2, body="Fixed in abc"))
+    out = collect_existing([t], Activity(None, ()), me="github-actions[bot]")
+    assert [(c.author, c.is_mine) for c in out[0].comments] == [("github-actions[bot]", True), ("alice", False)]
+    other = collect_existing([t], Activity(None, ()), me="someone-else")
+    assert [c.author for c in other[0].comments] == ["alice"]
+
+
+def test_our_bot_login_matches_graphql_form_without_the_suffix():
+    # review.login is "github-actions[bot]" (REST form); GraphQL thread comments say "github-actions"
+    ours = tc("github-actions", T0, is_bot=True, body="**Warning** finding\n<!-- code-check:finding:aaaaaaaaaaaa -->")
+    other_workflow = tc("github-actions", T0, 3, is_bot=True, body="coverage dropped")  # same account, not our marker
+    t = th(ours, tc("dependabot", T0, 2, is_bot=True), other_workflow)
+    out = collect_existing([t], Activity(None, ()), me="github-actions[bot]")
+    assert [(c.author, c.is_mine) for c in out[0].comments] == [("github-actions", True)]
+
+
+def test_a_person_named_like_our_bot_is_not_us():
+    # users and apps have separate namespaces: a human "github-actions" may exist next to the app github-actions[bot]
+    t = th(tc("github-actions", T0, body="a person's comment"))
+    out = collect_existing([t], Activity(None, ()), me="github-actions[bot]")
+    assert [(c.author, c.is_mine) for c in out[0].comments] == [("github-actions", False)]
+
+
 def test_unresolved_threads_come_first():
     done = th(tc("alice", T0), tid="T1", resolved=True, outdated=True)
     open_ = th(tc("bob", T0), tid="T2")

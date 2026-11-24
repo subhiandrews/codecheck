@@ -18,7 +18,7 @@ from codecheck.core.render import (
 )
 from codecheck.core.rounds import hold_back
 from codecheck.errors import CodeCheckError, ProviderError
-from codecheck.models import ReviewComment
+from codecheck.models import ReviewComment, comment_is_ours, same_pr_author
 from codecheck.shadow.recorder import record_post
 
 NAME = "post"
@@ -40,7 +40,8 @@ def _reviewer_findings(run_dir, ingest, meta) -> dict:
 
 def _already_posted(threads, me: str) -> set[str]:
     """Finding IDs whose hidden marker is already in one of our own inline comments on this PR."""
-    return {fid for t in threads for c in t.comments if c.author == me for fid in FINDING_MARKER.findall(c.body)}
+    return {fid for t in threads for c in t.comments if comment_is_ours(c, me)
+            for fid in FINDING_MARKER.findall(c.body)}
 
 
 def run(args, ctx) -> dict:
@@ -80,7 +81,7 @@ def run(args, ctx) -> dict:
     ref = ctx.parse_ref(meta["pr"])
     pr = ctx.provider.get_pr(ref)
     me = ctx.provider.whoami()
-    if pr.author == me:
+    if same_pr_author(pr.author, me):
         raise CodeCheckError("refusing to post a review on your own PR")
     if pr.is_draft:
         return {"posted": False, "draft": True, "reason": "PR is a draft; draft PRs are never posted to"}
