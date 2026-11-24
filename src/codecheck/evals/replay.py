@@ -23,6 +23,7 @@ import tempfile
 from pathlib import Path
 
 from codecheck import __version__
+from codecheck.commands.context import SEED_MAX_BYTES
 from codecheck.commands.run_pr import parse_result
 from codecheck.core.existing import ExistingComment, ExistingThread
 from codecheck.core.render import render_existing
@@ -264,8 +265,16 @@ def run_case(ctx, case: dict, workdir: Path, *, fixed_panel: bool = False, dry_r
         return {**out, "built": True}
     seed = None
     if case.get("seed_comments"):  # a later round: hand the review the earlier findings as existing comments
+        # `context` only notes a seed it cannot read and reviews unseeded, which would score this round without it:
+        # refuse here, before the paid review, what it would refuse to read
+        try:
+            data = case["seed_comments"].encode("utf-8")
+        except UnicodeEncodeError as e:
+            raise CodeCheckError(f"case {case['name']}: seed_comments is not valid UTF-8 text: {e}") from e
+        if len(data) > SEED_MAX_BYTES:
+            raise CodeCheckError(f"case {case['name']}: seed_comments is {len(data)} bytes, over the {SEED_MAX_BYTES} a review reads")
         seed = workdir / "seed-comments.md"
-        seed.write_text(case["seed_comments"], encoding="utf-8")
+        seed.write_bytes(data)
     res = ctx.runner.run(live.review_argv(ctx, workdir, fixed_panel=fixed_panel, seed=seed, pin_cli=True), cwd=repo,
                          timeout=ctx.config.run_pr.timeout_seconds, input="")
     claude = parse_result(res.stdout, res.returncode, res.stderr)

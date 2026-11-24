@@ -24,20 +24,23 @@ def same_login(author: str, me: str, is_bot: bool = False) -> bool:
     return author == me or (is_bot and author == _BOT_SUFFIX.sub("", me))
 
 
-OWN_MARKER = "<!-- code-check:"  # starts every hidden marker we put in a comment (finding, reply, run)
+# The hidden markers we put in our comments: a finding id, a run id (reviews) and a reply. core/render.py writes them.
+OWN_MARKER = re.compile(r"<!-- code-check:(?:finding:[0-9a-f]{12}|run:[0-9a-f]{12}|reply) -->")
 
 
 def comment_is_ours(c: ThreadComment, me: str) -> bool:
-    """Whether a thread comment is ours. Under our exact login it is. A bot's bare GraphQL login is shared by every
-    workflow that uses the same token, so it counts only when the comment carries one of our hidden markers."""
-    return c.author == me or (same_login(c.author, me, c.is_bot) and OWN_MARKER in c.body)
+    """Whether a thread comment is ours. A person's comment under our login is. A bot's login (the bare form GraphQL
+    gives, or `review.login` as configured) is shared by every workflow that uses the same token, so its comment counts
+    only when it carries one of our hidden markers. Text can be copied into a marker, so this narrows the doubt about a
+    shared login; it cannot close it."""
+    return same_login(c.author, me, c.is_bot) and (not c.is_bot or OWN_MARKER.search(c.body) is not None)
 
 
 def same_pr_author(author: str, me: str) -> bool:
     """Whether a PR's author is `me`. `gh` spells a bot author `app/name`, while `review.login` says `name[bot]`."""
     if not me:
         return False
-    return author == me or (me.lower().endswith("[bot]") and author == "app/" + _BOT_SUFFIX.sub("", me))
+    return author == me or author == "app/" + _BOT_SUFFIX.sub("", me)
 
 
 def is_bot_login(login: str) -> bool:

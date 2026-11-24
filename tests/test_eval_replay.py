@@ -216,6 +216,15 @@ def test_a_replay_runs_the_cli_of_this_checkout_not_a_cached_venv(tmp_path, sour
     assert not any(a.startswith("CODE_CHECK_PYTHON=") for a in review_argv(_ctx(tmp_path, FakeRunner()), tmp_path))  # live eval unchanged
 
 
+def test_a_seed_the_review_could_not_read_stops_the_replay_before_the_paid_review(tmp_path, source):
+    # context only notes an unreadable seed and reviews unseeded, which would score a later round without its seed
+    ctx, fake = reviewing_ctx(tmp_path, [FOUND])
+    for n, bad in enumerate(("x" * 200_001, "a lone surrogate \ud800")):
+        with pytest.raises(CodeCheckError, match="seed"):
+            run_case(ctx, make_case(source, seed_comments=bad), workdir(tmp_path, f"bad{n}"))
+    assert fake.calls == []  # no claude run was started
+
+
 def test_a_seed_must_be_text(source):
     with pytest.raises(CodeCheckError, match="seed_comments"):
         validate_case(make_case(source, seed_comments=5))

@@ -11,6 +11,7 @@ from codecheck.commands.threads import _reviewers
 from codecheck.core.precheck import cheap_skip
 from codecheck.core.state import actionable_threads
 from codecheck.models import (
+    OWN_MARKER,
     PRRef,
     PullRequest,
     Thread,
@@ -38,7 +39,8 @@ def test_gh_spells_a_bot_pr_author_app_slash_name_and_that_is_still_our_own_pr()
     assert same_pr_author("app/github-actions", ME)
     assert same_pr_author(ME, ME) and same_pr_author("alice", "alice")
     assert not same_pr_author("github-actions", ME)  # a person called like the bot
-    assert not same_pr_author("app/dependabot", ME) and not same_pr_author("app/alice", "alice")
+    assert not same_pr_author("app/dependabot", ME)
+    assert same_pr_author("app/github-actions", "github-actions")  # review.login may be the bare name
     assert not same_pr_author("alice", "")
     pr = PullRequest(PRRef("o/r", 7), "t", "", "app/github-actions", "main", "f", "abc", False, "open", "u")
     skip = cheap_skip(pr, ["a.py"], ignore=(), me=ME)
@@ -51,13 +53,26 @@ def test_post_recognises_findings_we_already_posted_as_the_bot():
     assert _already_posted([thread(tc(1, ME, MARK, bot=True))], ME) == {"a" * 12}  # the REST spelling still works
 
 
+def test_our_marker_pattern_matches_every_marker_we_write():
+    from codecheck.core.render import RUN_MARKER
+
+    assert OWN_MARKER.search(MARK) and OWN_MARKER.search("reply\n<!-- code-check:reply -->")
+    assert OWN_MARKER.search(RUN_MARKER.format("c4141e60f383"))
+    assert not OWN_MARKER.search("<!-- code-check:finding:xyz -->")
+
+
 def test_a_comment_from_the_shared_bot_account_is_ours_only_with_our_marker():
     # every workflow using GITHUB_TOKEN posts as github-actions: another workflow's comment is not ours
     ours = tc(1, "github-actions", MARK, bot=True)
     other = tc(2, "github-actions", "coverage dropped by 2%", bot=True)
     person = tc(3, "github-actions", MARK)
     assert comment_is_ours(ours, ME) and not comment_is_ours(other, ME) and not comment_is_ours(person, ME)
-    assert comment_is_ours(tc(4, ME, "no marker needed under the exact login", bot=True), ME)
+    assert not comment_is_ours(tc(4, ME, "an exact login is no reason to trust a bot's text", bot=True), ME)
+    assert comment_is_ours(tc(5, "alice", "no marker on a person's own comment"), "alice")
+    # review.login may also be the bare name (config allows it): a bot comment still needs our marker
+    assert comment_is_ours(ours, "github-actions") and not comment_is_ours(other, "github-actions")
+    # a whole marker, not just the text that starts one
+    assert not comment_is_ours(tc(6, "github-actions", "<!-- code-check: nothing -->", bot=True), ME)
     assert _already_posted([thread(other, ours, tid="x")], ME) == {"a" * 12}
     assert [t.id for t in actionable_threads([thread(tc(5, "alice"), other, tid="o")], ME)] == ["o"]
 
