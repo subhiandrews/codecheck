@@ -15,12 +15,13 @@ def is_service_login(login: str) -> bool:
     return bool(_BOT_SUFFIX.search(login)) or login.lower() in _AUTOMATED_LOGINS
 
 
-def same_login(author: str, me: str) -> bool:
+def same_login(author: str, me: str, is_bot: bool = False) -> bool:
     """Whether `author` is `me`. GitHub's REST API (and `review.login`) spell a bot `name[bot]`, but GraphQL, which
-    supplies thread comments, drops the suffix; a bare login that equals ours minus the suffix is us too."""
+    supplies thread comments, drops the suffix; a bare login that equals ours minus the suffix is us too, but only
+    when the host says the author is a bot (users and apps have separate names, so a person may be called `name`)."""
     if not me:
         return False
-    return author == me or author == _BOT_SUFFIX.sub("", me)
+    return author == me or (is_bot and author == _BOT_SUFFIX.sub("", me))
 
 
 def is_bot_login(login: str) -> bool:

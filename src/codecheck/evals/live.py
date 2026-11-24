@@ -139,9 +139,7 @@ def review_argv(ctx, workdir: Path, *, fixed_panel: bool = True, seed: Path | No
                # The throwaway repository's base is origin/main, whatever the user configured.
                "CODE_CHECK_REMOTE=origin", "CODE_CHECK_BASE_BRANCH=main"]
     if pin_cli and not ctx.env.get("CODE_CHECK_PYTHON"):
-        # bin/code-check bootstraps a venv that is rebuilt only when VERSION changes, so without this a replay of a
-        # branch could run an older cached build of the CLI (and drop a seed it does not know); the interpreter
-        # running the replay has this checkout's code
+        # bin/code-check's venv is rebuilt only on a VERSION change; run this checkout's CLI (docs/MAINTAINING.md)
         isolate.append(f"CODE_CHECK_PYTHON={sys.executable}")
     if seed is not None:  # a replay of a later round: the earlier findings arrive as existing-comments.md
         isolate.append(f"CODE_CHECK_REVIEW__SEED_COMMENTS={seed}")

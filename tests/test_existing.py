@@ -36,6 +36,13 @@ def test_our_bot_login_matches_graphql_form_without_the_suffix():
     assert [(c.author, c.is_mine) for c in out[0].comments] == [("github-actions", True)]
 
 
+def test_a_person_named_like_our_bot_is_not_us():
+    # users and apps have separate namespaces: a human "github-actions" may exist next to the app github-actions[bot]
+    t = th(tc("github-actions", T0, body="a person's comment"))
+    out = collect_existing([t], Activity(None, ()), me="github-actions[bot]")
+    assert [(c.author, c.is_mine) for c in out[0].comments] == [("github-actions", False)]
+
+
 def test_unresolved_threads_come_first():
     done = th(tc("alice", T0), tid="T1", resolved=True, outdated=True)
     open_ = th(tc("bob", T0), tid="T2")

@@ -33,10 +33,10 @@ def review_activity(reviews: Sequence[Review], threads: Sequence[Thread], me: st
     last = max(mine, key=lambda r: r.submitted_at)
     replies = []
     for t in threads:
-        if not t.comments or not same_login(t.comments[0].author, me):
+        if not t.comments or not same_login(t.comments[0].author, me, t.comments[0].is_bot):
             continue
         for c in t.comments[1:]:
-            if same_login(c.author, me) or c.is_bot or c.author.endswith("[bot]"):
+            if same_login(c.author, me, c.is_bot) or c.is_bot or c.author.endswith("[bot]"):
                 continue
             if c.created_at > last.submitted_at:
                 replies.append(Reply(t.id, t.path, t.line, c.author, c.body, c.created_at))

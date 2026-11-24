@@ -96,6 +96,15 @@ def test_activity_finds_replies_to_our_bot_threads_in_ci():
     assert [(r.author, r.thread_id) for r in replies] == [("alice", "T1")]
 
 
+def test_a_person_named_like_our_bot_is_not_us_in_activity():
+    me = "github-actions[bot]"
+    reviews = [Review(me, "abc", T0, "COMMENTED")]
+    ours = th(tc("github-actions", T0, is_bot=True), tc("github-actions", "2026-01-01T00:00:11Z", 2), tid="T1")
+    theirs = th(tc("github-actions", T0, 3), tc("alice", "2026-01-01T00:00:11Z", 4), tid="T2")  # a person opened it
+    replies = review_activity(reviews, [ours, theirs], me).replies
+    assert [(r.thread_id, r.author) for r in replies] == [("T1", "github-actions")]
+
+
 def test_activity_picks_latest_own_review():
     reviews = [
         Review("me", "old", "2026-01-01T00:00:00Z", "COMMENTED"),
