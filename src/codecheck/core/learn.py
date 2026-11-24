@@ -23,6 +23,11 @@ MAX_FILE_CHARS = 8_000  # a written file; the reviewers read all guidance files 
 MAX_CHANGED_LINES = 40  # lines added plus lines removed by one proposal
 
 
+def _contested(e: dict) -> bool:
+    """A category disputed in at least MIN_PRS PRs and confirmed in at least as many: not a pattern."""
+    return len(e["disputed"]) >= MIN_PRS and len(e["disputed"]) <= len(e["confirmed"])
+
+
 def _under(path: object, directory: str) -> bool:
     return isinstance(path, str) and (not directory or path.startswith(f"{directory}/"))
 
@@ -37,22 +42,26 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
     `disputed` lists finding categories whose findings were disputed in at least `MIN_PRS` PRs and in more PRs than
     they were confirmed in. `misses` are human comments no finding matched, kept when they come from at least
     `MIN_PRS` PRs. `proposable` says there is enough of either to be worth a proposal, and `digest` identifies exactly
-    this evidence."""
+    this evidence. When not proposable, `reason` says why; it is not part of the digest."""
     cats: dict[str, dict] = {}
     misses: list[dict] = []
     miss_prs: set[str] = set()
+    reviews = labelled = replied = 0  # review runs; findings with a verdict; findings with only a reply
     for rid, (outcomes, humans) in run_feedback(shadow).items():
         recs = shadow.read(rid)
         run = next((r for r in recs if r.get("type") == "run"), None)
         if run is None or run.get("repo") != repo or not isinstance(run.get("pr"), str):
             continue
         pr = run["pr"]
+        reviews += run.get("skill") != "address-comments"  # those runs carry a pr too, but no review of ours
         for f in (r for r in recs if r.get("type") == "finding" and isinstance(r.get("id"), str)):
             if not _under(f.get("file"), directory):
                 continue
             label = finding_label(f["id"], outcomes, humans)
+            replied += label == "replied"
             if label not in ("confirmed", "disputed"):
                 continue
+            labelled += 1
             entry = cats.setdefault(str(f.get("category") or "other"), {"confirmed": set(), "disputed": set(), "examples": []})
             entry[label].add(pr)
             if label == "disputed" and len(entry["examples"]) < MAX_EXAMPLES:
@@ -65,13 +74,33 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
     disputed = [
         {"category": cat, "prs": len(e["disputed"]), "confirmed_prs": len(e["confirmed"]), "examples": e["examples"]}
         for cat, e in sorted(cats.items())
-        if len(e["disputed"]) >= MIN_PRS and len(e["disputed"]) > len(e["confirmed"])
+        if len(e["disputed"]) >= MIN_PRS and not _contested(e)
     ][:MAX_CATEGORIES]
     out = {"disputed": disputed, "misses": misses if len(miss_prs) >= MIN_PRS else [], "miss_prs": len(miss_prs)}
     out = scrub(out)
     out["proposable"] = bool(out["disputed"] or out["misses"])
     out["digest"] = hashlib.sha256(json.dumps(out, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    if not out["proposable"]:  # after the digest: the reason explains the evidence, it is not part of it
+        contested = any(_contested(e) for e in cats.values())
+        out["reason"] = _why_empty(reviews, labelled, replied, len(miss_prs), contested, bool(directory))
     return out
+
+
+def _why_empty(reviews: int, labelled: int, replied: int, miss_prs: int, contested: bool, scoped: bool) -> str:
+    if not reviews:
+        return ("no review-pr runs of this repository are recorded here; local reviews and address-comments runs "
+                "carry no evidence, which comes from reviews posted to a PR and the feedback they received")
+    parts = []
+    if not labelled:
+        note = f"; {replied} with a reply but no verdict yet" if replied else ""
+        parts.append(f"{reviews} recorded PR review{'s' if reviews != 1 else ''}, but none has a finding{' under this path' if scoped else ''} that was confirmed or disputed (a verdict, a resolved thread or a matching human comment){note}")
+    elif contested:
+        parts.append("a category was disputed in several PRs but confirmed in at least as many, so it is not a pattern")
+    else:
+        parts.append(f"no finding category was disputed in {MIN_PRS} or more PRs")
+    if miss_prs:
+        parts.append(f"missed human comments come from {miss_prs} PR (a pattern needs {MIN_PRS})")
+    return "; ".join(parts)
 
 
 def changed_lines(old: str | None, new: str) -> int:

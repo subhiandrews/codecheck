@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import re
@@ -335,3 +336,60 @@ def test_review_pr_step_8_says_to_skip_when_base_warning_is_set():
     step = next(line for line in (Path(__file__).parent.parent / "skills" / "review-pr" / "SKILL.md").read_text().splitlines()
                 if line.startswith("8. "))
     assert re.search(r"If `base_warning` is set.*skip this step", step)
+
+
+def test_no_runs_says_no_review_pr_runs(shadow):
+    assert "no review-pr runs" in gather(shadow, REPO, "")["reason"]
+
+
+def test_findings_without_any_response_say_so(shadow):
+    seed(shadow, 1, [("a0", "app/x.py", "style", "none")])
+    assert "1 recorded PR review, but none has a finding that was" in gather(shadow, REPO, "")["reason"]
+    seed(shadow, 2, [("a3", "app/x.py", "style", "none")])
+    assert "2 recorded PR reviews, but" in gather(shadow, REPO, "")["reason"]
+
+
+def test_one_disputed_pr_is_not_yet_a_pattern_and_two_remove_the_reason(shadow):
+    seed(shadow, 1, [("a1", "app/x.py", "style", "disputed")])
+    assert "no finding category was disputed in 2 or more PRs" in gather(shadow, REPO, "")["reason"]
+    seed(shadow, 2, [("a2", "app/y.py", "style", "disputed")])
+    assert "reason" not in gather(shadow, REPO, "")
+
+
+def test_the_reason_names_a_contested_category_and_missed_comments(shadow):
+    for pr in (1, 2):
+        seed(shadow, pr, [(f"d{pr}", "app/x.py", "style", "disputed"), (f"c{pr}", "app/z.py", "style", "confirmed")])
+    seed(shadow, 3, humans=[("app/x.py", "please check this", None)])
+    reason = gather(shadow, REPO, "")["reason"]
+    assert "confirmed in at least as many" in reason and "missed human comments come from 1 PR" in reason
+
+
+def test_address_comments_runs_are_not_counted_as_reviews(shadow):
+    shadow.append(new_run_id(), {"type": "run", "repo": REPO, "pr": f"{REPO}#9", "skill": "address-comments"})
+    assert "no review-pr runs" in gather(shadow, REPO, "")["reason"]
+
+
+def test_a_finding_with_only_a_reply_is_named(shadow):
+    rid = seed(shadow, 1, [("a1", "app/x.py", "style", "none")])
+    shadow.append(rid, {"type": "outcome", "finding_id": "a1", "thread_id": "t-r", "resolved": False, "outdated": False,
+                        "replies": [{"author": "me", "body": "thanks"}], "reactions": {}})
+    assert "1 with a reply but no verdict" in gather(shadow, REPO, "")["reason"]
+
+
+def test_the_reason_mentions_misses_from_one_pr(shadow):
+    seed(shadow, 1, humans=[("app/x.py", "please check this", None)])
+    reason = gather(shadow, REPO, "")["reason"]
+    assert "missed human comments come from 1 PR" in reason and "none has a finding that was confirmed or disputed" in reason and "under this path" not in reason
+
+
+def test_a_scoped_reason_does_not_blame_findings_outside_the_directory(shadow):
+    seed(shadow, 1, [("a1", "web/x.py", "style", "disputed")])
+    assert "under this path" in gather(shadow, REPO, "svc")["reason"]
+
+
+def test_the_reason_is_not_part_of_the_digest(shadow):
+    seed(shadow, 1, [("a1", "app/x.py", "style", "disputed")])
+    ev = gather(shadow, REPO, "")
+    assert "reason" in ev
+    rest = {k: v for k, v in ev.items() if k not in ("reason", "digest")}  # what the digest is computed from
+    assert ev["digest"] == hashlib.sha256(json.dumps(rest, sort_keys=True).encode("utf-8")).hexdigest()[:16]
