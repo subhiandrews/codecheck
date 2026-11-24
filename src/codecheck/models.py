@@ -24,6 +24,13 @@ def same_login(author: str, me: str, is_bot: bool = False) -> bool:
     return author == me or (is_bot and author == _BOT_SUFFIX.sub("", me))
 
 
+def same_pr_author(author: str, me: str) -> bool:
+    """Whether a PR's author is `me`. `gh` spells a bot author `app/name`, while `review.login` says `name[bot]`."""
+    if not me:
+        return False
+    return author == me or (me.lower().endswith("[bot]") and author == "app/" + _BOT_SUFFIX.sub("", me))
+
+
 def is_bot_login(login: str) -> bool:
     """Wider, for sorting feedback only: also `name-bot` and `name_bot`, which a person could own. Never use it to
     drop someone's reply from a review decision."""

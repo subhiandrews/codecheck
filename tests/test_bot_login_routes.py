@@ -8,8 +8,9 @@ from test_shadow_collect import REF, RID, seed
 
 from codecheck.commands.post import _already_posted
 from codecheck.commands.threads import _reviewers
+from codecheck.core.precheck import cheap_skip
 from codecheck.core.state import actionable_threads
-from codecheck.models import Thread, ThreadComment
+from codecheck.models import PRRef, PullRequest, Thread, ThreadComment, same_pr_author
 from codecheck.shadow.collect import collect_outcomes
 from codecheck.shadow.store import ShadowStore
 
@@ -23,6 +24,18 @@ def tc(cid, author, body="body", *, bot=False):
 
 def thread(*comments, tid="T1"):
     return Thread(tid, "a.py", 3, False, False, tuple(comments))
+
+
+def test_gh_spells_a_bot_pr_author_app_slash_name_and_that_is_still_our_own_pr():
+    # `gh pr view --json author` gives `app/dependabot` for a bot, so a PR our CI bot opened is `app/github-actions`
+    assert same_pr_author("app/github-actions", ME)
+    assert same_pr_author(ME, ME) and same_pr_author("alice", "alice")
+    assert not same_pr_author("github-actions", ME)  # a person called like the bot
+    assert not same_pr_author("app/dependabot", ME) and not same_pr_author("app/alice", "alice")
+    assert not same_pr_author("alice", "")
+    pr = PullRequest(PRRef("o/r", 7), "t", "", "app/github-actions", "main", "f", "abc", False, "open", "u")
+    skip = cheap_skip(pr, ["a.py"], ignore=(), me=ME)
+    assert skip is not None and "own PR" in skip.reason
 
 
 def test_post_recognises_findings_we_already_posted_as_the_bot():

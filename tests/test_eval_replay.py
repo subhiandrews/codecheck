@@ -342,6 +342,10 @@ def test_the_seed_command_prints_cases_and_reports_a_bad_results_file_as_json(tm
     assert replay.main(["seed", str(cases), str(results)]) == 0
     seeded = json.loads(capsys.readouterr().out)
     assert "seed_comments" not in seeded[0] and "returns 2, not 1" in seeded[1]["seed_comments"]
+    for odd in ('{"name": "a", "got": ["x", 3, null]}', '{"name": "a", "got": {"file": "x"}}', '[1, 2]', '"text"'):
+        results.write_text(odd + "\n")  # valid JSON of the wrong shape seeds nothing and is not a traceback
+        assert replay.main(["seed", str(cases), str(results)]) == 0
+        assert "seed_comments" not in json.loads(capsys.readouterr().out)[1]
     results.write_bytes(b"\xff\xfe not utf-8\n")  # a results file that is not text is an error, not a traceback
     assert replay.main(["seed", str(cases), str(results)]) == 1
     assert "error" in json.loads(capsys.readouterr().out)

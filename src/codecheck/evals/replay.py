@@ -313,7 +313,8 @@ def seed_cases(cases: list[dict], results: list[dict]) -> list[dict]:
     """Copies of `cases`, in the order the PR's rounds happened, where each case after the first carries the findings
     that the earlier cases produced (`results` from a run of the same cases) as `seed_comments`. A finding repeated
     by several rounds is one comment. Replies by the author are not reproduced."""
-    got = {r["name"]: r.get("got") or [] for r in results if isinstance(r, dict) and isinstance(r.get("name"), str)}
+    got = {r["name"]: [f for f in r["got"] if isinstance(f, dict)] if isinstance(r.get("got"), list) else []
+           for r in results if isinstance(r, dict) and isinstance(r.get("name"), str)}
     earlier: list[dict] = []
     seen: set[tuple] = set()
     out = []

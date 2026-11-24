@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from codecheck.core.panel import filter_ignored
 from codecheck.core.state import StateStore
-from codecheck.models import PullRequest, Review, Thread, same_login
+from codecheck.models import PullRequest, Review, Thread, same_login, same_pr_author
 from codecheck.shadow.scrub import scrub_text
 
 
@@ -151,7 +151,7 @@ def cheap_skip(pr: PullRequest, files: Sequence[str], *, ignore: Sequence[str], 
         return _skip(f"PR is {pr.state}")
     if pr.is_draft:
         return _skip("PR is a draft")
-    if pr.author == me:
+    if same_pr_author(pr.author, me):
         return _skip("own PR: use address-comments instead")
     if not filter_ignored(files, ignore):
         return _skip("no reviewable files after ignore patterns")

@@ -18,7 +18,7 @@ from codecheck.core.render import (
 )
 from codecheck.core.rounds import hold_back
 from codecheck.errors import CodeCheckError, ProviderError
-from codecheck.models import ReviewComment, same_login
+from codecheck.models import ReviewComment, same_login, same_pr_author
 from codecheck.shadow.recorder import record_post
 
 NAME = "post"
@@ -81,7 +81,7 @@ def run(args, ctx) -> dict:
     ref = ctx.parse_ref(meta["pr"])
     pr = ctx.provider.get_pr(ref)
     me = ctx.provider.whoami()
-    if pr.author == me:
+    if same_pr_author(pr.author, me):
         raise CodeCheckError("refusing to post a review on your own PR")
     if pr.is_draft:
         return {"posted": False, "draft": True, "reason": "PR is a draft; draft PRs are never posted to"}
