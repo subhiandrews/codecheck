@@ -1,0 +1,123 @@
+[
+  {
+    "id": "P1",
+    "case_id": "tokio-rs-tokio-8757-f90e2156",
+    "human_line": 168,
+    "candidate": {"stage": "kept", "line": 177, "file": "driver.rs"},
+    "control": false,
+    "my_label": "related",
+    "my_confidence": "medium",
+    "my_reason": "Both are about the new enable_io_uring flag changing how setup works. The human prescribes a different design (keep the old signature, fall back at runtime to avoid a breaking change). The finding only says the behaviour change is undocumented and never mentions the signature or breaking change.",
+    "owner_label": "different"
+  },
+  {
+    "id": "P2",
+    "case_id": "tokio-rs-tokio-8757-f90e2156",
+    "human_line": 173,
+    "candidate": {"stage": "kept", "line": 177, "file": "driver.rs"},
+    "control": false,
+    "my_label": "different",
+    "my_confidence": "medium",
+    "my_reason": "The human comment is a code suggestion with no stated concern. It shows gating on enable_io_uring, which is the thing the finding describes, but a suggested implementation is not a raised concern.",
+    "owner_label": null
+  },
+  {
+    "id": "P3",
+    "case_id": "tokio-rs-tokio-8779-d05a4586",
+    "human_line": 288,
+    "candidate": {"stage": "kept", "line": 279, "file": "uring.rs"},
+    "control": false,
+    "my_label": "related",
+    "my_confidence": "medium",
+    "my_reason": "Both are about a panic around registration leaving state unrecorded and about what the after_push doc promises. The panic points differ (human: a panic in after_push; finding: a waker panic in the pre-push loop). The finding says there is no use after free there, while the human says there is the same one.",
+    "owner_label": "same"
+  },
+  {
+    "id": "P4",
+    "case_id": "tokio-rs-tokio-local-53de1f6b",
+    "human_line": 323,
+    "candidate": {"stage": "dropped", "line": 323, "file": "park.rs"},
+    "control": false,
+    "my_label": "same",
+    "my_confidence": "high",
+    "my_reason": "Same branch, same line. Both are about what happens when try_lock unexpectedly fails: the finding says the failure is silent in release builds, and the human proposes expect() so it is not silent.",
+    "owner_label": "different"
+  },
+  {
+    "id": "P5",
+    "case_id": "tokio-rs-tokio-local-53de1f6b",
+    "human_line": 52,
+    "candidate": {"stage": "dropped", "line": 57, "file": "rt_shutdown_fds.rs"},
+    "control": false,
+    "my_label": "same",
+    "my_confidence": "high",
+    "my_reason": "Both say the `< ROUNDS` leak assertion is too loose to catch a partial leak.",
+    "owner_label": "same"
+  },
+  {
+    "id": "P6",
+    "case_id": "tokio-rs-tokio-local-53de1f6b",
+    "human_line": 306,
+    "candidate": {"stage": "kept", "line": 296, "file": "driver.rs"},
+    "control": false,
+    "my_label": "different",
+    "my_confidence": "medium",
+    "my_reason": "Same topic (the new RwLock around unpark) but a different ask: the human wants a test that exercises unpark racing the lock, the finding wants a benchmark of the lock's cost.",
+    "owner_label": "different"
+  },
+  {
+    "id": "P7",
+    "case_id": "tokio-rs-tokio-local-53de1f6b",
+    "human_line": 306,
+    "candidate": {"stage": "kept", "line": 306, "file": "driver.rs"},
+    "control": false,
+    "my_label": "different",
+    "my_confidence": "high",
+    "my_reason": "Same line, different concern. The finding is about registrations leaking after a panic during park, and the human is asking for a race test.",
+    "owner_label": "different"
+  },
+  {
+    "id": "P8",
+    "case_id": "tokio-rs-tokio-local-53de1f6b",
+    "human_line": 306,
+    "candidate": {"stage": "dropped", "line": 57, "file": "rt_shutdown_fds.rs"},
+    "control": false,
+    "my_label": "same",
+    "my_confidence": "medium",
+    "my_reason": "The finding's second half says there is no test of concurrent unpark/register racing release_resources, which is what the human asks for. It sits in a different file and line from the human comment, and it is the same dropped finding as in P5, so one drop lost two human comments.",
+    "owner_label": "different"
+  },
+  {
+    "id": "P9",
+    "case_id": "tokio-rs-tokio-local-53de1f6b",
+    "human_line": 360,
+    "candidate": {"stage": "kept", "line": 306, "file": "driver.rs"},
+    "control": false,
+    "my_label": "related",
+    "my_confidence": "medium",
+    "my_reason": "Both are about a ScheduledIo staying alive after shutdown for as long as the handle lives. The mechanism differs (human: a race between deregister and shutdown; finding: the panic-while-parking path) and so do the fixes (check is_shutdown, or drain in release_resources).",
+    "owner_label": "different"
+  },
+  {
+    "id": "C1",
+    "case_id": "tokio-rs-tokio-local-53de1f6b",
+    "human_line": 323,
+    "candidate": {"stage": "kept", "line": 296, "file": "driver.rs"},
+    "control": true,
+    "my_label": "different",
+    "my_confidence": "high",
+    "my_reason": "Control. A lock-contention branch in park.rs against the hot-path cost of a read lock in driver.rs. Only the shared RwLock/shutdown theme connects them.",
+    "owner_label": "different"
+  },
+  {
+    "id": "C2",
+    "case_id": "tokio-rs-tokio-local-53de1f6b",
+    "human_line": 52,
+    "candidate": {"stage": "kept", "line": 306, "file": "driver.rs"},
+    "control": true,
+    "my_label": "different",
+    "my_confidence": "high",
+    "my_reason": "Control. A loose fd-count assertion in a test against a registration leak in driver code. Both are about leaks, but they are different leaks.",
+    "owner_label": "different"
+  }
+]
