@@ -350,7 +350,21 @@ def test_an_empty_result_says_why(shadow):
 def test_the_reason_names_a_contested_category_and_missed_comments(shadow):
     for pr in (1, 2):
         seed(shadow, pr, [(f"d{pr}", "app/x.py", "style", "disputed"), (f"c{pr}", "app/z.py", "style", "confirmed")])
-    assert "confirmed in at least as many" in gather(shadow, REPO, "")["reason"]
+    seed(shadow, 3, humans=[("app/x.py", "please check this", None)])
+    reason = gather(shadow, REPO, "")["reason"]
+    assert "confirmed in at least as many" in reason and "missed human comments come from 1 PR" in reason
+
+
+def test_address_comments_runs_are_not_counted_as_reviews(shadow):
+    shadow.append(new_run_id(), {"type": "run", "repo": REPO, "pr": f"{REPO}#9", "skill": "address-comments"})
+    assert "no review-pr runs" in gather(shadow, REPO, "")["reason"]
+
+
+def test_a_finding_with_only_a_reply_is_named(shadow):
+    rid = seed(shadow, 1, [("a1", "app/x.py", "style", "none")])
+    shadow.append(rid, {"type": "outcome", "finding_id": "a1", "thread_id": "t-r", "resolved": False, "outdated": False,
+                        "replies": [{"author": "me", "body": "thanks"}], "reactions": {}})
+    assert "1 have a reply but no verdict" in gather(shadow, REPO, "")["reason"]
 
 
 def test_the_reason_mentions_misses_from_one_pr(shadow):

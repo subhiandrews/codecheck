@@ -46,18 +46,19 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
     cats: dict[str, dict] = {}
     misses: list[dict] = []
     miss_prs: set[str] = set()
-    pr_runs = labelled = 0
+    reviews = labelled = replied = 0  # review runs; findings with a verdict; findings with only a reply
     for rid, (outcomes, humans) in run_feedback(shadow).items():
         recs = shadow.read(rid)
         run = next((r for r in recs if r.get("type") == "run"), None)
         if run is None or run.get("repo") != repo or not isinstance(run.get("pr"), str):
             continue
         pr = run["pr"]
-        pr_runs += 1
+        reviews += run.get("skill") != "address-comments"  # those runs carry a pr too, but no review of ours
         for f in (r for r in recs if r.get("type") == "finding" and isinstance(r.get("id"), str)):
             if not _under(f.get("file"), directory):
                 continue
             label = finding_label(f["id"], outcomes, humans)
+            replied += label == "replied"
             if label not in ("confirmed", "disputed"):
                 continue
             labelled += 1
@@ -81,18 +82,18 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
     out["digest"] = hashlib.sha256(json.dumps(out, sort_keys=True).encode("utf-8")).hexdigest()[:16]
     if not out["proposable"]:  # after the digest: the reason explains the evidence, it is not part of it
         contested = any(_contested(e) for e in cats.values())
-        out["reason"] = _why_empty(pr_runs, labelled, len(miss_prs), contested)
+        out["reason"] = _why_empty(reviews, labelled, replied, len(miss_prs), contested)
     return out
 
 
-def _why_empty(pr_runs: int, labelled: int, miss_prs: int, contested: bool) -> str:
-    """`contested`: some category was disputed in at least MIN_PRS PRs but confirmed in at least as many."""
-    if not pr_runs:
+def _why_empty(reviews: int, labelled: int, replied: int, miss_prs: int, contested: bool) -> str:
+    if not reviews:
         return ("no review-pr runs of this repository are recorded here; local reviews and address-comments runs "
                 "carry no evidence, which comes from reviews posted to a PR and the feedback they received")
     parts = []
     if not labelled:
-        parts.append(f"{pr_runs} recorded PR runs, but none has a finding under this path that an author or reviewer has responded to yet")
+        note = f"; {replied} have a reply but no verdict yet" if replied else ""
+        parts.append(f"{reviews} recorded PR reviews, but none has a finding under this path with a verdict from its author or a matching human comment{note}")
     elif contested:
         parts.append("a category was disputed in several PRs but confirmed in at least as many, so it is not a pattern")
     else:
