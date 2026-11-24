@@ -358,7 +358,7 @@ def validate(cfg: Config) -> Config:
     if login and not LOGIN_NAME.fullmatch(login):
         raise ConfigError(f"config key review.login is not a valid GitHub login: {login!r}")
     seed = cfg.review.seed_comments
-    if seed and (not os.path.isabs(seed) or seed.startswith("-") or "\x00" in seed):
+    if seed and (not os.path.isabs(os.path.expanduser(seed)) or seed.startswith("-") or "\x00" in seed):
         raise ConfigError(f"config key review.seed_comments must be an absolute file path: {seed!r}")
     for lic in cfg.golden.licenses:
         if not re.fullmatch(r"[a-z0-9.+-]{2,64}", lic):

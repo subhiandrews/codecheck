@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from codecheck.core.precheck import Activity
-from codecheck.models import Thread, same_login
+from codecheck.models import Thread, comment_is_ours
 from codecheck.shadow.scrub import scrub_text
 
 
@@ -43,9 +43,9 @@ def collect_existing(
             break
         comments = tuple(
             ExistingComment(c.author, scrub_text(c.body)[:max_chars], c.created_at, (t.id, c.created_at, c.author) in new,
-                            same_login(c.author, me, c.is_bot))
+                            bool(me) and comment_is_ours(c, me))
             for c in t.comments
-            if same_login(c.author, me, c.is_bot) or not (c.is_bot or c.author.endswith("[bot]"))  # our own bot login (CI) stays
+            if (bool(me) and comment_is_ours(c, me)) or not (c.is_bot or c.author.endswith("[bot]"))  # our own bot login (CI) stays
         )[: max_total - total]
         if comments:
             out.append(ExistingThread(t.id, t.path, t.line, t.is_resolved, t.is_outdated, comments))

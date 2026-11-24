@@ -324,7 +324,7 @@ def seed_cases(cases: list[dict], results: list[dict]) -> list[dict]:
             seeded["seed_comments"] = _render_seed(earlier)
         out.append(seeded)
         for f in got.get(case["name"], []):
-            key = (f.get("file"), f.get("line"), f.get("message"))
+            key = (str(f.get("file")), str(f.get("line")), str(f.get("message")))  # a value of any JSON type
             if key not in seen:
                 seen.add(key)
                 earlier.append(f)

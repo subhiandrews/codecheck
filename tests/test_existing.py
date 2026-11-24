@@ -31,7 +31,9 @@ def test_our_own_bot_findings_are_kept_and_tagged_ours():
 
 def test_our_bot_login_matches_graphql_form_without_the_suffix():
     # review.login is "github-actions[bot]" (REST form); GraphQL thread comments say "github-actions"
-    t = th(tc("github-actions", T0, is_bot=True, body="**Warning** finding"), tc("dependabot", T0, 2, is_bot=True))
+    ours = tc("github-actions", T0, is_bot=True, body="**Warning** finding\n<!-- code-check:finding:aaaaaaaaaaaa -->")
+    other_workflow = tc("github-actions", T0, 3, is_bot=True, body="coverage dropped")  # same account, not our marker
+    t = th(ours, tc("dependabot", T0, 2, is_bot=True), other_workflow)
     out = collect_existing([t], Activity(None, ()), me="github-actions[bot]")
     assert [(c.author, c.is_mine) for c in out[0].comments] == [("github-actions", True)]
 

@@ -3,7 +3,7 @@
 from collections import Counter
 
 from codecheck.core.render import FINDING_MARKER
-from codecheck.models import PRRef, is_bot_login, same_login
+from codecheck.models import PRRef, comment_is_ours, is_bot_login
 from codecheck.shadow.store import ShadowStore
 
 REPLY_MARKER = "code-check:reply"
@@ -56,13 +56,13 @@ def collect_outcomes(provider, shadow: ShadowStore, ref: PRRef, me: str) -> dict
         if not thread.comments:
             continue
         root = thread.comments[0]
-        fid = _own_marker(root.body) if same_login(root.author, me, root.is_bot) else None
+        fid = _own_marker(root.body) if comment_is_ours(root, me) else None
         if fid is not None and fid in findings and findings[fid][1].get("file") == thread.path:
             rid = findings[fid][0]
             replies = [
                 {"author": c.author, "body": c.body}
                 for c in thread.comments[1:]
-                if not same_login(c.author, me, c.is_bot) and not _is_bot(c) and REPLY_MARKER not in c.body
+                if not comment_is_ours(c, me) and not _is_bot(c) and REPLY_MARKER not in c.body
             ]
             shadow.append(rid, {
                 "type": "outcome", "finding_id": fid, "thread_id": thread.id,
@@ -70,9 +70,9 @@ def collect_outcomes(provider, shadow: ShadowStore, ref: PRRef, me: str) -> dict
                 "replies": replies, "reactions": dict(Counter(root.reactions)),
             })
             outcomes += 1
-        elif not same_login(root.author, me, root.is_bot) and _is_bot(root):
+        elif not comment_is_ours(root, me) and _is_bot(root):
             _withdraw_bot_feedback(shadow, run_ids, thread.id, root.author)
-        elif not same_login(root.author, me, root.is_bot):
+        elif not comment_is_ours(root, me):
             near, home = None, latest_run
             for rid in reversed(run_ids):  # newest run whose own findings it matches
                 near = next(

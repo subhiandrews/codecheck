@@ -1,5 +1,5 @@
 from codecheck.core.state import actionable_threads
-from codecheck.models import same_login
+from codecheck.models import comment_is_ours
 from codecheck.runids import new_run_id
 from codecheck.shadow.recorder import record_run
 
@@ -14,7 +14,7 @@ def add_arguments(p) -> None:
 def _reviewers(threads, me: str) -> list[str]:
     """The people to ask again: never us, and never a bot (GraphQL drops the `[bot]` suffix, so `is_bot` decides)."""
     return sorted({c.author for t in threads for c in t.comments
-                   if not same_login(c.author, me, c.is_bot) and not c.is_bot and not c.author.endswith("[bot]")})
+                   if not comment_is_ours(c, me) and not c.is_bot and not c.author.endswith("[bot]")})
 
 
 def run(args, ctx) -> dict:

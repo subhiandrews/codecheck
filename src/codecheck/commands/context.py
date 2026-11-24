@@ -1,5 +1,4 @@
 import shutil
-from pathlib import Path
 
 from codecheck.commands._common import first_line, local_key, safe_repo, write_json
 from codecheck.config import expand_path, model_for
@@ -52,7 +51,7 @@ SEED_MAX_BYTES = 200_000
 def _seed_existing(run_dir, path: str) -> dict:
     """Copy the file named by `review.seed_comments` into the run as existing-comments.md, scrubbed like real comments.
     An eval uses it to hand a local review the findings of earlier rounds."""
-    source = Path(path)
+    source = expand_path(path)
     if not source.is_file():
         raise OSError(f"{path} is not a file")
     if source.stat().st_size > SEED_MAX_BYTES:

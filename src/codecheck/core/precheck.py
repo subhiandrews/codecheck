@@ -5,7 +5,13 @@ from dataclasses import dataclass
 
 from codecheck.core.panel import filter_ignored
 from codecheck.core.state import StateStore
-from codecheck.models import PullRequest, Review, Thread, same_login, same_pr_author
+from codecheck.models import (
+    PullRequest,
+    Review,
+    Thread,
+    comment_is_ours,
+    same_pr_author,
+)
 from codecheck.shadow.scrub import scrub_text
 
 
@@ -33,10 +39,10 @@ def review_activity(reviews: Sequence[Review], threads: Sequence[Thread], me: st
     last = max(mine, key=lambda r: r.submitted_at)
     replies = []
     for t in threads:
-        if not t.comments or not same_login(t.comments[0].author, me, t.comments[0].is_bot):
+        if not t.comments or not comment_is_ours(t.comments[0], me):
             continue
         for c in t.comments[1:]:
-            if same_login(c.author, me, c.is_bot) or c.is_bot or c.author.endswith("[bot]"):
+            if comment_is_ours(c, me) or c.is_bot or c.author.endswith("[bot]"):
                 continue
             if c.created_at > last.submitted_at:
                 replies.append(Reply(t.id, t.path, t.line, c.author, c.body, c.created_at))

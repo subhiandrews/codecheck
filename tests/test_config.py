@@ -219,7 +219,12 @@ def test_seed_comments_defaults_to_empty_and_is_user_only(tmp_path):
         load_config(tmp_path / "repo", tmp_path / "home", {})
 
 
-@pytest.mark.parametrize("path", ["relative/seed.md", "-x", "~/seed.md"])
+def test_seed_comments_accepts_a_home_relative_path_like_state_dir(tmp_path):
+    cfg = load_config(tmp_path / "repo", tmp_path / "home", {"CODE_CHECK_REVIEW__SEED_COMMENTS": "~/seed.md"})
+    assert cfg.review.seed_comments == "~/seed.md"  # expanded where it is read
+
+
+@pytest.mark.parametrize("path", ["relative/seed.md", "-x", "~user-less/../x"])
 def test_seed_comments_must_be_an_absolute_path(tmp_path, path):
     with pytest.raises(ConfigError, match="review.seed_comments"):
         load_config(tmp_path / "repo", tmp_path / "home", {"CODE_CHECK_REVIEW__SEED_COMMENTS": path})

@@ -346,6 +346,9 @@ def test_the_seed_command_prints_cases_and_reports_a_bad_results_file_as_json(tm
         results.write_text(odd + "\n")  # valid JSON of the wrong shape seeds nothing and is not a traceback
         assert replay.main(["seed", str(cases), str(results)]) == 0
         assert "seed_comments" not in json.loads(capsys.readouterr().out)[1]
+    results.write_text('{"name": "a", "got": [{"file": ["x"], "line": {"a": 1}, "message": [1]}, {"file": ["x"], "line": {"a": 1}, "message": [1]}]}\n')
+    assert replay.main(["seed", str(cases), str(results)]) == 0  # unhashable fields are not a traceback either
+    capsys.readouterr()
     results.write_bytes(b"\xff\xfe not utf-8\n")  # a results file that is not text is an error, not a traceback
     assert replay.main(["seed", str(cases), str(results)]) == 1
     assert "error" in json.loads(capsys.readouterr().out)
