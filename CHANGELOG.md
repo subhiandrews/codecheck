@@ -2,6 +2,11 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.5.1]
+
+### Added
+- `guidance evidence` prints `stats`: findings by outcome (confirmed, disputed, replied, no signal) and the dispute rate, overall and per category, as a baseline for judging a learned rule.
+
 ## [1.5.0]
 
 ### Added

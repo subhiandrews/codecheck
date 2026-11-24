@@ -47,6 +47,7 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
     misses: list[dict] = []
     miss_prs: set[str] = set()
     address_prs: set[str] = set()
+    seen: dict[tuple[str, str], tuple[str, str]] = {}  # (pr, finding id) -> (category, label): one count per finding
     reviews = labelled = replied = 0  # review runs; findings with a verdict; findings with only a reply
     for rid, (outcomes, humans) in run_feedback(shadow).items():
         recs = shadow.read(rid)
@@ -64,6 +65,9 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
             if not _under(f.get("file"), directory):
                 continue
             label = finding_label(f["id"], outcomes, humans)
+            key = (pr, f["id"])  # runs are chronological: a later decided label replaces an earlier one
+            if key not in seen or label in ("confirmed", "disputed"):
+                seen[key] = (str(f.get("category") or "other"), label)
             replied += label == "replied"
             if label not in ("confirmed", "disputed"):
                 continue
@@ -85,11 +89,29 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
     out = {"disputed": disputed, "misses": misses if len(miss_prs) >= MIN_PRS else [], "miss_prs": len(miss_prs)}
     out = scrub(out)
     out["proposable"] = bool(out["disputed"] or out["misses"])
+    stats = _stats(reviews, seen)  # a baseline for judging a rule later; not evidence, so not in the digest
     out["digest"] = hashlib.sha256(json.dumps(out, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    out["stats"] = stats
     if not out["proposable"]:  # after the digest: the reason explains the evidence, it is not part of it
         contested = any(_contested(e) for e in cats.values())
         out["reason"] = _why_empty(reviews, labelled, replied, len(miss_prs), contested, bool(directory))
     return out
+
+
+def _stats(reviews: int, seen: dict[tuple[str, str], tuple[str, str]]) -> dict:
+    """Findings by what became of them: `dispute_rate` is disputed over decided (confirmed or disputed), None when
+    nothing is decided. Compare it before and after a learned rule is merged."""
+    def block(labels: list[str]) -> dict:
+        counts = {k: labels.count(k) for k in ("confirmed", "disputed", "replied")}
+        decided = counts["confirmed"] + counts["disputed"]
+        return {"findings": len(labels), **counts, "no_signal": len(labels) - sum(counts.values()),
+                "dispute_rate": round(counts["disputed"] / decided, 2) if decided else None}
+    by_cat: dict[str, list[str]] = {}
+    for cat, label in seen.values():
+        by_cat.setdefault(cat, []).append(label)
+    top = sorted(by_cat.items(), key=lambda kv: (-len(kv[1]), kv[0]))[:MAX_CATEGORIES * 2]
+    return {"reviews": reviews, **block([label for _, label in seen.values()]),
+            "by_category": {cat: block(labels) for cat, labels in top}}
 
 
 def _why_empty(reviews: int, labelled: int, replied: int, miss_prs: int, contested: bool, scoped: bool) -> str:

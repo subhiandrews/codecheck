@@ -391,7 +391,7 @@ def test_the_reason_is_not_part_of_the_digest(shadow):
     seed(shadow, 1, [("a1", "app/x.py", "style", "disputed")])
     ev = gather(shadow, REPO, "")
     assert "reason" in ev
-    rest = {k: v for k, v in ev.items() if k not in ("reason", "digest")}  # what the digest is computed from
+    rest = {k: v for k, v in ev.items() if k not in ("reason", "digest", "stats")}  # what the digest is computed from
     assert ev["digest"] == hashlib.sha256(json.dumps(rest, sort_keys=True).encode("utf-8")).hexdigest()[:16]
 
 
@@ -479,3 +479,21 @@ def test_parse_comment_round_trips_every_rendering():
         assert parse_comment(comment_body(f, "a" * 12, relocated=relocated)) == {
             "severity": "critical", "category": "bug", "message": "first line\n\nsecond para"}
     assert parse_comment("coverage dropped") is None
+
+
+def test_stats_count_each_finding_once_with_its_latest_decided_label(shadow):
+    seed(shadow, 1, [("a" * 12, "app/x.py", "style", "disputed"), ("b" * 12, "app/x.py", "bug", "confirmed"),
+                     ("c" * 12, "app/x.py", "bug", "none")])
+    seed(shadow, 1, [("a" * 12, "app/x.py", "style", "none")])  # the same finding in a later review, still undecided
+    seed(shadow, 2, [("d" * 12, "app/y.py", "bug", "disputed")])
+    st = gather(shadow, REPO, "")["stats"]
+    assert (st["reviews"], st["findings"], st["confirmed"], st["disputed"], st["no_signal"]) == (3, 4, 1, 2, 1)
+    assert st["dispute_rate"] == 0.67
+    assert st["by_category"]["bug"] == {"findings": 3, "confirmed": 1, "disputed": 1, "replied": 0, "no_signal": 1, "dispute_rate": 0.5}
+
+
+def test_stats_are_not_part_of_the_digest(shadow):
+    seed(shadow, 1, [("a" * 12, "app/x.py", "style", "disputed")])
+    before = gather(shadow, REPO, "")["digest"]
+    seed(shadow, 1, [("z" * 12, "app/x.py", "style", "none")])  # more findings, same evidence
+    assert gather(shadow, REPO, "")["digest"] == before

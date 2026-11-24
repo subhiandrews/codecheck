@@ -1,6 +1,6 @@
 {
   "name": "code-check",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Review code and address review comments on pull requests with a deterministic CLI and a panel of reviewer agents.",
   "author": { "name": "subhiandrews" },
   "keywords": ["code-review", "pull-request", "github", "babysit"]
