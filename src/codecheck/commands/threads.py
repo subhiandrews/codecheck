@@ -1,6 +1,7 @@
 from codecheck.core.state import actionable_threads
 from codecheck.models import comment_is_ours
 from codecheck.runids import new_run_id
+from codecheck.shadow.collect import record_thread_findings
 from codecheck.shadow.recorder import record_run
 
 NAME = "threads"
@@ -28,6 +29,7 @@ def run(args, ctx) -> dict:
         ctx.guarded(lambda: record_run(
             ctx.shadow, {"run_id": run_id, "skill": "address-comments", "repo": ref.repo, "pr": str(ref),
                          "head_sha": pr.head_sha, "mode": "pr", "panel": {"members": []}}, "", ctx.config))
+        ctx.guarded(lambda: record_thread_findings(ctx.shadow, run_id, threads, me))
     return {
         "run_id": run_id, "pr": str(ref), "head_sha": pr.head_sha, "head_ref": pr.head_ref, "reviewers": reviewers,
         "threads": [

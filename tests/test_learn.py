@@ -393,3 +393,33 @@ def test_the_reason_is_not_part_of_the_digest(shadow):
     assert "reason" in ev
     rest = {k: v for k, v in ev.items() if k not in ("reason", "digest")}  # what the digest is computed from
     assert ev["digest"] == hashlib.sha256(json.dumps(rest, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
+
+def test_threads_records_ci_findings_so_verdicts_become_evidence(shadow):
+    from codecheck.core.render import comment_body
+    from codecheck.models import Finding, Severity, Thread, ThreadComment
+    from codecheck.shadow.collect import record_thread_findings
+
+    def thread(tid, fid, path, message):
+        f = Finding(path, 3, Severity.WARNING, "style", message, anchor="x", suggestion="y = 1", reviewers=["skeptic"])
+        body = comment_body(f, fid)
+        return Thread(tid, path, 3, False, False, (ThreadComment(1, "ci", body, "t", is_bot=True),))
+
+    for pr, fid in ((1, "a" * 12), (2, "b" * 12)):
+        rid = new_run_id()
+        shadow.append(rid, {"type": "run", "repo": REPO, "pr": f"{REPO}#{pr}", "skill": "address-comments"})
+        assert record_thread_findings(shadow, rid, [thread(f"T{pr}", fid, "app/x.py", "Prefer a constant")], "me") == 1
+        shadow.append(rid, {"type": "verdict", "thread_id": f"T{pr}", "verdict": "incorrect"})
+    ev = gather(shadow, REPO, "")
+    assert ev["proposable"] is True
+    assert [(d["category"], d["prs"]) for d in ev["disputed"]] == [("style", 2)]
+    assert ev["disputed"][0]["examples"][0]["message"] == "Prefer a constant"  # not the suggestion or the credit line
+
+
+def test_threads_ignore_comments_that_are_not_our_findings(shadow):
+    from codecheck.models import Thread, ThreadComment
+    from codecheck.shadow.collect import record_thread_findings
+    marked = "**Warning** · style\n\nmsg\n<!-- code-check:finding:" + "a" * 12 + " -->"
+    human = Thread("H", "x.py", 1, False, False, (ThreadComment(1, "bob", marked, "t"),))  # a person copied the marker
+    plain = Thread("P", "x.py", 1, False, False, (ThreadComment(2, "ci", "coverage dropped", "t", is_bot=True),))
+    assert record_thread_findings(shadow, "abcdef012345", [human, plain], "me") == 0

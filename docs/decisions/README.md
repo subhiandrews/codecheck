@@ -66,3 +66,4 @@ Records dated before 2026-11-20 were reconstructed from the original design spec
 - [0045-late-review-rounds-post-suggestions-only-on-new-lines.md](0045-late-review-rounds-post-suggestions-only-on-new-lines.md): Late review rounds post suggestions only on new lines
 - [0046-a-shared-bot-login-is-ours-only-with-our-marker-at-the-end.md](0046-a-shared-bot-login-is-ours-only-with-our-marker-at-the-end.md): A shared bot login is ours only with our marker at the end
 - [0047-address-comments-reviews-its-own-fixes-once-before-pushing.md](0047-address-comments-reviews-its-own-fixes-once-before-pushing.md): address-comments reviews its own fixes once before pushing
+- [0048-address-comments-records-the-findings-its-threads-show.md](0048-address-comments-records-the-findings-its-threads-show.md): Address-comments records the findings its threads show

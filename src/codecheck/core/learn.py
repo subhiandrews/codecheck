@@ -53,7 +53,8 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
         if run is None or run.get("repo") != repo or not isinstance(run.get("pr"), str):
             continue
         pr = run["pr"]
-        reviews += run.get("skill") != "address-comments"  # those runs carry a pr too, but no review of ours
+        # an address-comments run carries a pr too, but a review of ours only when it found findings in the threads
+        reviews += run.get("skill") != "address-comments" or any(r.get("type") == "finding" for r in recs)
         for f in (r for r in recs if r.get("type") == "finding" and isinstance(r.get("id"), str)):
             if not _under(f.get("file"), directory):
                 continue
@@ -88,8 +89,8 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
 
 def _why_empty(reviews: int, labelled: int, replied: int, miss_prs: int, contested: bool, scoped: bool) -> str:
     if not reviews:
-        return ("no review-pr runs of this repository are recorded here; local reviews and address-comments runs "
-                "carry no evidence, which comes from reviews posted to a PR and the feedback they received")
+        return ("no review-pr runs of this repository are recorded here, and no address-comments run has seen a code-check "
+                "review thread; local reviews carry no evidence, which comes from reviews posted to a PR and your verdicts on them")
     parts = []
     if not labelled:
         note = f"; {replied} with a reply but no verdict yet" if replied else ""

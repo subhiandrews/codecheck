@@ -2,7 +2,7 @@
 
 from collections import Counter
 
-from codecheck.core.render import FINDING_MARKER
+from codecheck.core.render import FINDING_MARKER, parse_comment
 from codecheck.models import PRRef, comment_is_ours, is_bot_login
 from codecheck.shadow.store import ShadowStore
 
@@ -90,3 +90,27 @@ def collect_outcomes(provider, shadow: ShadowStore, ref: PRRef, me: str) -> dict
             })
             humans += 1
     return {"runs": len(run_ids), "outcomes": outcomes, "human_comments": humans}
+
+
+def record_thread_findings(shadow: ShadowStore, run_id: str, threads, me: str) -> int:
+    """Record the findings of a code-check review that the PR's threads show, as `finding` and `outcome` records.
+
+    The review may have run where this store is not (CI), so the threads are the only copy of its findings here.
+    Only a root comment that ends with our finding marker and comes from us or from a bot counts. A verdict recorded
+    for the thread later turns the outcome into evidence."""
+    n = 0
+    for t in threads:
+        root = t.comments[0] if t.comments else None
+        fid = _own_marker(root.body) if root is not None and (comment_is_ours(root, me) or root.is_bot) else None
+        parsed = parse_comment(root.body) if fid else None
+        if parsed is None or not t.path or t.line is None:
+            continue
+        shadow.append(run_id, {"type": "finding", "id": fid, "file": t.path, "line": t.line, "source": "thread", **parsed})
+        shadow.append(run_id, {
+            "type": "outcome", "finding_id": fid, "thread_id": t.id, "resolved": t.is_resolved, "outdated": t.is_outdated,
+            "replies": [{"author": c.author, "body": c.body} for c in t.comments[1:]
+                        if not comment_is_ours(c, me) and not _is_bot(c) and REPLY_MARKER not in c.body],
+            "reactions": dict(Counter(root.reactions)),
+        })
+        n += 1
+    return n
