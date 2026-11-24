@@ -343,7 +343,7 @@ def test_no_runs_says_no_review_pr_runs(shadow):
 
 def test_findings_without_any_response_say_so(shadow):
     seed(shadow, 1, [("a0", "app/x.py", "style", "none")])
-    assert "1 recorded PR review, but none has a finding" in gather(shadow, REPO, "")["reason"]
+    assert "1 recorded PR review, but none has a finding that was" in gather(shadow, REPO, "")["reason"]
     seed(shadow, 2, [("a3", "app/x.py", "style", "none")])
     assert "2 recorded PR reviews, but" in gather(shadow, REPO, "")["reason"]
 
@@ -378,9 +378,19 @@ def test_a_finding_with_only_a_reply_is_named(shadow):
 def test_the_reason_mentions_misses_from_one_pr(shadow):
     seed(shadow, 1, humans=[("app/x.py", "please check this", None)])
     reason = gather(shadow, REPO, "")["reason"]
-    assert "missed human comments come from 1 PR" in reason and "none has a finding under this path" in reason
+    assert "missed human comments come from 1 PR" in reason and "none has a finding that was confirmed or disputed" in reason and "under this path" not in reason
 
 
 def test_a_scoped_reason_does_not_blame_findings_outside_the_directory(shadow):
     seed(shadow, 1, [("a1", "web/x.py", "style", "disputed")])
     assert "under this path" in gather(shadow, REPO, "svc")["reason"]
+
+
+def test_the_reason_is_not_part_of_the_digest(shadow):
+    seed(shadow, 1, [("a1", "app/x.py", "style", "disputed")])
+    ev = gather(shadow, REPO, "")
+    assert "reason" in ev
+    assert ev["digest"] == gather(shadow, REPO, "")["digest"]
+    seed(shadow, 2, [("a2", "app/y.py", "style", "disputed")])
+    assert "reason" not in gather(shadow, REPO, "")  # evidence changed, so the digest does too
+    assert gather(shadow, REPO, "")["digest"] != ev["digest"]

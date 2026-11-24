@@ -82,18 +82,18 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
     out["digest"] = hashlib.sha256(json.dumps(out, sort_keys=True).encode("utf-8")).hexdigest()[:16]
     if not out["proposable"]:  # after the digest: the reason explains the evidence, it is not part of it
         contested = any(_contested(e) for e in cats.values())
-        out["reason"] = _why_empty(reviews, labelled, replied, len(miss_prs), contested)
+        out["reason"] = _why_empty(reviews, labelled, replied, len(miss_prs), contested, bool(directory))
     return out
 
 
-def _why_empty(reviews: int, labelled: int, replied: int, miss_prs: int, contested: bool) -> str:
+def _why_empty(reviews: int, labelled: int, replied: int, miss_prs: int, contested: bool, scoped: bool) -> str:
     if not reviews:
         return ("no review-pr runs of this repository are recorded here; local reviews and address-comments runs "
                 "carry no evidence, which comes from reviews posted to a PR and the feedback they received")
     parts = []
     if not labelled:
         note = f"; {replied} with a reply but no verdict yet" if replied else ""
-        parts.append(f"{reviews} recorded PR review{'s' if reviews != 1 else ''}, but none has a finding under this path with a verdict from its author or a matching human comment{note}")
+        parts.append(f"{reviews} recorded PR review{'s' if reviews != 1 else ''}, but none has a finding{' under this path' if scoped else ''} that was confirmed or disputed (a verdict, a resolved thread or a matching human comment){note}")
     elif contested:
         parts.append("a category was disputed in several PRs but confirmed in at least as many, so it is not a pattern")
     else:
