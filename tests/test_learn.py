@@ -449,13 +449,16 @@ def test_a_long_category_is_capped_and_resolved_threads_are_recorded(shadow):
     assert next(r for r in recs if r["type"] == "outcome")["resolved"] is True
 
 
-def test_a_finding_from_a_recorded_review_is_left_to_collect(shadow):
+def test_a_recorded_finding_gets_its_outcome_in_its_own_run_and_nothing_is_copied(shadow):
     from codecheck.shadow.collect import record_thread_findings
     first = seed(shadow, 1, [("a" * 12, "app/x.py", "style", "none")])
-    rid = new_run_id()
-    shadow.append(rid, {"type": "run", "repo": REPO, "pr": f"{REPO}#1", "skill": "address-comments"})
-    assert record_thread_findings(shadow, rid, f"{REPO}#1", [_ci_thread("T", "a" * 12)], "me", "ci") == 0
-    assert [r["type"] for r in shadow.read(rid)] == ["run"] and shadow.read(first)
+    for _ in range(2):
+        rid = new_run_id()
+        shadow.append(rid, {"type": "run", "repo": REPO, "pr": f"{REPO}#1", "skill": "address-comments"})
+        assert record_thread_findings(shadow, rid, f"{REPO}#1", [_ci_thread("T", "a" * 12)], "me", "ci") == 1
+        assert [r["type"] for r in shadow.read(rid)] == ["run"]
+    assert [r["type"] for r in shadow.read(first)].count("outcome") == 2 and "finding" not in {
+        r["type"] for rid in shadow.run_ids() if rid != first for r in shadow.read(rid)}
 
 
 def test_repeated_threads_runs_count_one_review(shadow):

@@ -97,21 +97,27 @@ def record_thread_findings(shadow: ShadowStore, run_id: str, pr: str, threads, m
 
     The review may have run where this store is not (CI), so the threads are the only copy of its findings here.
     Only a root comment that ends with our finding marker and comes from us or from `ci_login` counts. A finding the
-    store already holds from a recorded review of this PR is left to `collect_outcomes`. A verdict recorded for the
+    store already holds for this PR keeps its run: only the outcome is appended there, so no run is copied. A verdict recorded for the
     thread later turns the outcome into evidence."""
-    known = {r.get("id") for rid in shadow.runs_for_pr(pr) for r in shadow.read(rid)
-             if r.get("type") == "finding" and r.get("source") != "thread"}
+    home: dict[str, str] = {}  # finding id -> the newest run of this PR that already holds the finding
+    for rid in shadow.runs_for_pr(pr):
+        for r in shadow.read(rid):
+            if r.get("type") == "finding" and isinstance(r.get("id"), str):
+                home[r["id"]] = rid
     n = 0
     for t in threads:
         root = t.comments[0] if t.comments else None
         if root is None or not (comment_is_ours(root, me) or (ci_login and same_login(root.author, ci_login, root.is_bot))):
             continue
         fid = _own_marker(root.body)
-        parsed = parse_comment(root.body) if fid and fid not in known else None
+        parsed = parse_comment(root.body) if fid else None
         if parsed is None or not t.path or t.line is None:
             continue
-        shadow.append(run_id, {"type": "finding", "id": fid, "file": t.path, "line": t.line, "source": "thread", **parsed})
-        shadow.append(run_id, {
+        where = home.get(fid)  # like `collect_outcomes`, the outcome goes to the run that holds the finding (and the diff)
+        if where is None:
+            shadow.append(run_id, {"type": "finding", "id": fid, "file": t.path, "line": t.line, "source": "thread", **parsed})
+            where = home[fid] = run_id
+        shadow.append(where, {
             "type": "outcome", "finding_id": fid, "thread_id": t.id, "resolved": t.is_resolved, "outdated": t.is_outdated,
             "replies": [{"author": c.author, "body": c.body} for c in t.comments[1:]
                         if not comment_is_ours(c, me) and not _is_bot(c) and REPLY_MARKER not in c.body],
