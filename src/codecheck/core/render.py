@@ -38,6 +38,21 @@ def comment_body(f: Finding, fid: str, *, relocated: bool = False) -> str:
     return "\n".join(lines)
 
 
+_HEADER = re.compile(r"\A\*\*(Critical|Warning|Suggestion)\*\* · ([^\n]+)\n\n")
+_TAIL = re.compile(r"\n\n(?:`{3,}suggestion|Suggested change:|<sub>code-check ·)")
+
+
+def parse_comment(body: str) -> dict | None:
+    """The severity, category and message of a comment `comment_body` rendered, or None when `body` is not one."""
+    m = _HEADER.match(body or "")
+    if m is None:
+        return None
+    rest = body[m.end():]
+    tail = _TAIL.search(rest)
+    message = (rest[:tail.start()] if tail else FINDING_MARKER.sub("", rest)).strip()
+    return {"severity": m.group(1).lower(), "category": m.group(2).strip()[:60], "message": message}
+
+
 def summary_body(
     run_id: str,
     findings: Sequence[Finding],

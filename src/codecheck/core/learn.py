@@ -46,6 +46,7 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
     cats: dict[str, dict] = {}
     misses: list[dict] = []
     miss_prs: set[str] = set()
+    address_prs: set[str] = set()
     reviews = labelled = replied = 0  # review runs; findings with a verdict; findings with only a reply
     for rid, (outcomes, humans) in run_feedback(shadow).items():
         recs = shadow.read(rid)
@@ -53,7 +54,12 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
         if run is None or run.get("repo") != repo or not isinstance(run.get("pr"), str):
             continue
         pr = run["pr"]
-        reviews += run.get("skill") != "address-comments"  # those runs carry a pr too, but no review of ours
+        # an address-comments run carries a pr too, but a review of ours only when it found findings in the threads
+        if run.get("skill") != "address-comments":
+            reviews += 1
+        elif pr not in address_prs and any(r.get("type") == "finding" for r in recs):
+            address_prs.add(pr)  # each `threads` call is a run: count the PR once
+            reviews += 1
         for f in (r for r in recs if r.get("type") == "finding" and isinstance(r.get("id"), str)):
             if not _under(f.get("file"), directory):
                 continue
@@ -88,8 +94,8 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
 
 def _why_empty(reviews: int, labelled: int, replied: int, miss_prs: int, contested: bool, scoped: bool) -> str:
     if not reviews:
-        return ("no review-pr runs of this repository are recorded here; local reviews and address-comments runs "
-                "carry no evidence, which comes from reviews posted to a PR and the feedback they received")
+        return ("no review-pr runs of this repository are recorded here, and no address-comments run has seen a code-check "
+                "review thread; local reviews carry no evidence, which comes from reviews posted to a PR and your verdicts on them")
     parts = []
     if not labelled:
         note = f"; {replied} with a reply but no verdict yet" if replied else ""
