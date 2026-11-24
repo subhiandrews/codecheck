@@ -4,6 +4,7 @@ Security-sensitive keys (REPO_FORBIDDEN) cannot come from the repository file: a
 trusted to choose the tools an unattended run gets, where state lives, or whether reviews auto-approve.
 """
 
+import os
 import re
 import tomllib
 from collections.abc import Mapping
@@ -33,6 +34,7 @@ class ReviewConfig:
     label: str = "code-check"  # label added to reviewed PRs, "" disables; user-only
     learn_guidance: bool = False  # review-local may write a checked CODE_CHECK.md proposal to the working tree; user-only
     login: str = ""  # act as this login instead of asking `gh api user` (CI tokens cannot); user-only
+    seed_comments: str = ""  # absolute path of a file that local `context` copies in as existing-comments.md (evals replay a later round); user-only
     max_files: int = 80
     max_chunk_chars: int = 120_000
     max_inline_comments: int = 25
@@ -170,7 +172,7 @@ _FREEFORM = {(table, "per_language") for table in ("models", "codex_models", "co
 _REMOVED = {("review", "routing", "max_comment_percent"), ("review", "routing", "docs_min_comment_lines")}
 # Keys (or whole tables) a repository's .code-check.toml may not set.
 REPO_FORBIDDEN = {
-    ("state_dir",), ("run_pr",), ("shadow",), ("golden",), ("review", "auto_approve"), ("review", "attribution"), ("review", "label"), ("review", "login"), ("review", "learn_guidance"), ("loop", "review_forks"),
+    ("state_dir",), ("run_pr",), ("shadow",), ("golden",), ("review", "auto_approve"), ("review", "attribution"), ("review", "label"), ("review", "login"), ("review", "seed_comments"), ("review", "learn_guidance"), ("loop", "review_forks"),
     ("address", "test_command"), ("deep_reviewer", "command"),
     ("codex",), ("codex_models",), ("codex_reasoning",),
 }
@@ -355,6 +357,9 @@ def validate(cfg: Config) -> Config:
     login = cfg.review.login
     if login and not LOGIN_NAME.fullmatch(login):
         raise ConfigError(f"config key review.login is not a valid GitHub login: {login!r}")
+    seed = cfg.review.seed_comments
+    if seed and (not os.path.isabs(seed) or seed.startswith("-") or "\x00" in seed):
+        raise ConfigError(f"config key review.seed_comments must be an absolute file path: {seed!r}")
     for lic in cfg.golden.licenses:
         if not re.fullmatch(r"[a-z0-9.+-]{2,64}", lic):
             raise ConfigError(f"config key golden.licenses must be a list of license ids such as \"mit\"; got {lic!r}")

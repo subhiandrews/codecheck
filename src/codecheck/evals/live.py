@@ -128,7 +128,7 @@ def _setup_repo(ctx, snippet: dict, workdir: Path) -> Path:
     return repo
 
 
-def review_argv(ctx, workdir: Path, *, fixed_panel: bool = True) -> list[str]:
+def review_argv(ctx, workdir: Path, *, fixed_panel: bool = True, seed: Path | None = None) -> list[str]:
     cfg = ctx.config.run_pr
     root = plugin_root(ctx.env)
     # Paths are absolute, so never start with '-'; tools and permission mode are validated with the config.
@@ -136,6 +136,8 @@ def review_argv(ctx, workdir: Path, *, fixed_panel: bool = True) -> list[str]:
                "CODE_CHECK_SHADOW__HANDOFF=1",
                # The throwaway repository's base is origin/main, whatever the user configured.
                "CODE_CHECK_REMOTE=origin", "CODE_CHECK_BASE_BRANCH=main"]
+    if seed is not None:  # a replay of a later round: the earlier findings arrive as existing-comments.md
+        isolate.append(f"CODE_CHECK_REVIEW__SEED_COMMENTS={seed}")
     if fixed_panel:
         # A user's review.security, review.performance or review.full would add an extra agent to every snippet,
         # and routing would drop the architect from these small changes: the eval measures the fixed panel.

@@ -8,7 +8,7 @@ does, in isolated state. Findings are scored against the human comments recorded
 `anchor_recall` counts the anchor only). Nothing is posted and the user's own clones, state and shadow store are never
 touched. Use `--dry-run` to rebuild and check every case without calling a model.
 
-    python -m codecheck.evals.replay manifest|from-git|run --help
+    python -m codecheck.evals.replay manifest|from-git|seed|run --help
 
 The commands and options are described in the "PR replay" section of docs/MAINTAINING.md.
 """
@@ -24,6 +24,8 @@ from pathlib import Path
 
 from codecheck import __version__
 from codecheck.commands.run_pr import parse_result
+from codecheck.core.existing import ExistingComment, ExistingThread
+from codecheck.core.render import render_existing
 from codecheck.errors import CodeCheckError
 from codecheck.evals import live
 from codecheck.models import is_service_login
@@ -66,6 +68,8 @@ def validate_case(case: dict) -> dict:
         raise CodeCheckError(f"case {case['name']}: comments must be a list of objects")
     if not isinstance(case["diff"], str) or not isinstance(case["repo"], str):
         raise CodeCheckError(f"case {case['name']}: repo and diff must be strings")
+    if not isinstance(case.get("seed_comments", ""), str):
+        raise CodeCheckError(f"case {case['name']}: seed_comments must be text")
     _clone_path(case)
     return case
 
@@ -258,7 +262,11 @@ def run_case(ctx, case: dict, workdir: Path, *, fixed_panel: bool = False, dry_r
            "tool_version": __version__, "diff_bytes": len(case["diff"])}
     if dry_run:
         return {**out, "built": True}
-    res = ctx.runner.run(live.review_argv(ctx, workdir, fixed_panel=fixed_panel), cwd=repo,
+    seed = None
+    if case.get("seed_comments"):  # a later round: hand the review the earlier findings as existing comments
+        seed = workdir / "seed-comments.md"
+        seed.write_text(case["seed_comments"], encoding="utf-8")
+    res = ctx.runner.run(live.review_argv(ctx, workdir, fixed_panel=fixed_panel, seed=seed), cwd=repo,
                          timeout=ctx.config.run_pr.timeout_seconds, input="")
     claude = parse_result(res.stdout, res.returncode, res.stderr)
     # The review has been paid for: record it before anything below can fail, so its cost is always counted.
@@ -288,6 +296,37 @@ def run_case(ctx, case: dict, workdir: Path, *, fixed_panel: bool = False, dry_r
         error = error or f"{type(e).__name__}: {e}"
     if error:
         out["error"] = error
+    return out
+
+
+def _render_seed(findings: list[dict]) -> str:
+    """Earlier findings as the existing-comments.md a later round of the PR would have: one thread per finding, ours."""
+    threads = []
+    for i, f in enumerate(findings):
+        body = f"**{str(f.get('severity', 'warning')).title()}** · {f.get('category', '')}\n\n{f.get('message', '')}"
+        comment = ExistingComment("code-check", body, "earlier review", False, True)
+        threads.append(ExistingThread(f"seed-{i}", str(f.get("file", "")), f.get("line"), False, False, (comment,)))
+    return render_existing(threads)
+
+
+def seed_cases(cases: list[dict], results: list[dict]) -> list[dict]:
+    """Copies of `cases`, in the order the PR's rounds happened, where each case after the first carries the findings
+    that the earlier cases produced (`results` from a run of the same cases) as `seed_comments`. A finding repeated
+    by several rounds is one comment. Replies by the author are not reproduced."""
+    got = {r["name"]: r.get("got") or [] for r in results if isinstance(r, dict) and isinstance(r.get("name"), str)}
+    earlier: list[dict] = []
+    seen: set[tuple] = set()
+    out = []
+    for case in cases:
+        seeded = dict(case)
+        if earlier:
+            seeded["seed_comments"] = _render_seed(earlier)
+        out.append(seeded)
+        for f in got.get(case["name"], []):
+            key = (f.get("file"), f.get("line"), f.get("message"))
+            if key not in seen:
+                seen.add(key)
+                earlier.append(f)
     return out
 
 
@@ -509,6 +548,9 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--labels", type=Path, required=True, help="JSON list of labelled findings")
     g.add_argument("--name", default="case")
     g.add_argument("heads", nargs="+", metavar="HEAD")
+    s = sub.add_parser("seed", help="give each later case the earlier cases' findings as existing comments (no model; prints JSON)")
+    s.add_argument("cases", type=Path)
+    s.add_argument("results", type=Path, help="the --out file of an earlier run of these cases, one JSON line per case")
     r = sub.add_parser("run", help="rebuild each case and review it (costs tokens unless --dry-run)")
     r.add_argument("cases", type=Path)
     r.add_argument("--dry-run", action="store_true", help="rebuild and check every case; no model")
@@ -530,6 +572,11 @@ def main(argv: list[str] | None = None) -> int:
                 raise CodeCheckError(f"labels file {args.labels}: not readable JSON: {e}") from e
             cases = cases_from_git(ctx, args.clone, args.repo, args.base, labels, args.heads, name=args.name)
             json.dump(cases, sys.stdout, indent=2)
+            print()
+            return 0
+        if args.command == "seed":
+            lines = args.results.expanduser().read_text(encoding="utf-8").splitlines()
+            json.dump(seed_cases(load_cases(args.cases), [json.loads(ln) for ln in lines if ln.strip()]), sys.stdout, indent=2)
             print()
             return 0
         if args.command == "manifest":

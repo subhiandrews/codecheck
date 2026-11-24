@@ -212,6 +212,21 @@ def test_login_is_validated(tmp_path, login):
         load_config(tmp_path / "repo", tmp_path / "home", {"CODE_CHECK_REVIEW__LOGIN": login})
 
 
+def test_seed_comments_defaults_to_empty_and_is_user_only(tmp_path):
+    assert load_config(tmp_path / "repo", tmp_path / "home", {}).review.seed_comments == ""
+    write(tmp_path / "repo/.code-check.toml", '[review]\nseed_comments = "/etc/passwd"\n')
+    with pytest.raises(ConfigError, match=r"review.seed_comments.*repository"):
+        load_config(tmp_path / "repo", tmp_path / "home", {})
+
+
+@pytest.mark.parametrize("path", ["relative/seed.md", "-x", "~/seed.md"])
+def test_seed_comments_must_be_an_absolute_path(tmp_path, path):
+    with pytest.raises(ConfigError, match="review.seed_comments"):
+        load_config(tmp_path / "repo", tmp_path / "home", {"CODE_CHECK_REVIEW__SEED_COMMENTS": path})
+    ok = load_config(tmp_path / "repo", tmp_path / "home", {"CODE_CHECK_REVIEW__SEED_COMMENTS": "/tmp/seed.md"})
+    assert ok.review.seed_comments == "/tmp/seed.md"
+
+
 def test_performance_defaults_and_repo_file(tmp_path):
     cfg = load_config(tmp_path / "repo", tmp_path / "home", {})
     assert cfg.models.performance == "sonnet" and cfg.review.performance is False

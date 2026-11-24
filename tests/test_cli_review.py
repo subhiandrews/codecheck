@@ -405,6 +405,44 @@ def test_local_context_without_file_has_null_guidance(tmp_path):
     assert not (Path(out["run_dir"]) / "CODE_CHECK.md").exists()
 
 
+def test_local_context_seeds_existing_comments_from_the_configured_file(tmp_path):
+    # An eval replays a later round of a PR: earlier findings and replies arrive as existing-comments.md in local mode
+    _, clone = make_origin_and_clone(tmp_path)
+    token = "ghp_" + "a1" * 18
+    seed = tmp_path / "seed.md"
+    seed.write_text(f"## thread T1\n- github-actions [ours]:\n  **Warning** found a bypass {token}\n", encoding="utf-8")
+    ctx = make_ctx(tmp_path, clone, review=ReviewConfig(seed_comments=str(seed)))
+    sh(clone, "checkout", "-b", "feat")
+    (clone / "app.py").write_text("x = 1\n")
+    code, out = call(ctx, "context", "--mode", "local")
+    assert code == 0
+    text = (Path(out["run_dir"]) / "existing-comments.md").read_text()
+    assert "found a bypass" in text and "ghp_" not in text
+    assert "existing-comments.md" in out["run_files"]
+    assert out["existing_comments"] == {"seeded": True, "chars": len(text)}
+    assert out["existing_comments_error"] is None
+
+
+def test_local_context_with_an_unreadable_seed_still_reviews(tmp_path):
+    _, clone = make_origin_and_clone(tmp_path)
+    ctx = make_ctx(tmp_path, clone, review=ReviewConfig(seed_comments=str(tmp_path / "missing.md")))
+    sh(clone, "checkout", "-b", "feat")
+    (clone / "app.py").write_text("x = 1\n")
+    code, out = call(ctx, "context", "--mode", "local")
+    assert code == 0 and out["existing_comments"] is None
+    assert "seed_comments" in out["existing_comments_error"]
+    assert "existing-comments.md" not in out["run_files"]
+
+
+def test_local_context_without_a_seed_has_no_existing_comments(tmp_path):
+    _, clone = make_origin_and_clone(tmp_path)
+    ctx = make_ctx(tmp_path, clone)
+    sh(clone, "checkout", "-b", "feat")
+    (clone / "app.py").write_text("x = 1\n")
+    _, out = call(ctx, "context", "--mode", "local")
+    assert out["existing_comments"] is None and "existing-comments.md" not in out["run_files"]
+
+
 def _pr_with_guidance(tmp_path, base_text, head_text):
     origin, clone = make_origin_and_clone(tmp_path)
     if base_text is not None:

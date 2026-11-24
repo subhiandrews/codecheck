@@ -1,4 +1,5 @@
 import shutil
+from pathlib import Path
 
 from codecheck.commands._common import first_line, local_key, safe_repo, write_json
 from codecheck.config import expand_path, model_for
@@ -16,6 +17,7 @@ from codecheck.core.state import ensure_private_dir, local_fingerprint
 from codecheck.errors import CodeCheckError
 from codecheck.runids import new_run_id
 from codecheck.shadow.recorder import record_run
+from codecheck.shadow.scrub import scrub_text
 from codecheck.vcs.sync import sync_base
 
 NAME = "context"
@@ -42,6 +44,22 @@ def run(args, ctx) -> dict:
     except BaseException:
         shutil.rmtree(run_dir, ignore_errors=True)  # no half-built run without context.json
         raise
+
+
+SEED_MAX_BYTES = 200_000
+
+
+def _seed_existing(run_dir, path: str) -> dict:
+    """Copy the file named by `review.seed_comments` into the run as existing-comments.md, scrubbed like real comments.
+    An eval uses it to hand a local review the findings and replies of an earlier round."""
+    source = Path(path)
+    if not source.is_file():
+        raise OSError(f"{path} is not a file")
+    if source.stat().st_size > SEED_MAX_BYTES:
+        raise OSError(f"{path} is larger than {SEED_MAX_BYTES} bytes")
+    text = scrub_text(source.read_text(encoding="utf-8"))
+    (run_dir / "existing-comments.md").write_text(text, encoding="utf-8")
+    return {"seeded": True, "chars": len(text)}
 
 
 def _round(ctx, reviews, me, local_ref) -> dict:
@@ -78,6 +96,11 @@ def _build(args, ctx, run_id, run_dir) -> dict:
         root = ctx.git.toplevel()
         meta.update(root=str(root), head_sha=head, pr=None, repo=safe_repo(ctx), title=None, description=None,
                     fingerprint=local_fingerprint(merge_base, head, diff), local_key=local_key(ctx), worktree=False)
+        if cfg.review.seed_comments:
+            try:
+                existing_comments = _seed_existing(run_dir, cfg.review.seed_comments)
+            except (OSError, UnicodeDecodeError) as e:  # a review without the seed beats no review
+                existing_comments_error = f"review.seed_comments: {str(e)[:300]}"
     else:
         if not args.pr:
             raise CodeCheckError("--pr is required for --mode pr")

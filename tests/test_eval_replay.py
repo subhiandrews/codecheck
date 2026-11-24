@@ -18,6 +18,7 @@ from codecheck.evals.replay import (
     run_case,
     run_cases,
     score,
+    seed_cases,
     validate_case,
 )
 
@@ -185,6 +186,39 @@ def test_run_case_reviews_the_rebuilt_repo_and_scores_the_findings(tmp_path, sou
     assert "CODE_CHECK_REVIEW__ROUTING__MODE=off" not in isolation  # the shipped panel, routing included
     assert out["got"] == [{"file": "calc.py", "line": 2, "category": "bug", "severity": "warning", "message": FOUND["message"]}]
     assert out["score"]["recall"] == 1.0 and out["claude"]["cost_usd"] == 0.01 and "error" not in out
+
+
+def test_a_case_seed_is_written_and_handed_to_the_review(tmp_path, source):
+    seed = "## calc.py:2\n- code-check [ours]:\n  > **Warning** returns 2, not 1\n"
+    ctx, fake = reviewing_ctx(tmp_path, [FOUND])
+    work = workdir(tmp_path)
+    run_case(ctx, make_case(source, seed_comments=seed), work)
+    [call] = fake.calls
+    path = work.resolve() / "seed-comments.md"
+    assert f"CODE_CHECK_REVIEW__SEED_COMMENTS={path}" in call.argv[: call.argv.index("claude")]
+    assert path.read_text() == seed
+    ctx2, fake2 = reviewing_ctx(tmp_path, [FOUND])
+    run_case(ctx2, make_case(source), workdir(tmp_path, "unseeded"))
+    assert not any("SEED_COMMENTS" in a for a in fake2.calls[0].argv)
+
+
+def test_a_seed_must_be_text(source):
+    with pytest.raises(CodeCheckError, match="seed_comments"):
+        validate_case(make_case(source, seed_comments=5))
+
+
+def test_seed_cases_give_each_round_the_findings_of_the_rounds_before_it(source):
+    first, second, third = (make_case(source, name=n) for n in ("pr-1", "pr-2", "pr-3"))
+    f1 = {**FOUND, "message": "returns 2, not 1"}
+    f2 = {**FOUND, "line": 9, "severity": "critical", "category": "security", "message": "another bypass"}
+    results = [{"name": "pr-1", "got": [f1]}, {"name": "pr-2", "got": [f1, f2]}]
+    seeded = seed_cases([first, second, third], results)
+    assert "seed_comments" not in seeded[0]
+    assert "returns 2, not 1" in seeded[1]["seed_comments"] and "[ours]" in seeded[1]["seed_comments"]
+    assert "another bypass" not in seeded[1]["seed_comments"]
+    assert seeded[2]["seed_comments"].count("returns 2, not 1") == 1  # the same finding twice is one comment
+    assert "another bypass" in seeded[2]["seed_comments"] and "## calc.py:9" in seeded[2]["seed_comments"]
+    assert "seed_comments" not in first  # the input cases are not changed
 
 
 def test_the_fixed_panel_option_pins_the_review_like_the_live_eval(tmp_path):
