@@ -86,6 +86,16 @@ def test_activity_counts_only_replies_after_the_review():
     assert replies[0].thread_id == "T1" and replies[0].path == "a.py" and replies[0].author == "alice"
 
 
+def test_activity_finds_replies_to_our_bot_threads_in_ci():
+    # CI: review.login is "github-actions[bot]" (REST form), thread comments come from GraphQL as "github-actions"
+    me = "github-actions[bot]"
+    reviews = [Review(me, "abc", T0, "COMMENTED")]
+    threads = [th(tc("github-actions", T0, is_bot=True), tc("alice", "2026-01-01T00:00:11Z", 2),
+                  tc("github-actions", "2026-01-01T00:00:12Z", 3, is_bot=True))]
+    replies = review_activity(reviews, threads, me).replies
+    assert [(r.author, r.thread_id) for r in replies] == [("alice", "T1")]
+
+
 def test_activity_picks_latest_own_review():
     reviews = [
         Review("me", "old", "2026-01-01T00:00:00Z", "COMMENTED"),

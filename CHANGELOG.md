@@ -2,6 +2,11 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.4.5]
+
+### Fixed
+- In CI, where reviews post as `github-actions[bot]`, later rounds now see their own earlier findings and notice replies to them. GitHub spells that login two ways, and the exact match missed it.
+
 ## [1.4.4]
 
 ### Changed
