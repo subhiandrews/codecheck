@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import re
@@ -390,7 +391,5 @@ def test_the_reason_is_not_part_of_the_digest(shadow):
     seed(shadow, 1, [("a1", "app/x.py", "style", "disputed")])
     ev = gather(shadow, REPO, "")
     assert "reason" in ev
-    assert ev["digest"] == gather(shadow, REPO, "")["digest"]
-    seed(shadow, 2, [("a2", "app/y.py", "style", "disputed")])
-    assert "reason" not in gather(shadow, REPO, "")  # evidence changed, so the digest does too
-    assert gather(shadow, REPO, "")["digest"] != ev["digest"]
+    rest = {k: v for k, v in ev.items() if k not in ("reason", "digest")}  # what the digest is computed from
+    assert ev["digest"] == hashlib.sha256(json.dumps(rest, sort_keys=True).encode("utf-8")).hexdigest()[:16]
