@@ -5,7 +5,7 @@ User-visible changes per release, newest first. Earlier releases: `git log`. The
 ## [1.5.0]
 
 ### Added
-- `threads` (the start of `address-comments`) records the code-check findings it sees in a PR's threads, including those a CI review posted. Your verdicts on them now count as `guidance evidence` for your own repositories.
+- `threads` (the start of `address-comments`) records the code-check findings it sees in a PR's threads, including those a CI review posted as `review.ci_login` (new, user config only). Your verdicts on them now count as `guidance evidence` for your own repositories.
 
 ## [1.4.7]
 

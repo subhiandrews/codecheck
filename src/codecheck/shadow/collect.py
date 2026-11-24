@@ -3,7 +3,7 @@
 from collections import Counter
 
 from codecheck.core.render import FINDING_MARKER, parse_comment
-from codecheck.models import PRRef, comment_is_ours, is_bot_login
+from codecheck.models import PRRef, comment_is_ours, is_bot_login, same_login
 from codecheck.shadow.store import ShadowStore
 
 REPLY_MARKER = "code-check:reply"
@@ -92,17 +92,22 @@ def collect_outcomes(provider, shadow: ShadowStore, ref: PRRef, me: str) -> dict
     return {"runs": len(run_ids), "outcomes": outcomes, "human_comments": humans}
 
 
-def record_thread_findings(shadow: ShadowStore, run_id: str, threads, me: str) -> int:
+def record_thread_findings(shadow: ShadowStore, run_id: str, pr: str, threads, me: str, ci_login: str = "") -> int:
     """Record the findings of a code-check review that the PR's threads show, as `finding` and `outcome` records.
 
     The review may have run where this store is not (CI), so the threads are the only copy of its findings here.
-    Only a root comment that ends with our finding marker and comes from us or from a bot counts. A verdict recorded
-    for the thread later turns the outcome into evidence."""
+    Only a root comment that ends with our finding marker and comes from us or from `ci_login` counts. A finding the
+    store already holds from a recorded review of this PR is left to `collect_outcomes`. A verdict recorded for the
+    thread later turns the outcome into evidence."""
+    known = {r.get("id") for rid in shadow.runs_for_pr(pr) for r in shadow.read(rid)
+             if r.get("type") == "finding" and r.get("source") != "thread"}
     n = 0
     for t in threads:
         root = t.comments[0] if t.comments else None
-        fid = _own_marker(root.body) if root is not None and (comment_is_ours(root, me) or root.is_bot) else None
-        parsed = parse_comment(root.body) if fid else None
+        if root is None or not (comment_is_ours(root, me) or (ci_login and same_login(root.author, ci_login, root.is_bot))):
+            continue
+        fid = _own_marker(root.body)
+        parsed = parse_comment(root.body) if fid and fid not in known else None
         if parsed is None or not t.path or t.line is None:
             continue
         shadow.append(run_id, {"type": "finding", "id": fid, "file": t.path, "line": t.line, "source": "thread", **parsed})

@@ -22,14 +22,15 @@ def run(args, ctx) -> dict:
     ref = ctx.resolve_ref(args.pr)
     me = ctx.provider.whoami()
     pr = ctx.provider.get_pr(ref)
-    threads = actionable_threads(ctx.provider.list_threads(ref), me)
+    all_threads = ctx.provider.list_threads(ref)
+    threads = actionable_threads(all_threads, me)
     reviewers = _reviewers(threads, me)
     run_id = new_run_id()
     if ctx.shadow is not None:
         ctx.guarded(lambda: record_run(
             ctx.shadow, {"run_id": run_id, "skill": "address-comments", "repo": ref.repo, "pr": str(ref),
                          "head_sha": pr.head_sha, "mode": "pr", "panel": {"members": []}}, "", ctx.config))
-        ctx.guarded(lambda: record_thread_findings(ctx.shadow, run_id, threads, me))
+        ctx.guarded(lambda: record_thread_findings(ctx.shadow, run_id, str(ref), all_threads, me, ctx.config.review.ci_login))
     return {
         "run_id": run_id, "pr": str(ref), "head_sha": pr.head_sha, "head_ref": pr.head_ref, "reviewers": reviewers,
         "threads": [

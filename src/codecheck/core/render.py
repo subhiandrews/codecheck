@@ -50,7 +50,7 @@ def parse_comment(body: str) -> dict | None:
     rest = body[m.end():]
     tail = _TAIL.search(rest)
     message = (rest[:tail.start()] if tail else FINDING_MARKER.sub("", rest)).strip()
-    return {"severity": m.group(1).lower(), "category": m.group(2).strip(), "message": message}
+    return {"severity": m.group(1).lower(), "category": m.group(2).strip()[:60], "message": message}
 
 
 def summary_body(

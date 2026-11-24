@@ -408,7 +408,7 @@ def test_threads_records_ci_findings_so_verdicts_become_evidence(shadow):
     for pr, fid in ((1, "a" * 12), (2, "b" * 12)):
         rid = new_run_id()
         shadow.append(rid, {"type": "run", "repo": REPO, "pr": f"{REPO}#{pr}", "skill": "address-comments"})
-        assert record_thread_findings(shadow, rid, [thread(f"T{pr}", fid, "app/x.py", "Prefer a constant")], "me") == 1
+        assert record_thread_findings(shadow, rid, f"{REPO}#{pr}", [thread(f"T{pr}", fid, "app/x.py", "Prefer a constant")], "me", "ci") == 1
         shadow.append(rid, {"type": "verdict", "thread_id": f"T{pr}", "verdict": "incorrect"})
     ev = gather(shadow, REPO, "")
     assert ev["proposable"] is True
@@ -422,4 +422,57 @@ def test_threads_ignore_comments_that_are_not_our_findings(shadow):
     marked = "**Warning** · style\n\nmsg\n<!-- code-check:finding:" + "a" * 12 + " -->"
     human = Thread("H", "x.py", 1, False, False, (ThreadComment(1, "bob", marked, "t"),))  # a person copied the marker
     plain = Thread("P", "x.py", 1, False, False, (ThreadComment(2, "ci", "coverage dropped", "t", is_bot=True),))
-    assert record_thread_findings(shadow, "abcdef012345", [human, plain], "me") == 0
+    assert record_thread_findings(shadow, "abcdef012345", f"{REPO}#1", [human, plain], "me", "ci") == 0
+
+
+def _ci_thread(tid, fid, login="ci", *, category="style", resolved=False):
+    from codecheck.core.render import comment_body
+    from codecheck.models import Finding, Severity, Thread, ThreadComment
+    f = Finding("app/x.py", 3, Severity.WARNING, category, "msg", anchor="x")
+    return Thread(tid, "app/x.py", 3, resolved, False, (ThreadComment(1, login, comment_body(f, fid), "t", is_bot=True),))
+
+
+def test_another_bot_or_no_ci_login_is_not_trusted(shadow):
+    from codecheck.shadow.collect import record_thread_findings
+    other = _ci_thread("T", "a" * 12, login="other-app")
+    assert record_thread_findings(shadow, "abcdef012345", f"{REPO}#1", [other], "me", "ci") == 0
+    assert record_thread_findings(shadow, "abcdef012345", f"{REPO}#1", [_ci_thread("T", "a" * 12)], "me", "") == 0
+
+
+def test_a_long_category_is_capped_and_resolved_threads_are_recorded(shadow):
+    from codecheck.shadow.collect import record_thread_findings
+    rid = new_run_id()
+    shadow.append(rid, {"type": "run", "repo": REPO, "pr": f"{REPO}#1", "skill": "address-comments"})
+    assert record_thread_findings(shadow, rid, f"{REPO}#1", [_ci_thread("T", "a" * 12, category="x" * 500, resolved=True)], "me", "ci") == 1
+    recs = shadow.read(rid)
+    assert len(next(r for r in recs if r["type"] == "finding")["category"]) == 60
+    assert next(r for r in recs if r["type"] == "outcome")["resolved"] is True
+
+
+def test_a_finding_from_a_recorded_review_is_left_to_collect(shadow):
+    from codecheck.shadow.collect import record_thread_findings
+    first = seed(shadow, 1, [("a" * 12, "app/x.py", "style", "none")])
+    rid = new_run_id()
+    shadow.append(rid, {"type": "run", "repo": REPO, "pr": f"{REPO}#1", "skill": "address-comments"})
+    assert record_thread_findings(shadow, rid, f"{REPO}#1", [_ci_thread("T", "a" * 12)], "me", "ci") == 0
+    assert [r["type"] for r in shadow.read(rid)] == ["run"] and shadow.read(first)
+
+
+def test_repeated_threads_runs_count_one_review(shadow):
+    from codecheck.shadow.collect import record_thread_findings
+    for _ in range(3):
+        rid = new_run_id()
+        shadow.append(rid, {"type": "run", "repo": REPO, "pr": f"{REPO}#1", "skill": "address-comments"})
+        record_thread_findings(shadow, rid, f"{REPO}#1", [_ci_thread("T", "a" * 12)], "me", "ci")
+    assert "1 recorded PR review," in gather(shadow, REPO, "")["reason"]
+
+
+def test_parse_comment_round_trips_every_rendering():
+    from codecheck.core.render import comment_body, parse_comment
+    from codecheck.models import Finding, Severity
+    for suggestion, reviewers, relocated in ((None, [], False), ("y = 1", [], False), ("y = 1", ["skeptic"], False),
+                                            ("y = 1", ["skeptic"], True), (None, ["skeptic"], False)):
+        f = Finding("a.py", 1, Severity.CRITICAL, "bug", "first line\n\nsecond para", anchor="x", suggestion=suggestion, reviewers=reviewers)
+        assert parse_comment(comment_body(f, "a" * 12, relocated=relocated)) == {
+            "severity": "critical", "category": "bug", "message": "first line\n\nsecond para"}
+    assert parse_comment("coverage dropped") is None

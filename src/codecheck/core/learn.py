@@ -46,6 +46,7 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
     cats: dict[str, dict] = {}
     misses: list[dict] = []
     miss_prs: set[str] = set()
+    address_prs: set[str] = set()
     reviews = labelled = replied = 0  # review runs; findings with a verdict; findings with only a reply
     for rid, (outcomes, humans) in run_feedback(shadow).items():
         recs = shadow.read(rid)
@@ -54,7 +55,11 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
             continue
         pr = run["pr"]
         # an address-comments run carries a pr too, but a review of ours only when it found findings in the threads
-        reviews += run.get("skill") != "address-comments" or any(r.get("type") == "finding" for r in recs)
+        if run.get("skill") != "address-comments":
+            reviews += 1
+        elif pr not in address_prs and any(r.get("type") == "finding" for r in recs):
+            address_prs.add(pr)  # each `threads` call is a run: count the PR once
+            reviews += 1
         for f in (r for r in recs if r.get("type") == "finding" and isinstance(r.get("id"), str)):
             if not _under(f.get("file"), directory):
                 continue
