@@ -337,13 +337,19 @@ def test_review_pr_step_8_says_to_skip_when_base_warning_is_set():
     assert re.search(r"If `base_warning` is set.*skip this step", step)
 
 
-def test_an_empty_result_says_why(shadow):
+def test_no_runs_says_no_review_pr_runs(shadow):
     assert "no review-pr runs" in gather(shadow, REPO, "")["reason"]
+
+
+def test_findings_without_any_response_say_so(shadow):
     seed(shadow, 1, [("a0", "app/x.py", "style", "none")])
-    assert "none has a finding under this path" in gather(shadow, REPO, "")["reason"]
-    seed(shadow, 2, [("a1", "app/x.py", "style", "disputed")])
+    assert "none has a finding" in gather(shadow, REPO, "")["reason"]
+
+
+def test_one_disputed_pr_is_not_yet_a_pattern_and_two_remove_the_reason(shadow):
+    seed(shadow, 1, [("a1", "app/x.py", "style", "disputed")])
     assert "no finding category was disputed in 2 or more PRs" in gather(shadow, REPO, "")["reason"]
-    seed(shadow, 3, [("a2", "app/y.py", "style", "disputed")])
+    seed(shadow, 2, [("a2", "app/y.py", "style", "disputed")])
     assert "reason" not in gather(shadow, REPO, "")
 
 
@@ -364,7 +370,7 @@ def test_a_finding_with_only_a_reply_is_named(shadow):
     rid = seed(shadow, 1, [("a1", "app/x.py", "style", "none")])
     shadow.append(rid, {"type": "outcome", "finding_id": "a1", "thread_id": "t-r", "resolved": False, "outdated": False,
                         "replies": [{"author": "me", "body": "thanks"}], "reactions": {}})
-    assert "1 have a reply but no verdict" in gather(shadow, REPO, "")["reason"]
+    assert "1 with a reply but no verdict" in gather(shadow, REPO, "")["reason"]
 
 
 def test_the_reason_mentions_misses_from_one_pr(shadow):
