@@ -42,7 +42,7 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
     `disputed` lists finding categories whose findings were disputed in at least `MIN_PRS` PRs and in more PRs than
     they were confirmed in. `misses` are human comments no finding matched, kept when they come from at least
     `MIN_PRS` PRs. `proposable` says there is enough of either to be worth a proposal, and `digest` identifies exactly
-    this evidence. When not proposable, `reason` says why (added after the digest: it explains the evidence, it is not part of it)."""
+    this evidence. When not proposable, `reason` says why; it is not part of the digest."""
     cats: dict[str, dict] = {}
     misses: list[dict] = []
     miss_prs: set[str] = set()
@@ -93,7 +93,7 @@ def _why_empty(reviews: int, labelled: int, replied: int, miss_prs: int, contest
     parts = []
     if not labelled:
         note = f"; {replied} with a reply but no verdict yet" if replied else ""
-        parts.append(f"{reviews} recorded PR reviews, but none has a finding under this path with a verdict from its author or a matching human comment{note}")
+        parts.append(f"{reviews} recorded PR review{'s' if reviews != 1 else ''}, but none has a finding under this path with a verdict from its author or a matching human comment{note}")
     elif contested:
         parts.append("a category was disputed in several PRs but confirmed in at least as many, so it is not a pattern")
     else:

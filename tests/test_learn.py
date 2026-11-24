@@ -343,7 +343,9 @@ def test_no_runs_says_no_review_pr_runs(shadow):
 
 def test_findings_without_any_response_say_so(shadow):
     seed(shadow, 1, [("a0", "app/x.py", "style", "none")])
-    assert "none has a finding" in gather(shadow, REPO, "")["reason"]
+    assert "1 recorded PR review, but none has a finding" in gather(shadow, REPO, "")["reason"]
+    seed(shadow, 2, [("a3", "app/x.py", "style", "none")])
+    assert "2 recorded PR reviews, but" in gather(shadow, REPO, "")["reason"]
 
 
 def test_one_disputed_pr_is_not_yet_a_pattern_and_two_remove_the_reason(shadow):
