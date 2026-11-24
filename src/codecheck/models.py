@@ -31,8 +31,9 @@ OWN_MARKER = re.compile(rf"(?:{_ONE_MARKER}\s*)+\Z")
 
 
 def _carries_our_marker(body: str) -> bool:
-    """A bot's text is ours when it ends with our markers; an empty body (an approval vote) has no text to copy."""
-    return not (body or "").strip() or OWN_MARKER.search(body) is not None
+    """A bot's text is ours only when it ends with our markers. An empty body (an approval vote, or another
+    workflow's review) carries none, so it is not ours; approvals are handled by `approved_by` and `approval_skip`."""
+    return OWN_MARKER.search(body or "") is not None
 
 
 def comment_is_ours(c: ThreadComment, me: str) -> bool:

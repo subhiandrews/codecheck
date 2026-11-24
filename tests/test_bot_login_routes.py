@@ -21,6 +21,7 @@ from codecheck.models import (
     Thread,
     ThreadComment,
     comment_is_ours,
+    review_is_ours,
     same_pr_author,
 )
 from codecheck.providers.gitlab import _MARKER as gitlab_marker
@@ -66,13 +67,20 @@ def test_our_marker_pattern_matches_every_marker_we_write():
 
 
 def test_gitlab_reviews_of_a_bot_user_are_still_ours():
-    # GitLab appends its own marker after the run marker, and an approval vote has no body at all
+    # GitLab appends its own marker after the run marker; an approval vote has no body, so it is no review of ours
     gitlab_body = f"summary\n\n{RUN_MARKER.format('c4141e60f383')}\n\n<!-- code-check:review:{'ab12' * 10} -->"
     assert gitlab_marker.search(gitlab_body) and OWN_MARKER.search(gitlab_body)
     summary = Review("project_7_bot", "abc", "2026-01-01T00:00:10Z", "COMMENTED", gitlab_body, True)
     vote = Review("project_7_bot", "abc", "2026-01-01T00:00:11Z", "APPROVED", "", True)
-    assert our_reviews([summary, vote], "project_7_bot") == [summary]  # a vote has no run marker, as before
-    assert review_activity([summary, vote], [], "project_7_bot").last_review == vote  # but it is ours, as before
+    assert our_reviews([summary, vote], "project_7_bot") == [summary]
+    assert review_activity([summary, vote], [], "project_7_bot").last_review == summary  # the review, not the vote
+
+
+def test_another_workflows_empty_review_does_not_make_a_head_look_reviewed():
+    # an empty-body review under the shared login would otherwise be taken for our latest review
+    empty = Review(ME, "head1", "2026-01-05T00:00:10Z", "COMMENTED", "", True)
+    for me in (ME, "github-actions"):
+        assert not review_is_ours(empty, me) and review_activity([empty], [], me).last_review is None
 
 
 def test_reviews_the_bot_posted_are_ours_whichever_way_review_login_is_spelled():
