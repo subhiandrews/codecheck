@@ -23,6 +23,11 @@ MAX_FILE_CHARS = 8_000  # a written file; the reviewers read all guidance files 
 MAX_CHANGED_LINES = 40  # lines added plus lines removed by one proposal
 
 
+def _contested(e: dict) -> bool:
+    """A category disputed in at least MIN_PRS PRs and confirmed in at least as many: not a pattern."""
+    return len(e["disputed"]) >= MIN_PRS and len(e["disputed"]) <= len(e["confirmed"])
+
+
 def _under(path: object, directory: str) -> bool:
     return isinstance(path, str) and (not directory or path.startswith(f"{directory}/"))
 
@@ -68,28 +73,28 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
     disputed = [
         {"category": cat, "prs": len(e["disputed"]), "confirmed_prs": len(e["confirmed"]), "examples": e["examples"]}
         for cat, e in sorted(cats.items())
-        if len(e["disputed"]) >= MIN_PRS and len(e["disputed"]) > len(e["confirmed"])
+        if len(e["disputed"]) >= MIN_PRS and not _contested(e)
     ][:MAX_CATEGORIES]
     out = {"disputed": disputed, "misses": misses if len(miss_prs) >= MIN_PRS else [], "miss_prs": len(miss_prs)}
     out = scrub(out)
     out["proposable"] = bool(out["disputed"] or out["misses"])
     out["digest"] = hashlib.sha256(json.dumps(out, sort_keys=True).encode("utf-8")).hexdigest()[:16]
     if not out["proposable"]:  # after the digest: the reason explains the evidence, it is not part of it
-        contested = any(len(e["disputed"]) >= MIN_PRS and len(e["disputed"]) <= len(e["confirmed"]) for e in cats.values())
+        contested = any(_contested(e) for e in cats.values())
         out["reason"] = _why_empty(pr_runs, labelled, len(miss_prs), contested)
     return out
 
 
 def _why_empty(pr_runs: int, labelled: int, miss_prs: int, contested: bool) -> str:
-    """`contested`: some category was disputed in at least MIN_PRS PRs but confirmed in as many."""
+    """`contested`: some category was disputed in at least MIN_PRS PRs but confirmed in at least as many."""
     if not pr_runs:
         return ("no review-pr runs of this repository are recorded here; local reviews and address-comments runs "
                 "carry no evidence, which comes from reviews posted to a PR and the feedback they received")
     parts = []
     if not labelled:
-        parts.append(f"{pr_runs} recorded PR runs, but none has a finding that an author or reviewer has responded to yet")
+        parts.append(f"{pr_runs} recorded PR runs, but none has a finding under this path that an author or reviewer has responded to yet")
     elif contested:
-        parts.append("a category was disputed in several PRs but confirmed in as many, so it is not a pattern")
+        parts.append("a category was disputed in several PRs but confirmed in at least as many, so it is not a pattern")
     else:
         parts.append(f"no finding category was disputed in {MIN_PRS} or more PRs")
     if miss_prs:

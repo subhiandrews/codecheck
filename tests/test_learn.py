@@ -340,7 +340,7 @@ def test_review_pr_step_8_says_to_skip_when_base_warning_is_set():
 def test_an_empty_result_says_why(shadow):
     assert "no review-pr runs" in gather(shadow, REPO, "")["reason"]
     seed(shadow, 1, [("a0", "app/x.py", "style", "none")])
-    assert "none has a finding" in gather(shadow, REPO, "")["reason"]
+    assert "none has a finding under this path" in gather(shadow, REPO, "")["reason"]
     seed(shadow, 2, [("a1", "app/x.py", "style", "disputed")])
     assert "no finding category was disputed in 2 or more PRs" in gather(shadow, REPO, "")["reason"]
     seed(shadow, 3, [("a2", "app/y.py", "style", "disputed")])
@@ -350,10 +350,15 @@ def test_an_empty_result_says_why(shadow):
 def test_the_reason_names_a_contested_category_and_missed_comments(shadow):
     for pr in (1, 2):
         seed(shadow, pr, [(f"d{pr}", "app/x.py", "style", "disputed"), (f"c{pr}", "app/z.py", "style", "confirmed")])
-    assert "confirmed in as many" in gather(shadow, REPO, "")["reason"]
+    assert "confirmed in at least as many" in gather(shadow, REPO, "")["reason"]
 
 
 def test_the_reason_mentions_misses_from_one_pr(shadow):
     seed(shadow, 1, humans=[("app/x.py", "please check this", None)])
     reason = gather(shadow, REPO, "")["reason"]
-    assert "missed human comments come from 1 PR" in reason and "none has a finding" in reason
+    assert "missed human comments come from 1 PR" in reason and "none has a finding under this path" in reason
+
+
+def test_a_scoped_reason_does_not_blame_findings_outside_the_directory(shadow):
+    seed(shadow, 1, [("a1", "web/x.py", "style", "disputed")])
+    assert "under this path" in gather(shadow, REPO, "svc")["reason"]
