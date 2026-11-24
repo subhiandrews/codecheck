@@ -64,3 +64,4 @@ Records dated before 2026-11-20 were reconstructed from the original design spec
 - [0043-check-that-a-fix-covers-the-whole-failure.md](0043-check-that-a-fix-covers-the-whole-failure.md): Check that a fix covers the whole failure
 - [0044-sweep-broken-invariants-by-route-and-fix-them-at-one-boundary.md](0044-sweep-broken-invariants-by-route-and-fix-them-at-one-boundary.md): Sweep broken invariants by route and fix them at one boundary
 - [0045-late-review-rounds-post-suggestions-only-on-new-lines.md](0045-late-review-rounds-post-suggestions-only-on-new-lines.md): Late review rounds post suggestions only on new lines
+- [0046-a-shared-bot-login-is-ours-only-with-our-marker-at-the-end.md](0046-a-shared-bot-login-is-ours-only-with-our-marker-at-the-end.md): A shared bot login is ours only with our marker at the end

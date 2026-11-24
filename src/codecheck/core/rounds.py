@@ -4,12 +4,12 @@ from collections.abc import Sequence
 
 from codecheck.core.diffmap import parse_diff
 from codecheck.core.render import RUN_PREFIX
-from codecheck.models import Finding, Review, Severity, same_login
+from codecheck.models import Finding, Review, Severity, review_is_ours
 
 
 def our_reviews(reviews: Sequence[Review], me: str) -> list[Review]:
     """Our posted code-check reviews; the host is the record, so a review made on another machine counts."""
-    return [r for r in reviews if same_login(r.author, me, r.is_bot) and RUN_PREFIX in (r.body or "")]
+    return [r for r in reviews if review_is_ours(r, me) and RUN_PREFIX in (r.body or "")]
 
 
 def count_reviews(reviews: Sequence[Review], me: str) -> int:

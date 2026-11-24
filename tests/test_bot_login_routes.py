@@ -68,8 +68,10 @@ def test_reviews_the_bot_posted_are_ours_whichever_way_review_login_is_spelled()
     # REST says github-actions[bot]; review.login may be that or the bare name
     run = Review(ME, "abc", "2026-01-01T00:00:10Z", "COMMENTED", RUN_MARKER.format("c4141e60f383"), True)
     other_workflow = Review(ME, "def", "2026-01-02T00:00:10Z", "COMMENTED", "coverage dropped", True)
+    quoting = Review(ME, "jkl", "2026-01-04T00:00:10Z", "COMMENTED", f"quoted: {RUN_MARKER.format('c4141e60f383')}\nmore", True)
     for me in (ME, "github-actions"):
-        assert our_reviews([run, other_workflow], me) == [run]
+        assert our_reviews([run, other_workflow, quoting], me) == [run]  # one rule for rounds and for activity
+        assert review_activity([quoting], [], me).last_review is None
         assert review_activity([run, other_workflow], [], me).last_review == run
     person = Review("alice", "ghi", "2026-01-03T00:00:10Z", "COMMENTED", "my own review")
     assert review_activity([person], [], "alice").last_review == person  # a person's reviews need no marker
@@ -87,6 +89,9 @@ def test_a_comment_from_the_shared_bot_account_is_ours_only_with_our_marker():
     assert comment_is_ours(ours, "github-actions") and not comment_is_ours(other, "github-actions")
     # a whole marker, not just the text that starts one
     assert not comment_is_ours(tc(6, "github-actions", "<!-- code-check: nothing -->", bot=True), ME)
+    # and where we write it, at the end: a marker quoted mid-body by another workflow does not make a comment ours
+    quoted = tc(7, "github-actions", f"a bot quoting a PR:\n{MARK}\nand more text", bot=True)
+    assert not comment_is_ours(quoted, ME) and _already_posted([thread(quoted)], ME) == set()
     assert _already_posted([thread(other, ours, tid="x")], ME) == {"a" * 12}
     assert [t.id for t in actionable_threads([thread(tc(5, "alice"), other, tid="o")], ME)] == ["o"]
 

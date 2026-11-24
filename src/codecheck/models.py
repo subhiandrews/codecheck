@@ -24,8 +24,8 @@ def same_login(author: str, me: str, is_bot: bool = False) -> bool:
     return author == me or (is_bot and _BOT_SUFFIX.sub("", author) == _BOT_SUFFIX.sub("", me))
 
 
-# The hidden markers we put in our comments: a finding id and a run id (core/render.py) and a reply (commands/reply.py).
-OWN_MARKER = re.compile(r"<!-- code-check:(?:finding:[0-9a-f]{12}|run:[0-9a-f]{12}|reply) -->")
+# The hidden markers we put at the end of our comments: a finding id and a run id (core/render.py), a reply (commands/reply.py).
+OWN_MARKER = re.compile(r"<!-- code-check:(?:finding:[0-9a-f]{12}|run:[0-9a-f]{12}|reply) -->\s*\Z")  # always last
 
 
 def comment_is_ours(c: ThreadComment, me: str) -> bool:
