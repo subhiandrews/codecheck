@@ -478,7 +478,10 @@ def test_address_comments_self_reviews_once_before_push():
     assert text.count("`code-check:review-local`") == 1
     assert text.index("`code-check:review-local`") < text.index("push --pr")
     assert "exactly once" in text and "code-check --cwd <WS> <subcommand>" in text
-    assert "$review-local" in (REPO / "codex/skills/address-comments/SKILL.md").read_text()
+    codex = (REPO / "codex/skills/address-comments/SKILL.md").read_text()
+    assert "$review-local" in codex and "code-check guidance evidence" in codex
+    assert "(step 8)" not in text and "(step 8)" not in codex  # review-local renumbers on Codex; name the step by its command
+    assert "<pre>" in text and "git -C <WS> diff <pre> HEAD" in text  # the review covers the whole branch: limit it to the fixes
 
 
 def test_wrapper_exports_the_plugin_root_on_both_paths():
