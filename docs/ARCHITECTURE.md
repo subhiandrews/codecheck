@@ -51,7 +51,7 @@ flowchart TD
 
 Orange boxes are LLM work and blue boxes are the deterministic CLI. A reviewer that fails or writes unusable output does not stop the review: `ingest` reports it as incomplete and the rest goes on. A reviewer that wrote no findings file at all (`missing`) is re-dispatched once by the review skills and `ingest` runs again; a second `ingest` keeps what the first found invalid, and a file that is still missing stays reported as incomplete. With several chunks only a reviewer that wrote no file in any chunk counts as `missing`.
 
-`address-comments` and `babysit-pr` use the same CLI without the panel: `workspace` and `threads` collect the unresolved review threads, the skill checks each claim against the code and fixes what is valid, then `commit`, `push` (behind the test gate), `reply` and `resolve` finish the job. Unattended runs (`loop`, `run-pr`) start one headless `claude -p` process per PR and run these same skills.
+`address-comments` and `babysit-pr` use the same CLI without the panel: `workspace` and `threads` collect the unresolved review threads, the skill checks each claim against the code and fixes what is valid, reviews those fixes once with the `review-local` flow in the worktree (its valid findings are fixed in the same push), then `commit`, `push` (behind the test gate), `reply` and `resolve` finish the job. Unattended runs (`loop`, `run-pr`) start one headless `claude -p` process per PR and run these same skills.
 
 ## Installer and unattended setup
 

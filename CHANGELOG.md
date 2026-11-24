@@ -2,6 +2,11 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.4.6]
+
+### Changed
+- `address-comments` (and `babysit-pr`) now runs `review-local` once on its fixes before pushing, fixes the valid findings in the same push and reports how many it fixed.
+
 ## [1.4.5]
 
 ### Added
