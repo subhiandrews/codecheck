@@ -2,6 +2,11 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.4.7]
+
+### Changed
+- `guidance evidence` now gives a `reason` when there is nothing to propose, for example when no `review-pr` run of the repository is recorded (local reviews and address-comments runs carry no evidence).
+
 ## [1.4.6]
 
 ### Changed

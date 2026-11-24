@@ -41,18 +41,21 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
     cats: dict[str, dict] = {}
     misses: list[dict] = []
     miss_prs: set[str] = set()
+    pr_runs = labelled = 0
     for rid, (outcomes, humans) in run_feedback(shadow).items():
         recs = shadow.read(rid)
         run = next((r for r in recs if r.get("type") == "run"), None)
         if run is None or run.get("repo") != repo or not isinstance(run.get("pr"), str):
             continue
         pr = run["pr"]
+        pr_runs += 1
         for f in (r for r in recs if r.get("type") == "finding" and isinstance(r.get("id"), str)):
             if not _under(f.get("file"), directory):
                 continue
             label = finding_label(f["id"], outcomes, humans)
             if label not in ("confirmed", "disputed"):
                 continue
+            labelled += 1
             entry = cats.setdefault(str(f.get("category") or "other"), {"confirmed": set(), "disputed": set(), "examples": []})
             entry[label].add(pr)
             if label == "disputed" and len(entry["examples"]) < MAX_EXAMPLES:
@@ -71,7 +74,18 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
     out = scrub(out)
     out["proposable"] = bool(out["disputed"] or out["misses"])
     out["digest"] = hashlib.sha256(json.dumps(out, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    if not out["proposable"]:  # after the digest: the reason explains the evidence, it is not part of it
+        out["reason"] = _why_empty(pr_runs, labelled)
     return out
+
+
+def _why_empty(pr_runs: int, labelled: int) -> str:
+    if not pr_runs:
+        return ("no review-pr runs of this repository are recorded here; local reviews and address-comments runs "
+                "carry no evidence, which comes from reviews posted to a PR and the feedback they received")
+    if not labelled:
+        return f"{pr_runs} recorded PR runs, but none has a finding that an author or reviewer has responded to yet"
+    return f"not enough yet: a pattern needs at least {MIN_PRS} distinct PRs"
 
 
 def changed_lines(old: str | None, new: str) -> int:

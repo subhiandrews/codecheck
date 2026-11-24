@@ -335,3 +335,11 @@ def test_review_pr_step_8_says_to_skip_when_base_warning_is_set():
     step = next(line for line in (Path(__file__).parent.parent / "skills" / "review-pr" / "SKILL.md").read_text().splitlines()
                 if line.startswith("8. "))
     assert re.search(r"If `base_warning` is set.*skip this step", step)
+
+
+def test_an_empty_result_says_why(shadow):
+    assert "no review-pr runs" in gather(shadow, REPO, "")["reason"]
+    seed(shadow, 1, [("a1", "app/x.py", "style", "disputed")])
+    assert "at least 2 distinct PRs" in gather(shadow, REPO, "")["reason"]
+    seed(shadow, 2, [("a2", "app/y.py", "style", "disputed")])
+    assert "reason" not in gather(shadow, REPO, "")
