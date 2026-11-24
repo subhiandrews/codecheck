@@ -8,6 +8,7 @@ store or review bookkeeping. This costs real tokens; it is local developer tooli
 """
 
 import json
+import sys
 from pathlib import Path
 
 from codecheck.commands.run_pr import parse_result
@@ -128,7 +129,8 @@ def _setup_repo(ctx, snippet: dict, workdir: Path) -> Path:
     return repo
 
 
-def review_argv(ctx, workdir: Path, *, fixed_panel: bool = True, seed: Path | None = None) -> list[str]:
+def review_argv(ctx, workdir: Path, *, fixed_panel: bool = True, seed: Path | None = None,
+                pin_cli: bool = False) -> list[str]:
     cfg = ctx.config.run_pr
     root = plugin_root(ctx.env)
     # Paths are absolute, so never start with '-'; tools and permission mode are validated with the config.
@@ -136,6 +138,11 @@ def review_argv(ctx, workdir: Path, *, fixed_panel: bool = True, seed: Path | No
                "CODE_CHECK_SHADOW__HANDOFF=1",
                # The throwaway repository's base is origin/main, whatever the user configured.
                "CODE_CHECK_REMOTE=origin", "CODE_CHECK_BASE_BRANCH=main"]
+    if pin_cli and not ctx.env.get("CODE_CHECK_PYTHON"):
+        # bin/code-check bootstraps a venv that is rebuilt only when VERSION changes, so without this a replay of a
+        # branch could run an older cached build of the CLI (and drop a seed it does not know); the interpreter
+        # running the replay has this checkout's code
+        isolate.append(f"CODE_CHECK_PYTHON={sys.executable}")
     if seed is not None:  # a replay of a later round: the earlier findings arrive as existing-comments.md
         isolate.append(f"CODE_CHECK_REVIEW__SEED_COMMENTS={seed}")
     if fixed_panel:

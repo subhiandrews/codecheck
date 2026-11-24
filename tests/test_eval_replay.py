@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -200,6 +201,17 @@ def test_a_case_seed_is_written_and_handed_to_the_review(tmp_path, source):
     ctx2, fake2 = reviewing_ctx(tmp_path, [FOUND])
     run_case(ctx2, make_case(source), workdir(tmp_path, "unseeded"))
     assert not any("SEED_COMMENTS" in a for a in fake2.calls[0].argv)
+
+
+def test_a_replay_runs_the_cli_of_this_checkout_not_a_cached_venv(tmp_path, source):
+    # bin/code-check bootstraps a venv that is only rebuilt when VERSION changes, so a replay would otherwise measure
+    # (and silently drop a seed for) an older build
+    ctx, fake = reviewing_ctx(tmp_path, [FOUND])
+    run_case(ctx, make_case(source), workdir(tmp_path))
+    assert f"CODE_CHECK_PYTHON={sys.executable}" in fake.calls[0].argv[: fake.calls[0].argv.index("claude")]
+    ctx.env = {"CODE_CHECK_PYTHON": "/my/python"}  # the user's own choice is not overridden
+    assert not any(a.startswith("CODE_CHECK_PYTHON=") for a in review_argv(ctx, tmp_path, pin_cli=True))
+    assert not any(a.startswith("CODE_CHECK_PYTHON=") for a in review_argv(_ctx(tmp_path, FakeRunner()), tmp_path))  # live eval unchanged
 
 
 def test_a_seed_must_be_text(source):

@@ -266,7 +266,7 @@ def run_case(ctx, case: dict, workdir: Path, *, fixed_panel: bool = False, dry_r
     if case.get("seed_comments"):  # a later round: hand the review the earlier findings as existing comments
         seed = workdir / "seed-comments.md"
         seed.write_text(case["seed_comments"], encoding="utf-8")
-    res = ctx.runner.run(live.review_argv(ctx, workdir, fixed_panel=fixed_panel, seed=seed), cwd=repo,
+    res = ctx.runner.run(live.review_argv(ctx, workdir, fixed_panel=fixed_panel, seed=seed, pin_cli=True), cwd=repo,
                          timeout=ctx.config.run_pr.timeout_seconds, input="")
     claude = parse_result(res.stdout, res.returncode, res.stderr)
     # The review has been paid for: record it before anything below can fail, so its cost is always counted.
