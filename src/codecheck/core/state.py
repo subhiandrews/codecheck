@@ -243,7 +243,7 @@ def babysit_work(pr: PullRequest, threads: Sequence[Thread], checks: Sequence[Ch
     if pr.state != "open":
         return None
     actionable = actionable_threads(threads, me)
-    failing = [c for c in checks if c.state == "fail"]
+    failing = {c.name for c in checks if c.state == "fail"}  # by name: one workflow can show up once per event
     if not actionable and not failing:
         return None
     parts = [

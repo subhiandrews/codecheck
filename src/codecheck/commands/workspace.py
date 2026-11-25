@@ -1,3 +1,4 @@
+import hashlib
 import shutil
 from pathlib import Path
 
@@ -76,7 +77,11 @@ def run(args, ctx) -> dict:
     if not base.fetch(cfg.remote, refspec):
         raise CodeCheckError(f"could not fetch the head of {ref}")
     state_dir = ensure_private_dir(expand_path(cfg.state_dir))
-    name = f"addr-{ref.repo.replace('/', '__')}-{ref.number}"
+    # The clone is part of the name: two clones of one repository (an interactive checkout and the managed clone an
+    # unattended run works in) must not share a worktree, or the one left behind by the other looks "ahead of the PR
+    # head" and `workspace` refuses, which stopped babysit before its CI step (#106).
+    clone_id = hashlib.sha256(str(Path(base.cwd).resolve()).encode()).hexdigest()[:8]
+    name = f"addr-{ref.repo.replace('/', '__')}-{ref.number}-{clone_id}"
     if contained(state_dir / "worktrees", name) is None:
         raise CodeCheckError(f"unsafe repository name {ref.repo!r}")
     path = state_dir / "worktrees" / name

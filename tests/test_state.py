@@ -91,6 +91,11 @@ def test_babysit_work_none_when_idle_and_fingerprint_tracks_state():
     assert "1 thread" in a.reason and "failing" in c.reason
 
 
+def test_babysit_work_counts_a_check_that_failed_for_two_events_once():
+    work = babysit_work(pr(), [], [Check("python", "fail"), Check("python", "fail"), Check("lint", "pass")], "me")
+    assert work and work.reason == "1 failing check"
+
+
 def test_select_work_skips_processed_caps_and_does_not_starve(tmp_path):
     s = StateStore(tmp_path / "s.json")
     items = [WorkItem(PRRef("o/r", n), f"fp{n}", "x") for n in range(1, 9)]

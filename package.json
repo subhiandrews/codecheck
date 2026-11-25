@@ -1,6 +1,6 @@
 {
   "name": "code-check",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "description": "PR review and review-comment tooling for Claude Code",
   "license": "Apache-2.0",
   "type": "module",

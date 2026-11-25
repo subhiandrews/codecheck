@@ -160,6 +160,34 @@ def test_checks_attempts_and_logs(tmp_path):
     assert call(ctx, "check-log", "--pr", str(pr.ref), "--check", "nope")[0] == 1
 
 
+def test_checks_lists_a_failing_check_once_when_its_workflow_ran_for_two_events(tmp_path):
+    """#106: a pull_request and a push run of one workflow are two `python` checks; looping over both spent two of the
+    three CI attempts on one failure."""
+    ctx, provider, pr, *_ = own_pr_setup(tmp_path)
+    provider.checks[pr.ref] = [Check("python", "fail", "", "1"), Check("lint", "pass"), Check("python", "fail", "", "2")]
+    _code, out = call(ctx, "checks", "--pr", str(pr.ref))
+    assert out["failing"] == ["python"] and out["attempts"] == {"python": 0}
+
+
+def test_a_worktree_left_by_another_clone_of_the_repo_does_not_block_workspace(tmp_path):
+    """#106: an interactive clone left `addr-<repo>-<n>` behind; the unattended run works in the managed clone, where the
+    PR head had moved on. The old worktree looked ahead of the head, `workspace` refused, and babysit stopped before CI."""
+    ctx, provider, pr, clone, origin = own_pr_setup(tmp_path)
+    sh(clone, "checkout", "main")
+    first = Path(call(ctx, "workspace", "--pr", str(pr.ref))[1]["path"])
+    (first / "app.py").write_text("x = 1\ny = 3\n")
+    sh(first, "commit", "-am", "fix on the first clone")
+    sh(first, "push", "origin", "HEAD:refs/heads/feature")
+    pushed = sh(first, "rev-parse", "HEAD").strip()
+    provider.prs[pr.ref] = replace(pr, head_sha=pushed)
+    other = tmp_path / "other-clone"
+    sh(tmp_path, "clone", str(origin), str(other))
+    code, out = call(make_ctx(tmp_path, other, provider=provider), "workspace", "--pr", str(pr.ref))
+    assert code == 0, out
+    assert Path(out["path"]) != first and sh(Path(out["path"]), "rev-parse", "HEAD").strip() == pushed
+    assert first.is_dir()  # the other clone's worktree is left alone
+
+
 def test_list_work_review_mode_filters_and_caps(tmp_path):
     _origin, clone = make_origin_and_clone(tmp_path)
     provider = FakeProvider()
