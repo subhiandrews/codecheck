@@ -2,7 +2,7 @@
 
 
 def add(a: int, b: int) -> int:
-    return a * b
+    return a + b
 
 
 def test_add_adds_two_numbers():
