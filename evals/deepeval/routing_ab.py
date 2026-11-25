@@ -99,11 +99,11 @@ def main() -> None:
     ap.add_argument("--base-ref", default="origin/main", help="git ref holding the old routing (default origin/main)")
     ap.add_argument("--json", type=Path, help="write the summary, flips and all rows here")
     args = ap.parse_args()
-    diffs = {p.stem: p.read_text(errors="replace") for p in sorted(STORE.glob("*.diff"))}
-    try:
+    try:  # before the store is read: an unusable ref should fail at once, with a one-line message and no traceback
         old_route = load_routing(args.base_ref).route
-    except (subprocess.CalledProcessError, ValueError) as e:  # an unknown or option-like ref: say so, no traceback
+    except Exception as e:  # noqa: BLE001  (an unknown or option-like ref, an old file that no longer imports, no git)
         sys.exit(f"error: cannot load routing at {args.base_ref!r}: {type(e).__name__}")
+    diffs = {p.stem: p.read_text(errors="replace") for p in sorted(STORE.glob("*.diff"))}
     result = compare(diffs, old_route, new_route, RoutingConfig())
     print(json.dumps(result["summary"], indent=2))
     print(f"{len(result['flips'])} performance flips")

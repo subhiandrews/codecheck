@@ -64,11 +64,24 @@ def test_a_failing_old_routing_is_reported_by_exception_type_never_by_message():
 
 
 @pytest.mark.parametrize("ref", ["no-such-ref-anywhere", "-p"])
-def test_an_unusable_base_ref_exits_with_a_one_line_message_not_a_traceback(monkeypatch, ref):
+def test_an_unusable_base_ref_exits_with_a_one_line_message_not_a_traceback(monkeypatch, tmp_path, ref):
+    monkeypatch.setattr("routing_ab.STORE", tmp_path)  # never the developer's own shadow store
     monkeypatch.setattr(sys, "argv", ["routing_ab.py", f"--base-ref={ref}"])  # `--base-ref -p` is argparse's own error
     with pytest.raises(SystemExit) as exc:
         main()
     assert f"cannot load routing at {ref!r}" in str(exc.value.code)
+
+
+def test_an_old_routing_file_that_no_longer_imports_exits_with_a_message_too(monkeypatch, tmp_path):
+    def broken(ref):
+        raise ImportError("cannot import name 'gone' from codecheck.core.doccheck")
+
+    monkeypatch.setattr("routing_ab.STORE", tmp_path)
+    monkeypatch.setattr("routing_ab.load_routing", broken)
+    monkeypatch.setattr(sys, "argv", ["routing_ab.py", "--base-ref=v1.0.0"])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert str(exc.value.code) == "error: cannot load routing at 'v1.0.0': ImportError"
 
 
 def test_a_routing_with_fewer_reasons_is_read_without_crashing():
