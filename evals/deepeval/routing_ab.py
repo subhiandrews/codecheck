@@ -1,7 +1,8 @@
 """Routing A/B: run two versions of the reviewer routing on every stored diff and list where the decision changed.
 
 The old version is `core/routing.py` as it is at a git ref (default origin/main), loaded as a separate module; the
-new version is the checkout's. No model, no tokens. It reads the diffs in the shadow store (`CODE_CHECK_SHADOW_STORE`,
+new version is the checkout's. Both run with the default routing settings, not the `review.routing` configuration of
+any user or repository, so the comparison is of the logic alone. No model, no tokens. It reads the diffs in the shadow store (`CODE_CHECK_SHADOW_STORE`,
 default ~/.local/share/code-check/shadow), counts each distinct diff once, and prints or writes only counts, run ids
 and routing reasons (signal names and scores, never code) and, for a diff that cannot be routed, the exception type.
 
