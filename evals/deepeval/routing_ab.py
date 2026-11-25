@@ -54,6 +54,12 @@ def _decide(diff_text: str, route: Callable, cfg: RoutingConfig):
     return len(diffs), route(diffs, languages, cfg)
 
 
+def _reason(routing) -> str:
+    """The performance reason; `route` returns fewer reasons when routing is off, so do not assume three."""
+    reasons = getattr(routing, "reasons", ())
+    return reasons[1] if len(reasons) > 1 else ""
+
+
 def compare(diffs_by_run: Mapping[str, str], old_route: Callable, new_route: Callable, cfg: RoutingConfig) -> dict:
     """Route each distinct diff with both versions. Returns `summary` counts, the `flips` in performance routing and all `rows`."""
     seen: set[str] = set()
@@ -66,16 +72,15 @@ def compare(diffs_by_run: Mapping[str, str], old_route: Callable, new_route: Cal
         try:
             files, old = _decide(text, old_route, cfg)
             _, new = _decide(text, new_route, cfg)
+            rows.append({
+                "run": run, "files": files,
+                "old_performance": old.performance, "new_performance": new.performance,
+                "old_architect": old.architect, "new_architect": new.architect,
+                "old_docs": old.docs, "new_docs": new.docs,
+                "old_reason": _reason(old), "new_reason": _reason(new),
+            })
         except Exception as e:  # noqa: BLE001  (one odd diff must not stop the sweep)
             rows.append({"run": run, "error": repr(e)[:80]})
-            continue
-        rows.append({
-            "run": run, "files": files,
-            "old_performance": old.performance, "new_performance": new.performance,
-            "old_architect": old.architect, "new_architect": new.architect,
-            "old_docs": old.docs, "new_docs": new.docs,
-            "old_reason": old.reasons[1], "new_reason": new.reasons[1],
-        })
     ok = [r for r in rows if "error" not in r]
     summary: Counter = Counter()
     summary["distinct diffs"] = len(ok)
@@ -85,7 +90,8 @@ def compare(diffs_by_run: Mapping[str, str], old_route: Callable, new_route: Cal
         summary["architect changed"] += r["old_architect"] != r["new_architect"]
         summary["docs changed"] += r["old_docs"] != r["new_docs"]
     flips = [r for r in ok if r["old_performance"] != r["new_performance"]]
-    return {"summary": dict(sorted(summary.items())), "flips": flips, "rows": ok}
+    first_error = next((r for r in rows if "error" in r), None)
+    return {"summary": dict(sorted(summary.items())), "flips": flips, "rows": ok, "first_error": first_error}
 
 
 def main() -> None:
@@ -99,6 +105,9 @@ def main() -> None:
     print(f"{len(result['flips'])} performance flips")
     if args.json:
         args.json.write_text(json.dumps(result, indent=1), encoding="utf-8")
+    if result["first_error"]:  # a ref whose routing cannot run here would otherwise look like a clean sweep
+        print(f"error: {result['summary']['errors']} diff(s) could not be routed; first: {result['first_error']}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

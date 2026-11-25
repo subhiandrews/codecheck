@@ -42,10 +42,30 @@ def test_no_difference_means_no_flips_and_a_broken_diff_is_counted_not_fatal():
     assert broken["summary"]["errors"] == 1 and broken["summary"]["distinct diffs"] == 0
 
 
-def test_the_checkout_routing_against_itself_never_flips():
+def test_the_same_routing_on_both_sides_never_flips():
     diffs = {"loop": _diff("a.py", ["for x in xs:", "    for y in ys:", "        pass"]), "small": _diff("b.py", ["z = 1"])}
-    result = compare(diffs, load_routing("HEAD").route, current_route, CFG)
-    assert result["summary"]["distinct diffs"] == 2 and result["flips"] == []
+    result = compare(diffs, current_route, current_route, CFG)
+    assert result["summary"]["distinct diffs"] == 2 and result["flips"] == [] and result["first_error"] is None
+
+
+def test_a_ref_that_holds_a_routing_module_loads_with_a_route_function():
+    assert callable(load_routing("HEAD").route)
+
+
+def test_a_failing_old_routing_is_reported_with_its_first_error():
+    def boom(diffs, languages, cfg):
+        raise RuntimeError("old routing cannot run here")
+
+    result = compare({"r1": _diff("a.py", ["x = 1"])}, boom, _fake(True), CFG)
+    assert result["summary"]["errors"] == 1 and "old routing cannot run here" in result["first_error"]["error"]
+
+
+def test_a_routing_with_fewer_reasons_is_read_without_crashing():
+    def short(diffs, languages, cfg):  # `route` returns one reason when routing is off
+        return SimpleNamespace(performance=False, architect=True, docs=False, reasons=("off",))
+
+    result = compare({"r1": _diff("a.py", ["x = 1"])}, short, short, CFG)
+    assert result["summary"]["errors"] == 0 and result["rows"][0]["old_reason"] == ""
 
 
 @pytest.mark.parametrize("ref", ["", "-p", "--output=x"])
