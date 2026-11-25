@@ -205,7 +205,7 @@ State lives in `state_dir/state.json` (the directory is created readable only by
 
 `core/feedback/` is generic: a `Manifest` (target repository, signal kinds), `Signal` (kind, source, ids, a stable fingerprint), `FeedbackStore` (pending drafts and the ask cooldown in `state.json`, key `feedback:state`), `draft` (a scrubbed, size-capped markdown file under `state_dir/feedback/`) and `Filer` (`gh issue create --body-file -`, deduped by fingerprint, with a prefilled-URL fallback). `commands/feedback.py` is the code-check manifest plus `signal`, `pending` and `answer`. Deterministic producers call `note_feedback` (which swallows every error) in `attempt`, `rerun-check`, `ingest` and `run-pr`; skills may add `--judged` signals. Signals carry names and counts, never PR, repository or comment text.
 
-Nothing is filed without `answer --choice post`, and the filed body is the draft file as the user last saw it. `pending` says `ask` at most once per `feedback.min_interval_hours`, never when `CODE_CHECK_UNATTENDED` or `CODE_CHECK_HEADLESS` is set (headless runs only queue), and not after `never`. The `feedback` skill owns the prompt; `--user-initiated` skips the interval but not the consent. See decision 0053.
+Nothing is filed without `answer --choice post`, and the filed body is the draft file as the user last saw it. `pending` says `ask` at most once per `feedback.min_interval_hours`, never when `CODE_CHECK_UNATTENDED` or `CODE_CHECK_HEADLESS` is set (headless runs only queue), and not after `never`. The `feedback` skill owns the prompt; `--user-initiated` skips the interval, any snooze and `never`, but not the consent. See decision 0053.
 
 ## Safety model
 

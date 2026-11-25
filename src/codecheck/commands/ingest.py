@@ -74,6 +74,6 @@ def run(args, ctx) -> dict:
     stray = sorted(p.name for p in fdir.glob("*.json") if p.name not in expected and p.is_file())
     result = {"valid": valid, "invalid": invalid, "missing": missing, "stray": stray, "incomplete": bool(invalid or missing)}
     write_json(ingest_path, result)
-    if missing or stray:  # member names and a count, no run id or file names: the same failure in another run counts up
-        note_feedback(ctx, "findings-missing", "ingest", missing=",".join(sorted(missing)), stray=len(stray))
+    if missing or stray:  # member names and whether any stray file exists, no run id or file names: the same failure in another run counts up
+        note_feedback(ctx, "findings-missing", "ingest", missing=",".join(sorted(missing)), stray=int(bool(stray)))
     return result

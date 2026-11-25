@@ -9,6 +9,7 @@ from codecheck.shadow.scrub import scrub_text
 
 MAX_VALUE = 500
 KEY = re.compile(r"[a-z][a-z0-9_]{0,29}")
+VALUE = re.compile(r"[A-Za-z0-9][A-Za-z0-9,._-]{0,119}")  # a short label: a space, slash or # would let a name or a sentence in
 SOURCE = re.compile(r"[a-z][a-z0-9-]{0,29}")
 
 
@@ -30,6 +31,8 @@ def make_signal(kind: str, source: str, ids: Mapping[str, str | int], *, judged:
             raise ValueError(f"signal id keys must be plain labels, got {key!r}")
         if isinstance(value, bool) or not isinstance(value, (str, int)):
             raise TypeError(f"signal detail {key!r} must be a string or an integer")
+        if isinstance(value, str) and key != "note" and not VALUE.fullmatch(value):  # only the user's own note may be free text
+            raise ValueError(f"signal id {key!r} must be a short label, never a name or a sentence")
         detail[str(key)] = scrub_text(value)[:MAX_VALUE] if isinstance(value, str) else value
     # The fingerprint covers the kind and every id, so the same failure dedupes across runs while two
     # different reports the user typed (their notes) stay two drafts.

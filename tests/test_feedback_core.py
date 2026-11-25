@@ -44,6 +44,13 @@ def test_keys_and_source_must_be_plain_labels(ids, source):
         make_signal("attempt-exhausted", source, ids)
 
 
+@pytest.mark.parametrize("value", ["owner/repo#5", "has spaces in it", "x" * 121, "-leading", "line\nbreak"])
+def test_id_values_must_be_short_labels_except_the_users_own_note(value):
+    with pytest.raises(ValueError):
+        make_signal("attempt-exhausted", "x", {"step": value})
+    assert make_signal("user-reported", "feedback", {"note": value}).detail["note"]  # the user's own words are theirs to write
+
+
 def test_signal_detail_is_scalar_capped_and_scrubbed():
     s = make_signal("user-reported", "feedback", {"note": "token=abcdef1234567890abcdef " + "x" * 900})
     note = s.detail["note"]

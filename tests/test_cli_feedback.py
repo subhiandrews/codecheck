@@ -190,3 +190,38 @@ def test_min_interval_must_be_a_real_integer(tmp_path):
     (tmp_path / "home" / ".config" / "code-check" / "config.toml").write_text('[feedback]\nmin_interval_hours = "24"\n')
     with pytest.raises(ConfigError, match="wrong type|min_interval_hours"):
         load_config(tmp_path, tmp_path / "home", {})
+
+
+def test_showing_a_draft_uses_up_the_day_even_without_an_answer(tmp_path):
+    ctx = ctx_for(tmp_path)
+    signal(ctx)
+    assert call(ctx, "feedback", "pending", "--interactive")[1]["ask"] is True
+    assert call(ctx, "feedback", "pending", "--interactive")[1] == {"ask": False, "reason": "asked-recently", "drafts": []}
+
+
+def test_a_user_initiated_look_does_not_use_up_the_day(tmp_path):
+    ctx = ctx_for(tmp_path)
+    fp = call(ctx, "feedback", "signal", "--kind", "user-reported", "--source", "feedback", "--note", "x")[1]["fingerprint"]
+    assert call(ctx, "feedback", "pending", "--interactive", "--user-initiated", "--only", fp)[1]["ask"] is True
+    signal(ctx)
+    assert call(ctx, "feedback", "pending", "--interactive")[1]["ask"] is True
+
+
+@pytest.mark.parametrize("choice", ["never", "snooze"])
+def test_never_and_snooze_work_even_when_the_draft_is_already_gone(tmp_path, choice):
+    ctx = ctx_for(tmp_path)
+    code, out = call(ctx, "feedback", "answer", "--id", "abcdef123456", "--choice", choice)
+    assert code == 0 and out["choice"] == choice
+    assert call(ctx, "feedback", "pending", "--interactive")[1]["reason"] in ("never", "nothing-pending")
+    assert call(ctx, "feedback", "answer", "--id", "abcdef123456", "--choice", "decline")[0] != 0
+
+
+def test_id_help_does_not_suggest_names():
+    import argparse
+
+    from codecheck.commands import feedback
+    p = argparse.ArgumentParser()
+    feedback.add_arguments(p)
+    sig = p._subparsers._group_actions[0].choices["signal"]
+    help_text = next(a.help for a in sig._actions if a.dest == "id")
+    assert "pr=" not in help_text and "check=" not in help_text and "label" in help_text

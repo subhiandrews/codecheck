@@ -991,5 +991,5 @@ def test_missing_reviewer_files_record_a_feedback_signal_without_run_specific_id
     call(ctx, "ingest", "--run", out["run_id"])
     [entry] = FeedbackStore(ctx.state).pending()
     assert entry["kind"] == "findings-missing" and entry["detail"]["missing"] == members[0]
-    assert isinstance(entry["detail"]["stray"], int)  # a count, never the names an agent chose for its files
+    assert entry["detail"]["stray"] in (0, 1)  # present or not: a count would split one failure into many fingerprints
     assert "run" not in entry["detail"]  # the same failure in another run counts up instead of filing twice

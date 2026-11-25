@@ -35,12 +35,12 @@ def add_arguments(p) -> None:
     s = sub.add_parser("signal", help="record that something went wrong and write the scratch draft; never prompts")
     s.add_argument("--kind", required=True)
     s.add_argument("--source", required=True, help="the skill or command that noticed it")
-    s.add_argument("--id", action="append", default=[], metavar="KEY=VALUE", help="an identifier such as pr=5 or check=ci; never free text")
+    s.add_argument("--id", action="append", default=[], metavar="KEY=VALUE", help="a short label such as step=push; never a PR, repository or check name, never free text")
     s.add_argument("--note", help="what the user wrote about it (user-reported only); `-` reads it from stdin, which keeps it away from the shell")
     s.add_argument("--judged", action="store_true", help="the model noticed it, no detector in code did")
     d = sub.add_parser("pending", help="whether to ask now, and the drafts to show")
     d.add_argument("--interactive", action="store_true", help="a person is in the session and can answer")
-    d.add_argument("--user-initiated", action="store_true", help="the user asked to file this; skips the daily limit and snooze")
+    d.add_argument("--user-initiated", action="store_true", help="the user asked to file this; skips the daily limit, snooze and never, but not the consent")
     d.add_argument("--only", help="with --user-initiated: the one draft (fingerprint) to show")
     a = sub.add_parser("answer", help="act on the user's answer for one draft")
     a.add_argument("--id", required=True, help="the draft's fingerprint")
@@ -123,6 +123,8 @@ def _pending(args, ctx) -> dict:
             raise CodeCheckError("no such draft; record it first with `feedback signal`")
         return {"ask": True, "reason": "user-initiated", "drafts": [_draft(ctx, m, entry)]}
     ask, reason = store.decide(ctx.config.feedback.min_interval_hours)
+    if ask:  # showing the draft is the ask: a dismissed prompt must not come back in the same day
+        store.mark_asked()
     return {"ask": ask, "reason": reason, "drafts": [_draft(ctx, m, e) for e in store.pending()] if ask else []}
 
 
@@ -131,7 +133,7 @@ def _answer(args, ctx) -> dict:
     if args.choice == "post" and (disabled(ctx) or unattended(ctx)):  # the same gate `pending` applies, enforced where the issue is filed
         raise CodeCheckError("feedback is turned off or this run is unattended; nothing was filed")
     entry = store.get(args.id)
-    if entry is None:
+    if entry is None and args.choice in ("post", "decline"):  # snooze and never need no draft: an opt-out is never lost
         raise CodeCheckError(f"no pending draft {args.id!r}")
     path = _dir(ctx) / f"{args.id}.md"
     out: dict = {"choice": args.choice}
