@@ -991,5 +991,18 @@ def test_missing_reviewer_files_record_a_feedback_signal_without_run_specific_id
     call(ctx, "ingest", "--run", out["run_id"])
     [entry] = FeedbackStore(ctx.state).pending()
     assert entry["kind"] == "findings-missing" and entry["detail"]["missing"] == members[0]
-    assert entry["detail"]["stray"] in (0, 1)  # present or not: a count would split one failure into many fingerprints
+    assert entry["detail"]["stray"] == 1  # aggregator.json is a stray file at this point; present or not, never a count
     assert "run" not in entry["detail"]  # the same failure in another run counts up instead of filing twice
+
+
+def test_a_stray_file_with_nothing_missing_still_records_a_feedback_signal(tmp_path):
+    from codecheck.core.feedback.store import FeedbackStore
+
+    ctx, _provider, pr = pr_setup(tmp_path)
+    out = run_pr_context(ctx, pr)
+    run_dir = Path(out["run_dir"])
+    write_findings(run_dir, {m: [] for m in out["panel"]["members"]})
+    (run_dir / "findings" / "rust-reviewer.json").write_text("[]")  # #105: a reviewer wrote its file under the wrong name
+    call(ctx, "ingest", "--run", out["run_id"])
+    [entry] = FeedbackStore(ctx.state).pending()
+    assert entry["kind"] == "findings-missing" and entry["detail"] == {"missing": "none", "stray": 1}

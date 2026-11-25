@@ -1,4 +1,4 @@
-"""A feedback signal: what went wrong, where, and a stable fingerprint. Detail is ids and short facts, never free text."""
+"""A feedback signal: what went wrong, where, and a stable fingerprint. Ids are short labels, never names or sentences; only a user-reported note is free text."""
 
 import hashlib
 import re

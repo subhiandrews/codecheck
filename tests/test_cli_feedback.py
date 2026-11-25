@@ -225,3 +225,9 @@ def test_id_help_does_not_suggest_names():
     sig = p._subparsers._group_actions[0].choices["signal"]
     help_text = next(a.help for a in sig._actions if a.dest == "id")
     assert "pr=" not in help_text and "check=" not in help_text and "label" in help_text
+
+
+def test_a_bad_id_value_is_a_clean_error_not_a_traceback(tmp_path):
+    ctx = ctx_for(tmp_path)
+    code, out = call(ctx, "feedback", "signal", "--kind", "attempt-exhausted", "--source", "x", "--id", "step=owner/repo#5")
+    assert code != 0 and "short label" in out["error"]

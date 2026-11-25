@@ -75,5 +75,5 @@ def run(args, ctx) -> dict:
     result = {"valid": valid, "invalid": invalid, "missing": missing, "stray": stray, "incomplete": bool(invalid or missing)}
     write_json(ingest_path, result)
     if missing or stray:  # member names and whether any stray file exists, no run id or file names: the same failure in another run counts up
-        note_feedback(ctx, "findings-missing", "ingest", missing=",".join(sorted(missing)), stray=int(bool(stray)))
+        note_feedback(ctx, "findings-missing", "ingest", missing=",".join(sorted(missing))[:120] or "none", stray=int(bool(stray)))
     return result
