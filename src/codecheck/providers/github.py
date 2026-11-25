@@ -22,7 +22,6 @@ from codecheck.runner import CommandResult, CommandRunner
 
 _REMOTE = re.compile(r"[:/]([^/:]+/[^/]+?)(?:\.git)?/?$")
 _RUN_ID = re.compile(r"/actions/runs/(\d+)")
-_JOB_ID = re.compile(r"/job/(\d+)")
 _BUCKET = {"pass": "pass", "fail": "fail", "pending": "pending", "skipping": "skipped", "cancel": "cancelled"}
 # "open" is every open PR of the given repositories, newest first; it never runs without a repository
 _SCOPES = {"review-requested": "--review-requested=@me", "authored": "--author=@me", "open": None}
@@ -254,16 +253,18 @@ class GitHubProvider:
         return out[-_LOG_TAIL_CHARS:]
 
     def rerun_check(self, ref: PRRef, check: Check) -> None:
-        """Rerun just this check's job when its link names one; otherwise the failed jobs of its workflow run."""
+        """Rerun this check's own job, never the whole run: a run-wide rerun would also rerun jobs the PR broke.
+
+        The job id is only taken from a link that names this repository and this run, because a check's link can come
+        from a third party and must not point the rerun at some other job."""
         if not check.run_id:
             raise ProviderError(f"check {check.name!r} has no run to rerun")
         if not _DIGITS.fullmatch(check.run_id):
             raise ProviderError(f"invalid run id {check.run_id!r}")
-        job = _JOB_ID.search(check.link or "")
-        if job:
-            self._gh("run", "rerun", "--job", job.group(1), "--repo", _repo(ref.repo))
-        else:
-            self._gh("run", "rerun", check.run_id, "--repo", _repo(ref.repo), "--failed")
+        job = re.search(rf"/{re.escape(_repo(ref.repo))}/actions/runs/{check.run_id}/job/(\d+)(?:[/?#]|$)", check.link or "")
+        if not job:
+            raise ProviderError(f"check {check.name!r} link names no job; refusing a run-wide rerun")
+        self._gh("run", "rerun", "--job", job.group(1), "--repo", _repo(ref.repo))
 
     def post_review(
         self, ref: PRRef, head_sha: str, body: str, comments: Sequence[ReviewComment], decision: Decision
