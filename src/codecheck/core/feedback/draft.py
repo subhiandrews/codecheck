@@ -6,6 +6,7 @@ from pathlib import Path
 
 from codecheck.core.feedback.manifest import Manifest
 from codecheck.core.state import ensure_private_dir
+from codecheck.errors import CodeCheckError
 from codecheck.shadow.scrub import scrub_text
 
 MARKER = "<!-- feedback-fingerprint: {} -->"
@@ -42,7 +43,13 @@ def write_draft(directory: Path, fingerprint: str, title: str, body: str) -> Pat
 def read_draft(path: Path) -> tuple[str, str]:
     """(title, body) as the file stands now, so an edit the user made is what gets filed."""
     if Path(path).is_symlink():
-        raise OSError(f"{path} is a symlink; refusing to read it")
+        raise CodeCheckError(f"{path} is a symlink; refusing to read it")
     text = Path(path).read_text(encoding="utf-8", errors="replace")  # a stray byte in an edited draft must not break `pending`
     first, _, rest = text.partition("\n")
     return first.removeprefix("# ").strip(), rest.strip("\n")
+
+
+def clear_symlink(path: Path) -> None:
+    """A symlink in the private drafts folder is not ours: remove the link (never its target) so a fresh draft can be written."""
+    if Path(path).is_symlink():
+        Path(path).unlink()

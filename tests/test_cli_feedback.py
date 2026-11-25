@@ -281,3 +281,17 @@ def test_a_user_report_without_a_note_is_also_refused_unattended(tmp_path):
 @pytest.mark.parametrize("bad", ["../x", "abc", "ABCDEF123456", "abcdef12345g"])
 def test_answer_ids_must_be_fingerprints(tmp_path, bad):
     assert call(ctx_for(tmp_path), "feedback", "answer", "--id", bad, "--choice", "never")[0] != 0
+
+
+def test_a_symlinked_draft_is_replaced_not_followed_and_does_not_block_other_drafts(tmp_path):
+    ctx = ctx_for(tmp_path)
+    fp = signal(ctx)[1]["fingerprint"]
+    other = signal(ctx, pr="6")[1]["fingerprint"]
+    target = tmp_path / "precious.txt"
+    target.write_text("do not touch")
+    path = Path(ctx.config.state_dir, "feedback", f"{fp}.md")
+    path.unlink()
+    path.symlink_to(target)
+    out = call(ctx, "feedback", "pending", "--interactive")[1]
+    assert out["ask"] is True and {d["fingerprint"] for d in out["drafts"]} == {fp, other}
+    assert target.read_text() == "do not touch" and not path.is_symlink()

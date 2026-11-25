@@ -9,7 +9,7 @@ from codecheck.core.feedback.manifest import Manifest
 from codecheck.core.feedback.signals import make_signal
 from codecheck.core.feedback.store import FeedbackStore
 from codecheck.core.state import StateStore
-from codecheck.errors import ConfigError
+from codecheck.errors import CodeCheckError, ConfigError
 
 T0 = datetime(2026, 11, 25, 12, 0, tzinfo=UTC)
 M = Manifest(product="code-check", version="1.6.0", target_repo="subhiandrews/codecheck",
@@ -213,5 +213,5 @@ def test_a_draft_that_is_a_symlink_is_never_written_through_or_read(tmp_path):
     with pytest.raises(OSError):
         write_draft(d, "abc123def456", "[code-check] t", "body")
     assert outside.read_text() == "do not touch"
-    with pytest.raises(OSError):
+    with pytest.raises(CodeCheckError):
         read_draft(d / "abc123def456.md")

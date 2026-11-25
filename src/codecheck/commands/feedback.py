@@ -5,7 +5,7 @@ from pathlib import Path
 
 from codecheck import __version__
 from codecheck.config import expand_path
-from codecheck.core.feedback.draft import read_draft, render, write_draft
+from codecheck.core.feedback.draft import clear_symlink, read_draft, render, write_draft
 from codecheck.core.feedback.file import Filer
 from codecheck.core.feedback.manifest import Manifest
 from codecheck.core.feedback.signals import make_signal
@@ -69,6 +69,7 @@ def _dir(ctx) -> Path:
 
 def _draft(ctx, m: Manifest, entry: dict) -> dict:
     path = _dir(ctx) / f"{entry['fingerprint']}.md"
+    clear_symlink(path)
     if not path.exists():
         title, body = render(m, entry["kind"], entry["source"], entry["fingerprint"], entry["detail"],
                              judged=entry["judged"])
@@ -96,6 +97,7 @@ def record(ctx, kind: str, source: str, ids: dict, *, judged: bool = False) -> d
     title, body = render(m, entry["kind"], entry["source"], entry["fingerprint"], entry["detail"],
                          judged=entry["judged"])
     path = _dir(ctx) / f"{entry['fingerprint']}.md"
+    clear_symlink(path)
     if not path.exists():  # a draft the user is editing is never rewritten
         path = write_draft(_dir(ctx), entry["fingerprint"], title, body)
     return {"recorded": True, "fingerprint": entry["fingerprint"], "count": entry["count"], "draft": str(path)}

@@ -14,7 +14,7 @@ from codecheck.shadow.scrub import scrub_text
 
 _FP = re.compile(r"<!-- feedback-fingerprint: ([0-9a-f]{12}) -->")
 GH_TIMEOUT = 60  # seconds: a stalled gh must not hang the session
-URL_MAX = 7000  # GitHub refuses very long URLs; the full text stays in the draft file  # a prefilled URL has a length limit; the full text stays in the draft file
+URL_MAX = 7000  # GitHub refuses very long URLs; the full text stays in the draft file
 
 
 @dataclass(frozen=True, slots=True)
