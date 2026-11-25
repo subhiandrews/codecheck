@@ -212,7 +212,7 @@ def test_never_and_snooze_work_even_when_the_draft_is_already_gone(tmp_path, cho
     ctx = ctx_for(tmp_path)
     code, out = call(ctx, "feedback", "answer", "--id", "abcdef123456", "--choice", choice)
     assert code == 0 and out["choice"] == choice
-    assert call(ctx, "feedback", "pending", "--interactive")[1]["reason"] in ("never", "nothing-pending")
+    assert call(ctx, "feedback", "pending", "--interactive")[1]["reason"] == ("never" if choice == "never" else "nothing-pending")
     assert call(ctx, "feedback", "answer", "--id", "abcdef123456", "--choice", "decline")[0] != 0
 
 
