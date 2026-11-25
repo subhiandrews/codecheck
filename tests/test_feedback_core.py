@@ -113,13 +113,22 @@ def test_snooze_and_never(tmp_path):
     assert s.add(make_signal("attempt-exhausted", "x", {"pr": 2})) is None  # and stops collecting automatic signals
 
 
-def test_a_never_that_lands_between_the_check_and_the_write_still_wins(tmp_path, monkeypatch):
+def test_a_never_that_lands_just_before_the_write_still_wins(tmp_path):
     s, _ = store(tmp_path)
-    s.set_never()
-    monkeypatch.setattr(FeedbackStore, "_get", lambda self: {})  # the unlocked read saw the state from before `never`
+    other = FeedbackStore(StateStore(tmp_path / "state.json"), now=lambda: T0)
+    real_update = s.state.update
+    s.state.update = lambda key, fn: (other.set_never(), real_update(key, fn))[1]  # `never` lands before `add` takes the lock
     assert s.add(make_signal("attempt-exhausted", "x", {"pr": 1})) is None
-    monkeypatch.undo()
-    assert s.pending() == []
+    assert other.pending() == []
+
+
+def test_never_clears_automatic_drafts_but_keeps_what_the_user_wrote(tmp_path):
+    s, _ = store(tmp_path)
+    s.add(make_signal("attempt-exhausted", "x", {"pr": 1}))
+    mine = make_signal("user-reported", "feedback", {"note": "my own report"})
+    s.add(mine)
+    s.set_never()
+    assert [p["fingerprint"] for p in s.pending()] == [mine.fingerprint]
 
 
 def test_user_reported_signals_are_collected_even_after_never(tmp_path):

@@ -87,4 +87,9 @@ class FeedbackStore:
         self._set(snoozed_until=(self.now() + timedelta(days=days)).isoformat())
 
     def set_never(self) -> None:
-        self._set(never=True, pending={})
+        def update(cur):
+            cur = dict(cur or {})
+            cur["never"] = True
+            cur["pending"] = {k: v for k, v in cur.get("pending", {}).items() if v["kind"] == ALWAYS_COLLECTED}
+            return cur
+        self.state.update(KEY, update)

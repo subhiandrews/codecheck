@@ -33,7 +33,7 @@ def test_duplicate_adds_a_short_comment_instead_of_a_new_issue():
     assert "code-check 1.6.0" in comment.input and "hello" not in comment.input
 
 
-@pytest.mark.parametrize("reply", ['["x"]', '[{"number": 3}]', '{"a": 1}', "not json"])
+@pytest.mark.parametrize("reply", ['["x"]', '[{"number": 3}]', '[{"number": "3 --x", "url": "u"}]', '{"a": 1}', "not json"])
 def test_an_odd_gh_search_reply_falls_back_instead_of_raising(reply):
     r = FakeRunner().on(*LIST, stdout=reply)
     assert Filer(r, M).file("[code-check] boom", BODY).outcome == "fallback"
@@ -82,3 +82,19 @@ def test_an_oversized_edited_body_is_capped_and_keeps_its_fingerprint_marker():
     Filer(r, M).file("[code-check] boom", "x" * 50000 + "\n" + marker)
     create = next(c for c in r.calls if c.argv[:3] == ("gh", "issue", "create"))
     assert len(create.input) <= M.max_body_chars and create.input.endswith(marker)
+
+
+def test_every_gh_call_has_a_timeout():
+    class Recording(FakeRunner):
+        def __init__(self):
+            super().__init__()
+            self.timeouts = []
+
+        def run(self, args, *, input=None, cwd=None, timeout=None, env=None):
+            self.timeouts.append(timeout)
+            return super().run(args, input=input, cwd=cwd, timeout=timeout, env=env)
+
+    r = Recording().on(*LIST, stdout=json.dumps([{"number": 3, "url": "https://github.com/o/r/issues/3"}]))
+    r.on("gh", "issue", "comment", "3", "--repo", "o/r", "--body-file", "-")
+    Filer(r, M).file("[code-check] boom", BODY)
+    assert r.timeouts and all(t and t > 0 for t in r.timeouts)

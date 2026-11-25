@@ -104,6 +104,8 @@ def _signal(args, ctx) -> dict:
         key, sep, value = item.partition("=")
         if not sep or not key:
             raise CodeCheckError(f"--id must be KEY=VALUE, got {item!r}")
+        if key == "note":
+            raise CodeCheckError("a note goes in with --note, so the unattended and kind checks apply")
         ids[key] = value
     if args.note is not None:
         if args.kind != "user-reported":
@@ -129,9 +131,10 @@ def _pending(args, ctx) -> dict:
             raise CodeCheckError("no such draft; record it first with `feedback signal`")
         return {"ask": True, "reason": "user-initiated", "drafts": [_draft(ctx, m, entry)]}
     ask, reason = store.decide(ctx.config.feedback.min_interval_hours)
+    drafts = [_draft(ctx, m, e) for e in store.pending()] if ask else []  # built first: a draft that cannot be built must not use up the day
     if ask:  # showing the draft is the ask: a dismissed prompt must not come back in the same day
         store.mark_asked()
-    return {"ask": ask, "reason": reason, "drafts": [_draft(ctx, m, e) for e in store.pending()] if ask else []}
+    return {"ask": ask, "reason": reason, "drafts": drafts}
 
 
 def _answer(args, ctx) -> dict:
@@ -158,9 +161,11 @@ def _answer(args, ctx) -> dict:
         store.snooze(SNOOZE_DAYS)
     else:
         store.set_never()
+        kept = {e["fingerprint"] for e in store.pending()}  # what the user wrote themselves stays
         for f in _dir(ctx).glob("*.md"):
-            with contextlib.suppress(OSError):
-                f.unlink()
+            if f.stem not in kept:
+                with contextlib.suppress(OSError):
+                    f.unlink()
     if not args.user_initiated:
         store.mark_asked()
     return out

@@ -13,6 +13,7 @@ from codecheck.runner import CommandRunner
 from codecheck.shadow.scrub import scrub_text
 
 _FP = re.compile(r"<!-- feedback-fingerprint: ([0-9a-f]{12}) -->")
+GH_TIMEOUT = 60  # seconds: a stalled gh must not hang the session
 URL_BODY_CHARS = 1500  # a prefilled URL has a length limit; the full text stays in the draft file
 
 
@@ -37,14 +38,14 @@ class Filer:
     def _duplicate(self, fingerprint: str) -> list[dict] | None:
         res = self.runner.run(
             ["gh", "issue", "list", "--repo", self.m.target_repo, "--state", "open", "--search", f"{fingerprint} in:body",
-             "--json", "number,url", "--limit", "5"], cwd=self.cwd)
+             "--json", "number,url", "--limit", "5"], cwd=self.cwd, timeout=GH_TIMEOUT)
         if res.returncode != 0:
             return None
         try:
             found = json.loads(res.stdout or "[]")
         except json.JSONDecodeError:
             return None
-        if not isinstance(found, list) or not all(isinstance(i, dict) and "number" in i and "url" in i for i in found):
+        if not isinstance(found, list) or not all(isinstance(i, dict) and type(i.get("number")) is int and isinstance(i.get("url"), str) for i in found):
             return None
         return found
 
@@ -71,10 +72,10 @@ class Filer:
                 number, url = found[0]["number"], found[0]["url"]
                 note = f"Seen again with {self.m.product} {self.m.version}; the reporter agreed to file it."
                 res = self.runner.run(["gh", "issue", "comment", str(number), "--repo", self.m.target_repo, "--body-file", "-"],
-                                      input=note, cwd=self.cwd)
+                                      input=note, cwd=self.cwd, timeout=GH_TIMEOUT)
                 return FileResult("duplicate", url) if res.returncode == 0 else self._fallback(title, body)
         res = self.runner.run(["gh", "issue", "create", "--repo", self.m.target_repo, f"--title={title}", "--body-file", "-"],
-                              input=body, cwd=self.cwd)
+                              input=body, cwd=self.cwd, timeout=GH_TIMEOUT)
         if res.returncode != 0:
             return self._fallback(title, body)
         return FileResult("created", res.stdout.strip().splitlines()[-1] if res.stdout.strip() else "")

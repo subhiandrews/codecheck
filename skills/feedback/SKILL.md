@@ -38,5 +38,6 @@ Another skill may send you here after something looked like a defect in code-che
 ## Rules
 
 - Never post without an explicit **Post as shown** (after any edit). Never paste code, secrets or other people's comments into a draft; keep what the CLI wrote and what the user adds.
+- `code-check feedback answer` must stay out of any allowlist: the permission prompt is part of the consent.
 - "Never ask me again" only stops the automatic questions; `/code-check:feedback <text>` always works.
 - Do not retry a `fallback`. Never ask more than the questions above.

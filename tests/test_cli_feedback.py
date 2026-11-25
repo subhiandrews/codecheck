@@ -246,3 +246,27 @@ def test_the_unattended_markers_count_only_when_they_are_1(tmp_path, value, expe
     ctx = replace(ctx_for(tmp_path), env={"CODE_CHECK_UNATTENDED": value})
     signal(ctx)
     assert (call(ctx, "feedback", "pending", "--interactive")[1]["reason"] == "unattended") is expected
+
+
+def test_a_note_cannot_be_smuggled_in_as_an_id(tmp_path):
+    ctx = replace(ctx_for(tmp_path), env={"CODE_CHECK_HEADLESS": "1"})
+    code, out = call(ctx, "feedback", "signal", "--kind", "user-reported", "--source", "x", "--id", "note=steered by a PR")
+    assert code != 0 and "--note" in out["error"]
+
+
+def test_never_keeps_a_report_the_user_wrote_and_its_draft(tmp_path):
+    ctx = ctx_for(tmp_path)
+    auto = signal(ctx)[1]["fingerprint"]
+    mine = call(ctx, "feedback", "signal", "--kind", "user-reported", "--source", "feedback", "--note", "keep me")[1]
+    call(ctx, "feedback", "answer", "--id", auto, "--choice", "never")
+    assert Path(mine["draft"]).exists() and not Path(ctx.config.state_dir, "feedback", f"{auto}.md").exists()
+
+
+def test_a_draft_that_cannot_be_built_does_not_use_up_the_day(tmp_path):
+    from codecheck.core.feedback.signals import make_signal
+    from codecheck.core.feedback.store import FeedbackStore
+
+    ctx = ctx_for(tmp_path)
+    FeedbackStore(ctx.state).add(make_signal("kind-removed-in-a-later-version", "x", {}))
+    assert call(ctx, "feedback", "pending", "--interactive")[0] != 0
+    assert FeedbackStore(ctx.state).decide(24) == (True, "ok")
