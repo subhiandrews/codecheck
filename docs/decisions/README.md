@@ -67,3 +67,4 @@ Records dated before 2026-11-20 were reconstructed from the original design spec
 - [0046-a-shared-bot-login-is-ours-only-with-our-marker-at-the-end.md](0046-a-shared-bot-login-is-ours-only-with-our-marker-at-the-end.md): A shared bot login is ours only with our marker at the end
 - [0047-address-comments-reviews-its-own-fixes-once-before-pushing.md](0047-address-comments-reviews-its-own-fixes-once-before-pushing.md): address-comments reviews its own fixes once before pushing
 - [0048-address-comments-records-the-findings-its-threads-show.md](0048-address-comments-records-the-findings-its-threads-show.md): Address-comments records the findings its threads show
+- [0049-reviewer-prompts-name-their-own-findings-file.md](0049-reviewer-prompts-name-their-own-findings-file.md): Reviewer prompts name their own findings file
