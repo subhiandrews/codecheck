@@ -124,11 +124,13 @@ def test_ingest_lists_findings_files_that_belong_to_no_panel_member(tmp_path):
     run_dir = Path(out["run_dir"])
     members = out["panel"]["members"]
     write_findings(run_dir, {m: [] for m in members[1:]})
-    write_findings(run_dir, {"aggregator": {"findings": []}})  # the aggregator's file is not a stray
     (run_dir / "findings" / "rust-reviewer.json").write_text("[]")
+    # ingest runs before the aggregator, and `post` reads aggregator.json as the review: a reviewer's file under
+    # that name must show up here too, not be waved through.
+    write_findings(run_dir, {"aggregator": {"findings": []}})
     _code, ing = call(ctx, "ingest", "--run", out["run_id"])
     assert ing["missing"] == [members[0]] and ing["incomplete"] is True
-    assert ing["stray"] == ["rust-reviewer.json"]
+    assert ing["stray"] == ["aggregator.json", "rust-reviewer.json"]
 
 
 def test_ingest_reports_no_stray_files_when_every_file_belongs_to_a_member(tmp_path):
