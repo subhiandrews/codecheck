@@ -70,3 +70,4 @@ Records dated before 2026-11-20 were reconstructed from the original design spec
 - [0049-reviewer-prompts-name-their-own-findings-file.md](0049-reviewer-prompts-name-their-own-findings-file.md): Reviewer prompts name their own findings file
 - [0050-address-comments-reports-failing-ci-babysit-pr-fixes-it.md](0050-address-comments-reports-failing-ci-babysit-pr-fixes-it.md): Address-comments reports failing CI, babysit-pr fixes it
 - [0051-the-address-worktree-is-named-per-clone.md](0051-the-address-worktree-is-named-per-clone.md): The address worktree is named per clone
+- [0052-babysit-pr-reruns-a-flaky-check-once.md](0052-babysit-pr-reruns-a-flaky-check-once.md): babysit-pr reruns a flaky check once

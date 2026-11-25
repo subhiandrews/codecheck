@@ -144,6 +144,19 @@ def test_resolve_can_be_disabled_by_config(tmp_path):
     assert out["resolved"] is False and provider.resolved == []
 
 
+def test_rerun_check_reruns_a_failing_check_and_reports_why_it_could_not(tmp_path):
+    ctx, provider, pr, *_ = own_pr_setup(tmp_path)
+    provider.checks[pr.ref] = [Check("it", "fail", "", "5"), Check("lint", "pass", "", "6")]
+    assert call(ctx, "rerun-check", "--pr", str(pr.ref), "--check", "it")[1] == {"name": "it", "rerun": True}
+    assert provider.rerun == [(pr.ref, "it")]
+    code, out = call(ctx, "rerun-check", "--pr", str(pr.ref), "--check", "lint")  # only a failing check is rerun
+    assert code == 0 and out["rerun"] is False and "not failing" in out["reason"] and len(provider.rerun) == 1
+    assert call(ctx, "rerun-check", "--pr", str(pr.ref), "--check", "nope")[0] == 1
+    provider.rerun_error = "HTTP 500"  # a failed rerun is reported to the skill, not raised
+    code, out = call(ctx, "rerun-check", "--pr", str(pr.ref), "--check", "it")
+    assert code == 0 and out["rerun"] is False and "HTTP 500" in out["reason"]
+
+
 def test_checks_attempts_and_logs(tmp_path):
     ctx, provider, pr, *_ = own_pr_setup(tmp_path, address=AddressConfig(max_ci_attempts=2))
     provider.checks[pr.ref] = [Check("build", "fail", "", "999"), Check("lint", "pass")]

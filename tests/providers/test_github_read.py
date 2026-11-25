@@ -175,6 +175,22 @@ def test_check_log_is_tail_truncated_and_needs_run_id():
     assert gh.get_check_log(REF, Check("lint", "fail", "", None)) == ""
 
 
+def test_rerun_check_reruns_only_the_failed_jobs_of_its_run():
+    runner = FakeRunner().on("gh", "run", "rerun", "999", "--repo", "o/r", "--failed")
+    GitHubProvider(runner).rerun_check(REF, Check("build", "fail", "", "999"))
+    assert runner.argvs() == [("gh", "run", "rerun", "999", "--repo", "o/r", "--failed")]
+
+
+def test_rerun_check_needs_a_valid_run_id_and_shows_a_failed_rerun():
+    gh = GitHubProvider(FakeRunner().on("gh", "run", "rerun", "999", "--repo", "o/r", "--failed", returncode=1, stderr="HTTP 500"))
+    with pytest.raises(ProviderError, match="HTTP 500"):
+        gh.rerun_check(REF, Check("build", "fail", "", "999"))
+    with pytest.raises(ProviderError, match="no run"):
+        gh.rerun_check(REF, Check("lint", "fail", "", None))
+    with pytest.raises(ProviderError):
+        gh.rerun_check(REF, Check("b", "fail", "", "-1"))
+
+
 @pytest.mark.parametrize("bad", ["-x/r", "o/-r", "--repo=evil/r", "o/r --flag", "norepo", ""])
 def test_repo_values_cannot_act_as_options(bad):
     gh = GitHubProvider(FakeRunner())

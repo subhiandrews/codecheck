@@ -252,6 +252,14 @@ class GitHubProvider:
         out = self._gh("run", "view", check.run_id, "--repo", _repo(ref.repo), "--log-failed").stdout
         return out[-_LOG_TAIL_CHARS:]
 
+    def rerun_check(self, ref: PRRef, check: Check) -> None:
+        """Rerun the failed jobs of the workflow run the check belongs to (every failed job of that run, not only this one)."""
+        if not check.run_id:
+            raise ProviderError(f"check {check.name!r} has no run to rerun")
+        if not _DIGITS.fullmatch(check.run_id):
+            raise ProviderError(f"invalid run id {check.run_id!r}")
+        self._gh("run", "rerun", check.run_id, "--repo", _repo(ref.repo), "--failed")
+
     def post_review(
         self, ref: PRRef, head_sha: str, body: str, comments: Sequence[ReviewComment], decision: Decision
     ) -> PostResult:

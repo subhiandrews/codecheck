@@ -302,6 +302,13 @@ class GitLabProvider:
             raise ProviderError(f"invalid run id {check.run_id!r}")
         return self._glab(["api", f"projects/{_pid(ref.repo)}/jobs/{check.run_id}/trace"]).stdout[-_LOG_TAIL_CHARS:]
 
+    def rerun_check(self, ref: PRRef, check: Check) -> None:
+        if not check.run_id:
+            raise ProviderError(f"check {check.name!r} has no job to retry")
+        if not _DIGITS.fullmatch(check.run_id):
+            raise ProviderError(f"invalid run id {check.run_id!r}")
+        self._glab(["api", f"projects/{_pid(ref.repo)}/jobs/{check.run_id}/retry", "--method", "POST"])
+
     def _version(self, ref: PRRef, head_sha: str) -> dict | None:
         """The diff version of this merge request whose head is `head_sha`; inline positions are anchored to it."""
         for v in self._get(f"{self._mr(ref)}/versions"):
