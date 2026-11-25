@@ -270,3 +270,14 @@ def test_a_draft_that_cannot_be_built_does_not_use_up_the_day(tmp_path):
     FeedbackStore(ctx.state).add(make_signal("kind-removed-in-a-later-version", "x", {}))
     assert call(ctx, "feedback", "pending", "--interactive")[0] != 0
     assert FeedbackStore(ctx.state).decide(24) == (True, "ok")
+
+
+def test_a_user_report_without_a_note_is_also_refused_unattended(tmp_path):
+    ctx = replace(ctx_for(tmp_path), env={"CODE_CHECK_HEADLESS": "1"})
+    code, out = call(ctx, "feedback", "signal", "--kind", "user-reported", "--source", "x")
+    assert code != 0 and "unattended" in out["error"]
+
+
+@pytest.mark.parametrize("bad", ["../x", "abc", "ABCDEF123456", "abcdef12345g"])
+def test_answer_ids_must_be_fingerprints(tmp_path, bad):
+    assert call(ctx_for(tmp_path), "feedback", "answer", "--id", bad, "--choice", "never")[0] != 0

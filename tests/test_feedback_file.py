@@ -98,3 +98,9 @@ def test_every_gh_call_has_a_timeout():
     r.on("gh", "issue", "comment", "3", "--repo", "o/r", "--body-file", "-")
     Filer(r, M).file("[code-check] boom", BODY)
     assert r.timeouts and all(t and t > 0 for t in r.timeouts)
+
+
+def test_the_fallback_url_stays_short_even_when_every_character_needs_encoding():
+    r = FakeRunner().on(*LIST, returncode=127)
+    url = Filer(r, M).file("[code-check] boom", "😀😀😀&#% " * 2000 + "\n<!-- feedback-fingerprint: abc123def456 -->").url
+    assert len(url) <= 7000 and url.startswith("https://github.com/o/r/issues/new?title=")

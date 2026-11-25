@@ -32,7 +32,7 @@ def render(m: Manifest, kind: str, source: str, fingerprint: str, detail: Mappin
 def write_draft(directory: Path, fingerprint: str, title: str, body: str) -> Path:
     ensure_private_dir(Path(directory))
     path = Path(directory) / f"{fingerprint}.md"
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)  # never through a planted symlink
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         fh.write(f"# {title}\n\n{body}\n")
     os.chmod(path, 0o600)
@@ -41,6 +41,8 @@ def write_draft(directory: Path, fingerprint: str, title: str, body: str) -> Pat
 
 def read_draft(path: Path) -> tuple[str, str]:
     """(title, body) as the file stands now, so an edit the user made is what gets filed."""
-    text = Path(path).read_text(encoding="utf-8")
+    if Path(path).is_symlink():
+        raise OSError(f"{path} is a symlink; refusing to read it")
+    text = Path(path).read_text(encoding="utf-8", errors="replace")  # a stray byte in an edited draft must not break `pending`
     first, _, rest = text.partition("\n")
     return first.removeprefix("# ").strip(), rest.strip("\n")

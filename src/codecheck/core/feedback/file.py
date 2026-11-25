@@ -14,7 +14,7 @@ from codecheck.shadow.scrub import scrub_text
 
 _FP = re.compile(r"<!-- feedback-fingerprint: ([0-9a-f]{12}) -->")
 GH_TIMEOUT = 60  # seconds: a stalled gh must not hang the session
-URL_BODY_CHARS = 1500  # a prefilled URL has a length limit; the full text stays in the draft file
+URL_MAX = 7000  # GitHub refuses very long URLs; the full text stays in the draft file  # a prefilled URL has a length limit; the full text stays in the draft file
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,8 +32,11 @@ class Filer:
             raise CodeCheckError(f"the issue title is not valid (empty, option-like, multi-line or over {MAX_TITLE} characters)")
 
     def _fallback(self, title: str, body: str) -> FileResult:
-        url = f"https://github.com/{self.m.target_repo}/issues/new?title={quote(title, safe='')}&body={quote(body[:URL_BODY_CHARS], safe='')}"
-        return FileResult("fallback", url)
+        head = f"https://github.com/{self.m.target_repo}/issues/new?title={quote(title, safe='')}&body="
+        text = body
+        while len(head) + len(quote(text, safe="")) > URL_MAX and text:  # percent-encoding can multiply the length several times
+            text = text[: int(len(text) * 0.8)]
+        return FileResult("fallback", head + quote(text, safe=""))
 
     def _duplicate(self, fingerprint: str) -> list[dict] | None:
         res = self.runner.run(

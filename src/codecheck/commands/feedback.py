@@ -1,4 +1,5 @@
 import contextlib
+import re
 import sys
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from codecheck.core.feedback.draft import read_draft, render, write_draft
 from codecheck.core.feedback.file import Filer
 from codecheck.core.feedback.manifest import Manifest
 from codecheck.core.feedback.signals import make_signal
-from codecheck.core.feedback.store import FeedbackStore
+from codecheck.core.feedback.store import ALWAYS_COLLECTED, FeedbackStore
 from codecheck.errors import CodeCheckError
 
 NAME = "feedback"
@@ -83,6 +84,8 @@ def record(ctx, kind: str, source: str, ids: dict, *, judged: bool = False) -> d
         return {"recorded": False, "reason": "disabled"}
     m = manifest_for(ctx)
     m.title_for(kind)
+    if kind == ALWAYS_COLLECTED and unattended(ctx):  # a run steered by PR text must not queue a draft that reads as the user's own report
+        raise CodeCheckError("a user-reported signal cannot be recorded in an unattended run")
     try:
         signal = make_signal(kind, source, ids, judged=judged)
     except (TypeError, ValueError) as e:
@@ -110,8 +113,6 @@ def _signal(args, ctx) -> dict:
     if args.note is not None:
         if args.kind != "user-reported":
             raise CodeCheckError("--note is only for the user-reported kind")
-        if unattended(ctx):  # a run steered by PR text must not queue a draft that reads as the user's own report
-            raise CodeCheckError("a user-reported note cannot be recorded in an unattended run")
         ids["note"] = sys.stdin.read().strip() if args.note == "-" else args.note
     return record(ctx, args.kind, args.source, ids, judged=args.judged)
 
@@ -139,6 +140,8 @@ def _pending(args, ctx) -> dict:
 
 def _answer(args, ctx) -> dict:
     store, m = FeedbackStore(ctx.state), manifest_for(ctx)
+    if not re.fullmatch(r"[0-9a-f]{12}", args.id):  # an id becomes a file name: only a fingerprint is accepted
+        raise CodeCheckError("--id must be a draft fingerprint (12 hex characters)")
     if args.choice == "post" and (disabled(ctx) or unattended(ctx)):  # the same gate `pending` applies, enforced where the issue is filed
         raise CodeCheckError("feedback is turned off or this run is unattended; nothing was filed")
     entry = store.get(args.id)

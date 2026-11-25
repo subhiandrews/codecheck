@@ -190,3 +190,28 @@ def test_write_and_read_draft_roundtrip_with_private_mode(tmp_path):
     assert read_draft(path) == ("[code-check] t", "line1\nline2")
     path.write_text("# edited title\n\nedited body\n")
     assert read_draft(path) == ("edited title", "edited body")
+
+
+def test_a_gitlab_token_in_a_draft_is_scrubbed():
+    from codecheck.shadow.scrub import scrub_text
+
+    assert "glpat-" not in scrub_text("token glpat-" + "a1B2" * 6)
+
+
+def test_a_draft_that_is_not_utf8_is_still_readable(tmp_path):
+    path = write_draft(tmp_path / "fb", "abc123def456", "[code-check] t", "body")
+    path.write_bytes(b"# [code-check] t\n\nbad \xff byte\n")
+    assert read_draft(path)[0] == "[code-check] t"
+
+
+def test_a_draft_that_is_a_symlink_is_never_written_through_or_read(tmp_path):
+    outside = tmp_path / "outside.txt"
+    outside.write_text("do not touch")
+    d = tmp_path / "fb"
+    d.mkdir()
+    (d / "abc123def456.md").symlink_to(outside)
+    with pytest.raises(OSError):
+        write_draft(d, "abc123def456", "[code-check] t", "body")
+    assert outside.read_text() == "do not touch"
+    with pytest.raises(OSError):
+        read_draft(d / "abc123def456.md")
