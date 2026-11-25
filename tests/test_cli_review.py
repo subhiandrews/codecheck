@@ -125,8 +125,7 @@ def test_ingest_lists_findings_files_that_belong_to_no_panel_member(tmp_path):
     members = out["panel"]["members"]
     write_findings(run_dir, {m: [] for m in members[1:]})
     (run_dir / "findings" / "rust-reviewer.json").write_text("[]")
-    # ingest runs before the aggregator, and `post` reads aggregator.json as the review: a reviewer's file under
-    # that name must show up here too, not be waved through.
+    # aggregator.json written by a reviewer must also be listed as stray (see ingest).
     write_findings(run_dir, {"aggregator": {"findings": []}})
     _code, ing = call(ctx, "ingest", "--run", out["run_id"])
     assert ing["missing"] == [members[0]] and ing["incomplete"] is True

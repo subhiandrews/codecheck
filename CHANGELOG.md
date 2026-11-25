@@ -5,7 +5,7 @@ User-visible changes per release, newest first. Earlier releases: `git log`. The
 ## [1.5.2]
 
 ### Fixed
-- Each reviewer's prompt now names its own findings file (`findings/lang-rust.json`, not `findings/<your-name>.json`). Language reviewers sometimes invented a name such as `rust-reviewer.json`, so `ingest` reported them missing and their findings were lost (#105).
+- Reviewers now write findings to their own named file, so language reviewers no longer lose findings to a misnamed file (#105).
 
 ### Added
 - `ingest` lists `stray` findings files that belong to no panel member, so a misnamed file is visible.
