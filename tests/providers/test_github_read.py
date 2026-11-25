@@ -175,7 +175,14 @@ def test_check_log_is_tail_truncated_and_needs_run_id():
     assert gh.get_check_log(REF, Check("lint", "fail", "", None)) == ""
 
 
-def test_rerun_check_reruns_only_the_failed_jobs_of_its_run():
+def test_rerun_check_reruns_only_its_own_job_when_the_link_names_it():
+    link = "https://github.com/o/r/actions/runs/999/job/4242"
+    runner = FakeRunner().on("gh", "run", "rerun", "--job", "4242", "--repo", "o/r")
+    GitHubProvider(runner).rerun_check(REF, Check("build", "fail", link, "999"))
+    assert runner.argvs() == [("gh", "run", "rerun", "--job", "4242", "--repo", "o/r")]
+
+
+def test_rerun_check_falls_back_to_the_failed_jobs_of_the_run_without_a_job_id():
     runner = FakeRunner().on("gh", "run", "rerun", "999", "--repo", "o/r", "--failed")
     GitHubProvider(runner).rerun_check(REF, Check("build", "fail", "", "999"))
     assert runner.argvs() == [("gh", "run", "rerun", "999", "--repo", "o/r", "--failed")]

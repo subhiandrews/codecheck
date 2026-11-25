@@ -5,7 +5,7 @@ User-visible changes per release, newest first. Earlier releases: `git log`. The
 ## [1.5.4]
 
 ### Added
-- `babysit-pr` reruns a failing check it judges unrelated or flaky, once, so a PR is not left red for a merge rule that needs green CI. New command `rerun-check` (GitHub reruns the failed jobs of the run, GitLab retries the job); a refused rerun is reported, not retried (#111).
+- `babysit-pr` reruns a failing check it judges unrelated or flaky, once, so a PR is not left red for a merge rule that needs green CI. New command `rerun-check` (GitHub reruns that check's job, GitLab retries the job); a refused rerun is reported, not retried (#111).
 
 ## [1.5.3]
 
