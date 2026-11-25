@@ -3,7 +3,7 @@
 The old version is `core/routing.py` as it is at a git ref (default origin/main), loaded as a separate module; the
 new version is the checkout's. No model, no tokens. It reads the diffs in the shadow store (`CODE_CHECK_SHADOW_STORE`,
 default ~/.local/share/code-check/shadow), counts each distinct diff once, and prints or writes only counts, run ids
-and routing reasons (signal names and scores, never code).
+and routing reasons (signal names and scores, never code) and, for a diff that cannot be routed, the exception type.
 
 A flip from on to off means the new routing would skip a reviewer the old one ran; off to on means it adds one. Whether
 a flip is right needs the reviewer's findings on that run, which this tool does not judge.
@@ -80,7 +80,7 @@ def compare(diffs_by_run: Mapping[str, str], old_route: Callable, new_route: Cal
                 "old_reason": _reason(old), "new_reason": _reason(new),
             })
         except Exception as e:  # noqa: BLE001  (one odd diff must not stop the sweep)
-            rows.append({"run": run, "error": repr(e)[:80]})
+            rows.append({"run": run, "error": type(e).__name__})  # the type only: a message can quote diff text
     ok = [r for r in rows if "error" not in r]
     summary: Counter = Counter()
     summary["distinct diffs"] = len(ok)
@@ -100,7 +100,11 @@ def main() -> None:
     ap.add_argument("--json", type=Path, help="write the summary, flips and all rows here")
     args = ap.parse_args()
     diffs = {p.stem: p.read_text(errors="replace") for p in sorted(STORE.glob("*.diff"))}
-    result = compare(diffs, load_routing(args.base_ref).route, new_route, RoutingConfig())
+    try:
+        old_route = load_routing(args.base_ref).route
+    except (subprocess.CalledProcessError, ValueError) as e:  # an unknown or option-like ref: say so, no traceback
+        sys.exit(f"error: cannot load routing at {args.base_ref!r}: {type(e).__name__}")
+    result = compare(diffs, old_route, new_route, RoutingConfig())
     print(json.dumps(result["summary"], indent=2))
     print(f"{len(result['flips'])} performance flips")
     if args.json:

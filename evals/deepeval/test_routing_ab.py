@@ -1,7 +1,9 @@
+import json
+import sys
 from types import SimpleNamespace
 
 import pytest
-from routing_ab import compare, load_routing
+from routing_ab import compare, load_routing, main
 
 from codecheck.config import RoutingConfig
 from codecheck.core.routing import route as current_route
@@ -52,12 +54,21 @@ def test_a_ref_that_holds_a_routing_module_loads_with_a_route_function():
     assert callable(load_routing("HEAD").route)
 
 
-def test_a_failing_old_routing_is_reported_with_its_first_error():
+def test_a_failing_old_routing_is_reported_by_exception_type_never_by_message():
     def boom(diffs, languages, cfg):
-        raise RuntimeError("old routing cannot run here")
+        raise RuntimeError("quotes a diff line: password = hunter2")
 
     result = compare({"r1": _diff("a.py", ["x = 1"])}, boom, _fake(True), CFG)
-    assert result["summary"]["errors"] == 1 and "old routing cannot run here" in result["first_error"]["error"]
+    assert result["summary"]["errors"] == 1 and result["first_error"] == {"run": "r1", "error": "RuntimeError"}
+    assert "hunter2" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("ref", ["no-such-ref-anywhere", "-p"])
+def test_an_unusable_base_ref_exits_with_a_one_line_message_not_a_traceback(monkeypatch, ref):
+    monkeypatch.setattr(sys, "argv", ["routing_ab.py", f"--base-ref={ref}"])  # `--base-ref -p` is argparse's own error
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert f"cannot load routing at {ref!r}" in str(exc.value.code)
 
 
 def test_a_routing_with_fewer_reasons_is_read_without_crashing():
