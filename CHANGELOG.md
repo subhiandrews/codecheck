@@ -2,6 +2,11 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.5.3]
+
+### Fixed
+- `babysit-pr` no longer reads `address-comments` stopping at "nothing to address" as the end of its run, so a PR with only a failing CI check is still worked on, and `address-comments` now names failing checks in its report (#106).
+
 ## [1.5.2]
 
 ### Fixed

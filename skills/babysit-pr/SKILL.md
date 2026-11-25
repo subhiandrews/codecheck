@@ -13,7 +13,7 @@ Keeps one of YOUR pull requests moving: review comments first, then failing CI.
 ## With a PR argument
 
 1. Run `code-check checks --pr <PR>` and note `failing`, `attempts` and `max_attempts`.
-2. Invoke the `code-check:address-comments` skill for the PR. It stops by itself with "nothing to address" when there are no actionable threads, and it creates the workspace (`<WS>`) the CI fixes below reuse. If the PR cannot be worked on (closed, fork-based, dirty tree), STOP and report that.
+2. Invoke the `code-check:address-comments` skill for the PR. It stops by itself with "nothing to address" when there are no actionable threads; that stop does not end this run, so go on to step 3. It creates the workspace (`<WS>`) the CI fixes below reuse. If the PR cannot be worked on (closed, fork-based, dirty tree), STOP and report that.
 3. For each failing check, in order:
    a. Run `code-check attempt --pr <PR> --check <name>`. If `exhausted` is true, record "needs a human" and move on.
    b. Run `code-check check-log --pr <PR> --check <name>` and diagnose from the log.
