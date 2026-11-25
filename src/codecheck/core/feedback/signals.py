@@ -31,7 +31,7 @@ def make_signal(kind: str, source: str, ids: Mapping[str, str | int], *, judged:
             raise ValueError(f"signal id keys must be plain labels, got {key!r}")
         if isinstance(value, bool) or not isinstance(value, (str, int)):
             raise TypeError(f"signal detail {key!r} must be a string or an integer")
-        if isinstance(value, str) and key != "note" and not VALUE.fullmatch(value):  # only the user's own note may be free text
+        if isinstance(value, str) and not (key == "note" and kind == "user-reported") and not VALUE.fullmatch(value):  # only the user's own note may be free text
             raise ValueError(f"signal id {key!r} must be a short label, never a name or a sentence")
         detail[str(key)] = scrub_text(value)[:MAX_VALUE] if isinstance(value, str) else value
     # The fingerprint covers the kind and every id, so the same failure dedupes across runs while two

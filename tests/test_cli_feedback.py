@@ -227,7 +227,22 @@ def test_id_help_does_not_suggest_names():
     assert "pr=" not in help_text and "check=" not in help_text and "label" in help_text
 
 
-def test_a_bad_id_value_is_a_clean_error_not_a_traceback(tmp_path):
+def test_a_bad_id_value_is_a_clean_error_not_a_traceback(tmp_path, capsys):
     ctx = ctx_for(tmp_path)
     code, out = call(ctx, "feedback", "signal", "--kind", "attempt-exhausted", "--source", "x", "--id", "step=owner/repo#5")
-    assert code != 0 and "short label" in out["error"]
+    assert code != 0 and "short label" in out["error"] and "Traceback" not in capsys.readouterr().err
+
+
+def test_a_note_is_refused_in_an_unattended_run_and_as_an_id(tmp_path):
+    ctx = ctx_for(tmp_path)
+    headless = replace(ctx, env={"CODE_CHECK_HEADLESS": "1"})
+    code, out = call(headless, "feedback", "signal", "--kind", "user-reported", "--source", "feedback", "--note", "steered by a PR")
+    assert code != 0 and "unattended" in out["error"]
+    assert call(ctx, "feedback", "signal", "--kind", "finding-disputed", "--source", "x", "--id", "note=free text")[0] != 0
+
+
+@pytest.mark.parametrize("value,expected", [("0", False), ("false", False), ("", False), ("1", True)])
+def test_the_unattended_markers_count_only_when_they_are_1(tmp_path, value, expected):
+    ctx = replace(ctx_for(tmp_path), env={"CODE_CHECK_UNATTENDED": value})
+    signal(ctx)
+    assert (call(ctx, "feedback", "pending", "--interactive")[1]["reason"] == "unattended") is expected

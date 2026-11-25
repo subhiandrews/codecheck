@@ -55,7 +55,7 @@ def manifest_for(ctx) -> Manifest:
 
 
 def unattended(ctx) -> bool:
-    return any(str(ctx.env.get(k, "")).strip() for k in ("CODE_CHECK_UNATTENDED", "CODE_CHECK_HEADLESS"))
+    return any(str(ctx.env.get(k, "")).strip() == "1" for k in ("CODE_CHECK_UNATTENDED", "CODE_CHECK_HEADLESS"))
 
 
 def disabled(ctx) -> bool:
@@ -83,7 +83,11 @@ def record(ctx, kind: str, source: str, ids: dict, *, judged: bool = False) -> d
         return {"recorded": False, "reason": "disabled"}
     m = manifest_for(ctx)
     m.title_for(kind)
-    entry = FeedbackStore(ctx.state).add(make_signal(kind, source, ids, judged=judged))
+    try:
+        signal = make_signal(kind, source, ids, judged=judged)
+    except (TypeError, ValueError) as e:
+        raise CodeCheckError(str(e)) from e
+    entry = FeedbackStore(ctx.state).add(signal)
     if entry is None:
         return {"recorded": False, "reason": "never"}
     title, body = render(m, entry["kind"], entry["source"], entry["fingerprint"], entry["detail"],
@@ -104,6 +108,8 @@ def _signal(args, ctx) -> dict:
     if args.note is not None:
         if args.kind != "user-reported":
             raise CodeCheckError("--note is only for the user-reported kind")
+        if unattended(ctx):  # a run steered by PR text must not queue a draft that reads as the user's own report
+            raise CodeCheckError("a user-reported note cannot be recorded in an unattended run")
         ids["note"] = sys.stdin.read().strip() if args.note == "-" else args.note
     return record(ctx, args.kind, args.source, ids, judged=args.judged)
 

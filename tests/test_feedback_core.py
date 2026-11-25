@@ -51,6 +51,12 @@ def test_id_values_must_be_short_labels_except_the_users_own_note(value):
     assert make_signal("user-reported", "feedback", {"note": value}).detail["note"]  # the user's own words are theirs to write
 
 
+def test_only_a_user_reported_signal_may_carry_a_free_text_note():
+    with pytest.raises(ValueError):
+        make_signal("finding-disputed", "x", {"note": "free text about someone's code"}, judged=True)
+    assert make_signal("user-reported", "feedback", {"note": "free text is fine here"}).detail["note"]
+
+
 def test_signal_detail_is_scalar_capped_and_scrubbed():
     s = make_signal("user-reported", "feedback", {"note": "token=abcdef1234567890abcdef " + "x" * 900})
     note = s.detail["note"]
@@ -105,6 +111,15 @@ def test_snooze_and_never(tmp_path):
     assert s.decide(24) == (False, "never")
     assert s.pending() == []  # never clears what was queued
     assert s.add(make_signal("attempt-exhausted", "x", {"pr": 2})) is None  # and stops collecting automatic signals
+
+
+def test_a_never_that_lands_between_the_check_and_the_write_still_wins(tmp_path, monkeypatch):
+    s, _ = store(tmp_path)
+    s.set_never()
+    monkeypatch.setattr(FeedbackStore, "_get", lambda self: {})  # the unlocked read saw the state from before `never`
+    assert s.add(make_signal("attempt-exhausted", "x", {"pr": 1})) is None
+    monkeypatch.undo()
+    assert s.pending() == []
 
 
 def test_user_reported_signals_are_collected_even_after_never(tmp_path):

@@ -26,12 +26,12 @@ class FeedbackStore:
 
     def add(self, signal: Signal) -> dict | None:
         """Record the signal; returns its pending entry, or None when "never ask again" is on (user reports excepted)."""
-        if self._get().get("never") and signal.kind != ALWAYS_COLLECTED:
-            return None
         entry_box: dict = {}
 
         def update(cur):
             cur = dict(cur or {})
+            if cur.get("never") and signal.kind != ALWAYS_COLLECTED:  # checked under the lock: a concurrent "never" wins
+                return cur
             pending = dict(cur.get("pending", {}))
             e = dict(pending.get(signal.fingerprint) or {
                 "fingerprint": signal.fingerprint, "kind": signal.kind, "source": signal.source,
@@ -45,7 +45,7 @@ class FeedbackStore:
             return cur
 
         self.state.update(KEY, update)
-        return entry_box
+        return entry_box or None
 
     def pending(self) -> list[dict]:
         """Deterministic signals first, then the most often seen, then the newest."""
