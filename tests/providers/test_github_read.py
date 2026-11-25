@@ -175,28 +175,43 @@ def test_check_log_is_tail_truncated_and_needs_run_id():
     assert gh.get_check_log(REF, Check("lint", "fail", "", None)) == ""
 
 
-def test_rerun_check_reruns_only_its_own_job_when_the_link_names_it():
-    link = "https://github.com/o/r/actions/runs/999/job/4242"
-    runner = FakeRunner().on("gh", "run", "rerun", "--job", "4242", "--repo", "o/r")
-    GitHubProvider(runner).rerun_check(REF, Check("build", "fail", link, "999"))
-    assert runner.argvs() == [("gh", "run", "rerun", "--job", "4242", "--repo", "o/r")]
+LINK = "https://github.com/o/r/actions/runs/999/job/4242"
 
 
-def test_rerun_check_refuses_when_the_link_does_not_name_a_job_of_this_repo_and_run():
-    """A check link can come from a third party; a rerun may only follow a job of this repo's own run, and never be run-wide."""
-    for link in ("", "https://github.com/o/r/actions/runs/999", "https://ci.example/o/r/actions/runs/111/job/4242",
-                 "https://github.com/x/y/actions/runs/999/job/4242", "https://example.com/deploy/job/77"):
-        runner = FakeRunner()
+def rerun_runner(job_name="build", job_sha="abc123", rerun_rc=0, rerun_err=""):
+    """The PR's head is abc123; job 4242 is what GitHub says it is, whatever the check's link claims."""
+    return (FakeRunner().on_prefix("gh", "pr", "view", "7", stdout=PR_JSON)
+            .on("gh", "api", "repos/o/r/actions/jobs/4242", stdout=json.dumps({"name": job_name, "head_sha": job_sha}))
+            .on("gh", "run", "rerun", "--job", "4242", "--repo", "o/r", returncode=rerun_rc, stderr=rerun_err))
+
+
+def test_rerun_check_reruns_only_its_own_job_after_confirming_it_with_github():
+    runner = rerun_runner()
+    GitHubProvider(runner).rerun_check(REF, Check("build", "fail", LINK, "999"))
+    assert runner.argvs()[-1] == ("gh", "run", "rerun", "--job", "4242", "--repo", "o/r")
+
+
+@pytest.mark.parametrize("name,sha", [("deploy", "abc123"), ("build", "other")])
+def test_rerun_check_refuses_a_job_that_is_not_this_check_on_the_pr_head(name, sha):
+    """A check's link can come from a third party and name any job of this repo, a deploy with secrets for one."""
+    runner = rerun_runner(job_name=name, job_sha=sha)
+    with pytest.raises(ProviderError, match="not this check"):
+        GitHubProvider(runner).rerun_check(REF, Check("build", "fail", "https://ci.example/x/o/r/actions/runs/111/job/4242", "111"))
+    assert not any(a[:3] == ("gh", "run", "rerun") for a in runner.argvs())
+
+
+def test_rerun_check_refuses_a_link_without_a_job_and_never_reruns_the_whole_run():
+    runner = FakeRunner()
+    for link in ("", "https://github.com/o/r/actions/runs/999", "https://example.com/deploy"):
         with pytest.raises(ProviderError, match="names no job"):
             GitHubProvider(runner).rerun_check(REF, Check("build", "fail", link, "999"))
-        assert runner.argvs() == []
+    assert runner.argvs() == []
 
 
 def test_rerun_check_needs_a_valid_run_id_and_shows_a_failed_rerun():
-    link = "https://github.com/o/r/actions/runs/999/job/4242"
-    gh = GitHubProvider(FakeRunner().on("gh", "run", "rerun", "--job", "4242", "--repo", "o/r", returncode=1, stderr="HTTP 500"))
+    gh = GitHubProvider(rerun_runner(rerun_rc=1, rerun_err="HTTP 500"))
     with pytest.raises(ProviderError, match="HTTP 500"):
-        gh.rerun_check(REF, Check("build", "fail", link, "999"))
+        gh.rerun_check(REF, Check("build", "fail", LINK, "999"))
     with pytest.raises(ProviderError, match="no run"):
         gh.rerun_check(REF, Check("lint", "fail", "", None))
     with pytest.raises(ProviderError):

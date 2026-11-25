@@ -22,6 +22,7 @@ from codecheck.runner import CommandResult, CommandRunner
 
 _REMOTE = re.compile(r"[:/]([^/:]+/[^/]+?)(?:\.git)?/?$")
 _RUN_ID = re.compile(r"/actions/runs/(\d+)")
+_JOB_ID = re.compile(r"/job/(\d+)(?:[/?#]|$)")
 _BUCKET = {"pass": "pass", "fail": "fail", "pending": "pending", "skipping": "skipped", "cancel": "cancelled"}
 # "open" is every open PR of the given repositories, newest first; it never runs without a repository
 _SCOPES = {"review-requested": "--review-requested=@me", "authored": "--author=@me", "open": None}
@@ -255,16 +256,20 @@ class GitHubProvider:
     def rerun_check(self, ref: PRRef, check: Check) -> None:
         """Rerun this check's own job, never the whole run: a run-wide rerun would also rerun jobs the PR broke.
 
-        The job id is only taken from a link that names this repository and this run, because a check's link can come
-        from a third party and must not point the rerun at some other job."""
+        A check's link can come from a third party, so it only suggests a job id; GitHub has to confirm that the job has
+        this check's name and ran on the PR's head commit before it is rerun (a deploy job with secrets must not be)."""
         if not check.run_id:
             raise ProviderError(f"check {check.name!r} has no run to rerun")
         if not _DIGITS.fullmatch(check.run_id):
             raise ProviderError(f"invalid run id {check.run_id!r}")
-        job = re.search(rf"/{re.escape(_repo(ref.repo))}/actions/runs/{check.run_id}/job/(\d+)(?:[/?#]|$)", check.link or "")
+        job = _JOB_ID.search(check.link or "")
         if not job:
             raise ProviderError(f"check {check.name!r} link names no job; refusing a run-wide rerun")
-        self._gh("run", "rerun", "--job", job.group(1), "--repo", _repo(ref.repo))
+        job_id = job.group(1)
+        data = self._json("api", f"repos/{_repo(ref.repo)}/actions/jobs/{job_id}") or {}
+        if data.get("name") != check.name or data.get("head_sha") != self.get_pr(ref).head_sha:
+            raise ProviderError(f"job {job_id} is not this check ({check.name!r}) on the PR head; refusing to rerun it")
+        self._gh("run", "rerun", "--job", job_id, "--repo", _repo(ref.repo))
 
     def post_review(
         self, ref: PRRef, head_sha: str, body: str, comments: Sequence[ReviewComment], decision: Decision
