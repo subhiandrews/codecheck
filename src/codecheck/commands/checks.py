@@ -18,7 +18,9 @@ def run(args, ctx) -> dict:
             attempts[c.name] = ctx.state.get(key, 0)
     return {
         "checks": [{"name": c.name, "state": c.state, "link": c.link} for c in checks],
-        "failing": [c.name for c in checks if c.state == "fail"],
+        # once per name: a workflow that ran for two events (pull_request and push) is two checks with one name, and the
+        # attempt counter is per name, so listing it twice spent two attempts on one failure (#106)
+        "failing": list(dict.fromkeys(c.name for c in checks if c.state == "fail")),
         "attempts": attempts,
         "max_attempts": ctx.config.address.max_ci_attempts,
     }
