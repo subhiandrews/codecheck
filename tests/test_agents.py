@@ -219,6 +219,19 @@ def test_docs_agent_is_skeptical_has_no_built_in_cap_and_defers_only_to_explicit
     assert "RUN_DIR/existing-comments.md" in body  # the shared rules still apply
 
 
+def test_every_reviewer_is_told_its_literal_findings_file_name():
+    """#105: `<your-name>` left the file name to the model; some language reviewers wrote `rust-reviewer.json` and
+    `ingest` reported them missing. Each prompt now spells out `findings/<member>.json`, the name `ingest` reads."""
+    files = render_all(ModelsConfig())
+    for filename, text in files.items():
+        member = filename.removesuffix(".md")
+        assert "<your-name>" not in text, member
+        if member == "aggregator":
+            continue
+        assert f"`RUN_DIR/findings/{member}.json`" in text, member
+        assert text.count("findings/") == text.count(f"findings/{member}.json"), member  # no other file name is offered
+
+
 def test_findings_file_is_the_last_step_and_done_needs_it():
     """#64: a reviewer that found nothing must still write `[]`; silence is not an empty list."""
     rendered = {n: t for n, t in render_all(ModelsConfig()).items() if n.endswith(".md") and n != "aggregator.md"}

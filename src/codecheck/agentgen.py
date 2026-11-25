@@ -186,22 +186,28 @@ def render_agent(name: str, description: str, model: str, body: str) -> str:
     return f"---\nname: {name}\ndescription: {description}\ntools: {TOOLS}\nmodel: {model}\n---\n\n{body.rstrip()}\n"
 
 
+def _named(member: str, body: str) -> str:
+    """Spell out the member's own findings file name. `<your-name>` left it to the model, and `ingest` only reads
+    `findings/<member>.json` (#105)."""
+    return body.replace("<your-name>", member)
+
+
 def _reviewer_specs():
     for name, (description, focus) in ROLES.items():
         lifecycle = f"{LIFECYCLE}\n\n" if name in LIFECYCLE_ROLES else ""
-        yield name, description, "reviewers", None, f"{focus}\n\n{lifecycle}{COMMON}"
+        yield name, description, "reviewers", None, _named(name, f"{focus}\n\n{lifecycle}{COMMON}")
     for lang, (display, focus) in LANGUAGE_FOCUS.items():
         lifecycle = f"{LIFECYCLE}\n\n" if lang == "rust" else ""
         body = (f"You are a senior {display} engineer. You own only the {display} files named in your task message. "
                 f"Review them for correctness against {display} and its ecosystem. Focus on: {focus}\n\n"
                 f"{lifecycle}{COMMON}")
         yield (f"lang-{lang}", f"{display} language expert for code-check reviews. Use only when dispatched by a code-check skill.",
-               "language_expert", lang, body)
+               "language_expert", lang, _named(f"lang-{lang}", body))
     for name, role, (description, focus) in (
         ("security", "security", SECURITY), ("performance", "performance", PERFORMANCE), ("doc-skeptic", "docs", DOCS),
         ("deep-reviewer", "deep", DEEP),
     ):
-        yield name, description, role, None, f"{focus}\n\n{COMMON}"
+        yield name, description, role, None, _named(name, f"{focus}\n\n{COMMON}")
     yield ("aggregator", "Aggregates and verifies the review panel's findings. Use only when dispatched by a code-check skill.",
            "aggregator", None, AGGREGATOR)
 

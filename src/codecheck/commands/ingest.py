@@ -67,6 +67,10 @@ def run(args, ctx) -> dict:
         invalid[member] = errors + [e for e in invalid.get(member, []) if e not in errors]
         if member in missing:
             missing.remove(member)
-    result = {"valid": valid, "invalid": invalid, "missing": missing, "incomplete": bool(invalid or missing)}
+    # A reviewer that wrote its findings under another name (#105) is `missing`; naming the file makes that visible.
+    # `aggregator.json` is not exempt: ingest runs before the aggregator, and `post` reads that file as the review.
+    expected = {f"{m}.json" for m in meta["panel"]["members"]}
+    stray = sorted(p.name for p in fdir.glob("*.json") if p.name not in expected and p.is_file())
+    result = {"valid": valid, "invalid": invalid, "missing": missing, "stray": stray, "incomplete": bool(invalid or missing)}
     write_json(ingest_path, result)
     return result

@@ -117,6 +117,30 @@ def test_missing_or_invalid_reviewer_makes_review_incomplete_and_never_approves(
     assert ctx.state.get(f"review:{pr.ref}") is None  # a rerun on the same head is still allowed
 
 
+def test_ingest_lists_findings_files_that_belong_to_no_panel_member(tmp_path):
+    """#105: a reviewer that wrote `rust-reviewer.json` is still `missing`, but the stray file is now visible."""
+    ctx, _provider, pr = pr_setup(tmp_path, review=ReviewConfig(auto_approve=True))
+    out = run_pr_context(ctx, pr)
+    run_dir = Path(out["run_dir"])
+    members = out["panel"]["members"]
+    write_findings(run_dir, {m: [] for m in members[1:]})
+    (run_dir / "findings" / "rust-reviewer.json").write_text("[]")
+    # aggregator.json written by a reviewer must also be listed as stray (see ingest).
+    write_findings(run_dir, {"aggregator": {"findings": []}})
+    _code, ing = call(ctx, "ingest", "--run", out["run_id"])
+    assert ing["missing"] == [members[0]] and ing["incomplete"] is True
+    assert ing["stray"] == ["aggregator.json", "rust-reviewer.json"]
+
+
+def test_ingest_reports_no_stray_files_when_every_file_belongs_to_a_member(tmp_path):
+    ctx, _provider, pr = pr_setup(tmp_path, review=ReviewConfig(auto_approve=True))
+    out = run_pr_context(ctx, pr)
+    run_dir = Path(out["run_dir"])
+    write_findings(run_dir, {m: [] for m in out["panel"]["members"]})
+    _code, ing = call(ctx, "ingest", "--run", out["run_id"])
+    assert ing["stray"] == []
+
+
 def test_second_ingest_keeps_what_the_first_one_found_invalid(tmp_path):
     """#64: the skills run ingest again after re-dispatching `missing` reviewers; that must not forget invalid ones."""
     ctx, _provider, pr = pr_setup(tmp_path, review=ReviewConfig(auto_approve=True))
