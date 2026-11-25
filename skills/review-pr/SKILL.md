@@ -35,7 +35,7 @@ Run `code-check loop --mode review` with the Bash tool's `run_in_background` opt
 
 ## Rules
 
-- Ask no questions, except the replies-only question in step 1, and only when run interactively.
+- Ask no questions, except the replies-only question in step 1 and the feedback hand-off at the end, and only when run interactively.
 - The CLI refuses your own PRs, drafts, closed PRs and already-reviewed heads.
 - Do not edit the PR's code; this skill only reviews.
 

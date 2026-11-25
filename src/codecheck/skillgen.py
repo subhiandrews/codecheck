@@ -38,7 +38,7 @@ SUBSTITUTIONS = {
         (r"\(step 9\)", "(step 7)"),
         (r" A keyword without a PR means repository mode, where it has no effect because configuration controls it\.", ""),
         (r", and `?\(ignored guidance: <reasons>\)`? when any subagent.*\.", "."),
-        (r"Ask no questions, except the replies-only question in step 1, and only when run interactively\.",
+        (r"Ask no questions, except the replies-only question in step 1 and the feedback hand-off at the end, and only when run interactively\.",
          "Ask for a missing PR reference or ask the replies-only question in step 1 when run interactively."),
         QUEUE_RULE,
         FEEDBACK_RULE,

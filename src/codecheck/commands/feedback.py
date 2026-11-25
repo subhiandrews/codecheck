@@ -144,8 +144,8 @@ def _answer(args, ctx) -> dict:
     store, m = FeedbackStore(ctx.state), manifest_for(ctx)
     if not re.fullmatch(r"[0-9a-f]{12}", args.id):  # an id becomes a file name: only a fingerprint is accepted
         raise CodeCheckError("--id must be a draft fingerprint (12 hex characters)")
-    if args.choice == "post" and (disabled(ctx) or unattended(ctx)):  # the same gate `pending` applies, enforced where the issue is filed
-        raise CodeCheckError("feedback is turned off or this run is unattended; nothing was filed")
+    if unattended(ctx) or (args.choice == "post" and disabled(ctx)):  # the gate `pending` applies; an unattended run may not answer for the user, opt-outs included
+        raise CodeCheckError("feedback is turned off or this run is unattended; nothing was recorded or filed")
     entry = store.get(args.id)
     if entry is None and args.choice in ("post", "decline"):  # snooze and never need no draft: an opt-out is never lost
         raise CodeCheckError(f"no pending draft {args.id!r}")

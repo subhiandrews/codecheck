@@ -554,3 +554,9 @@ def test_review_skills_redispatch_members_missing_after_ingest(name):
     after = step.split("`missing`", 1)[1]
     assert "dispatch each of them once more" in after and "Do not retry a second time" in after
     assert after.index("dispatch each of them once more") < after.index("`code-check ingest --run <run_id>` again")
+
+
+def test_review_pr_rules_allow_the_feedback_question_they_now_ask():
+    text = (REPO / "skills/review-pr/SKILL.md").read_text()
+    rules = text.split("## Rules")[1].split("## Feedback")[0]
+    assert "feedback" in rules.lower().split("ask no questions")[1].split("\n")[0]

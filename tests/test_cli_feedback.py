@@ -295,3 +295,12 @@ def test_a_symlinked_draft_is_replaced_not_followed_and_does_not_block_other_dra
     out = call(ctx, "feedback", "pending", "--interactive")[1]
     assert out["ask"] is True and {d["fingerprint"] for d in out["drafts"]} == {fp, other}
     assert target.read_text() == "do not touch" and not path.is_symlink()
+
+
+@pytest.mark.parametrize("choice", ["post", "decline", "snooze", "never"])
+def test_every_answer_is_refused_in_an_unattended_run(tmp_path, choice):
+    ctx = ctx_for(tmp_path)
+    fp = signal(ctx)[1]["fingerprint"]
+    code, out = call(replace(ctx, env={"CODE_CHECK_HEADLESS": "1"}), "feedback", "answer", "--id", fp, "--choice", choice)
+    assert code != 0 and "unattended" in out["error"]
+    assert call(ctx, "feedback", "pending", "--interactive")[1]["ask"] is True  # nothing was recorded, nothing was lost

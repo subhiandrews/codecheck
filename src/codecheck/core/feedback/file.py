@@ -41,16 +41,17 @@ class Filer:
     def _duplicate(self, fingerprint: str) -> list[dict] | None:
         res = self.runner.run(
             ["gh", "issue", "list", "--repo", self.m.target_repo, "--state", "open", "--search", f"{fingerprint} in:body",
-             "--json", "number,url", "--limit", "5"], cwd=self.cwd, timeout=GH_TIMEOUT)
+             "--json", "number,url,body", "--limit", "5"], cwd=self.cwd, timeout=GH_TIMEOUT)
         if res.returncode != 0:
             return None
         try:
             found = json.loads(res.stdout or "[]")
         except json.JSONDecodeError:
             return None
-        if not isinstance(found, list) or not all(isinstance(i, dict) and type(i.get("number")) is int and isinstance(i.get("url"), str) for i in found):
+        if not isinstance(found, list) or not all(isinstance(i, dict) and type(i.get("number")) is int and isinstance(i.get("url"), str) and isinstance(i.get("body"), str) for i in found):
             return None
-        return found
+        marker = f"<!-- feedback-fingerprint: {fingerprint} -->"
+        return [i for i in found if marker in i["body"]]  # the search is fuzzy: only an issue carrying our exact marker is a duplicate
 
     def _prepare(self, title: str, body: str) -> tuple[str, str]:
         """Everything that leaves the machine is scrubbed and capped here, whatever the user typed into the draft."""
@@ -66,9 +67,9 @@ class Filer:
     def file(self, title: str, body: str) -> FileResult:
         self._check_title(title)
         title, body = self._prepare(title, body)
-        match = _FP.search(body)
-        if match:
-            found = self._duplicate(match.group(1))
+        markers = _FP.findall(body)
+        if markers:
+            found = self._duplicate(markers[-1])  # the real marker is the last line; an earlier one in a note must not steer the search
             if found is None:  # gh missing, unauthenticated, or the search failed
                 return self._fallback(title, body)
             if found:
