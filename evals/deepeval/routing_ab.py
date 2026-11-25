@@ -107,7 +107,7 @@ def main() -> None:
     diffs = {p.stem: p.read_text(errors="replace") for p in sorted(STORE.glob("*.diff"))}
     result = compare(diffs, old_route, new_route, RoutingConfig())
     print(json.dumps(result["summary"], indent=2))
-    print(f"{len(result['flips'])} performance flips")
+    print(f"{len(result['flips'])} performance flips (both sides use the default routing settings)")
     if args.json:
         args.json.write_text(json.dumps(result, indent=1), encoding="utf-8")
     if result["first_error"]:  # a ref whose routing cannot run here would otherwise look like a clean sweep
