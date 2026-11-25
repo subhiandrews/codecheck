@@ -7,7 +7,8 @@ User-visible changes per release, newest first. Earlier releases: `git log`. The
 ### Fixed
 - An unattended `babysit-pr` run no longer stops at "worktree has local commits not in the PR head" because another clone of the repository left its address worktree behind: the worktree is now named per clone. Worktrees left under the old name (`addr-<repo>-<n>`) are not reused; remove them by hand (#106).
 - A check that ran for two events (pull_request and push) is listed once in `checks` and counted once by `list-work`, so it no longer spends two of the three CI attempts (#106).
-- `babysit-pr` no longer reads `address-comments` stopping at "nothing to address" as the end of its run, so a PR with only a failing CI check is still worked on, and `address-comments` now names failing checks in its report (#106).
+- `babysit-pr` no longer stops when `address-comments` has nothing to address, so a PR with only a failing check is still worked on (#106).
+- `address-comments` now names failing checks in its report (#106).
 
 ## [1.5.2]
 
