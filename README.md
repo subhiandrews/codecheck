@@ -74,7 +74,7 @@ Every subcommand prints exactly one JSON document, errors included. Run `code-ch
 | Group | Commands |
 |---|---|
 | Review | `precheck`, `sync`, `context [--mode local\|pr] [--pr] [--full] [--security] [--performance]`, `panel run` (Codex), `ingest`, `post`, `cleanup`, `guidance evidence\|apply` |
-| Address comments | `status`, `workspace`, `threads`, `commit`, `push`, `reply`, `resolve`, `request-review`, `checks`, `check-log`, `attempt` |
+| Address comments | `status`, `workspace`, `threads`, `commit`, `push`, `reply`, `resolve`, `request-review`, `checks`, `check-log`, `rerun-check`, `attempt` |
 | Unattended | `list-work`, `mark-done`, `run-pr --mode review\|babysit --pr REF`, `loop --mode review\|babysit` |
 | Setup | `doctor`, `gen-agents --out agents`, `gen-skills --out codex/skills` |
 | Developer | `shadow` (collect, export-golden, record-verdict), `eval --replay\|--live\|--calibrate\|--history` |

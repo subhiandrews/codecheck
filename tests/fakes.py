@@ -77,6 +77,8 @@ class FakeProvider:
         self.thread_calls: list = []
         self.review_calls: list = []
         self.logs: dict[str, str] = {}
+        self.rerun: list[tuple[PRRef, str]] = []
+        self.rerun_error = ""
         self.posted: list[dict] = []
         self.replies: list[tuple[PRRef, str, str]] = []
         self.resolved: list[str] = []
@@ -158,6 +160,11 @@ class FakeProvider:
 
     def get_check_log(self, ref, check):
         return self.logs.get(check.name, "")
+
+    def rerun_check(self, ref, check):
+        if self.rerun_error:
+            raise ProviderError(self.rerun_error)
+        self.rerun.append((ref, check.name))
 
 
 class HybridRunner:

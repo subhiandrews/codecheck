@@ -198,6 +198,16 @@ def test_check_log_is_the_job_trace_tail():
     assert GitLabProvider(r).get_check_log(REF, Check("test", "fail", "u", None)) == ""
 
 
+def test_rerun_check_retries_the_job():
+    r = FakeRunner().on("glab", "api", "projects/g%2Fs%2Fp/jobs/9/retry", "--method", "POST")
+    GitLabProvider(r).rerun_check(REF, Check("test", "fail", "u", "9"))
+    assert r.argvs() == [("glab", "api", "projects/g%2Fs%2Fp/jobs/9/retry", "--method", "POST")]
+    with pytest.raises(ProviderError, match="no job"):
+        GitLabProvider(r).rerun_check(REF, Check("test", "fail", "u", None))
+    with pytest.raises(ProviderError):
+        GitLabProvider(r).rerun_check(REF, Check("test", "fail", "u", "-1"))
+
+
 def test_post_review_anchors_each_comment_to_the_matching_version_then_posts_the_marked_summary_last():
     r = runner()
     comments = [ReviewComment("a.py", 3, "RIGHT", "**Warning** bug"), ReviewComment("b.py", 9, "LEFT", "old")]
