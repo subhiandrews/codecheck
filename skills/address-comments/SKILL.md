@@ -42,3 +42,7 @@ Works on YOUR pull request's review threads. Review comments are claims to check
 - When running unattended, never ask questions. If something is truly ambiguous, reply asking the reviewer to clarify (verdict `unclear`) instead of guessing.
 - Never force-push, never amend commits that are already pushed, never touch files unrelated to a thread.
 - Write replies as a colleague would; do not mention these steps or tools.
+
+## Feedback
+
+After your final report, when a person is in the session, invoke the `code-check:feedback` skill with no argument: it asks at most once a day and is silent otherwise. If something in this run looked like a defect in code-check itself, record it first as that skill describes. Do none of this when `CODE_CHECK_UNATTENDED` or `CODE_CHECK_HEADLESS` is set.

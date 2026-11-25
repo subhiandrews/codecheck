@@ -2,6 +2,11 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.6.0]
+
+### Added
+- Consent-gated feedback: the new `feedback` skill files a GitHub issue about code-check only after you read the exact text and choose to post. It asks at most once a day and never when unattended; `/code-check:feedback <text>` reports on demand. Settings: `[feedback]` (user config only).
+
 ## [1.5.4]
 
 ### Added

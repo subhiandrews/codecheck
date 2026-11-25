@@ -201,6 +201,12 @@ Loop bookkeeping is kept separately from review results. A PR whose headless run
 
 State lives in `state_dir/state.json` (the directory is created readable only by you). Every change to it is a read-modify-write under a short lock (`state.json.lock`), so concurrent processes do not lose each other's updates. A corrupt state file is moved aside to `state.corrupt` and treated as empty rather than crashing the loop. If listing one PR fails (for example a GitHub error), that PR is reported under `skipped` with the reason and the rest of the iteration goes ahead.
 
+## Feedback
+
+`core/feedback/` is generic: a `Manifest` (target repository, signal kinds), `Signal` (kind, source, ids, a stable fingerprint), `FeedbackStore` (pending drafts and the ask cooldown in `state.json`, key `feedback:state`), `draft` (a scrubbed, size-capped markdown file under `state_dir/feedback/`) and `Filer` (`gh issue create --body-file -`, deduped by fingerprint, with a prefilled-URL fallback). `commands/feedback.py` is the code-check manifest plus `signal`, `pending` and `answer`. Deterministic producers call `note_feedback` (which swallows every error) in `attempt`, `rerun-check`, `ingest` and `run-pr`; skills may add `--judged` signals. Signals carry names and counts, never PR, repository or comment text.
+
+Nothing is filed without `answer --choice post`, and the filed body is the draft file as the user last saw it. `pending` says `ask` at most once per `feedback.min_interval_hours`, never when `CODE_CHECK_UNATTENDED` or `CODE_CHECK_HEADLESS` is set (headless runs only queue), and not after `never`. The `feedback` skill owns the prompt; `--user-initiated` skips the interval but not the consent. See decision 0053.
+
 ## Safety model
 
 - Never force-pushes: the git layer has no force option. Pushes happen only after the configured `address.test_command` passes (when set) and only when the remote branch has no commits you lack.

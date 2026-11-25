@@ -977,3 +977,19 @@ def test_context_full_uses_every_reviewer_without_routing(tmp_path):
         assert out["panel"]["full"] is True and out["panel"]["routing"] == ["full: every reviewer, routing skipped"]
         assert meta["models"]["security"] == "opus" and meta["models"]["doc-skeptic"] == "sonnet"
         assert (Path(out["run_dir"]) / "docs-metrics.json").is_file()
+
+
+def test_missing_reviewer_files_record_a_feedback_signal_without_run_specific_ids(tmp_path):
+    from codecheck.core.feedback.store import FeedbackStore
+
+    ctx, _provider, pr = pr_setup(tmp_path)
+    out = run_pr_context(ctx, pr)
+    run_dir = Path(out["run_dir"])
+    members = out["panel"]["members"]
+    write_findings(run_dir, {m: [] for m in members[1:]})  # the first reviewer never wrote its file
+    write_findings(run_dir, {"aggregator": {"findings": []}})
+    call(ctx, "ingest", "--run", out["run_id"])
+    [entry] = FeedbackStore(ctx.state).pending()
+    assert entry["kind"] == "findings-missing" and entry["detail"]["missing"] == members[0]
+    assert isinstance(entry["detail"]["stray"], int)  # a count, never the names an agent chose for its files
+    assert "run" not in entry["detail"]  # the same failure in another run counts up instead of filing twice

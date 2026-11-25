@@ -72,9 +72,33 @@ def test_aliases_stay_tiny_and_name_the_skill_they_delegate_to():
         assert len(text.splitlines()) <= 12 and f"`code-check:{target}`" in text and target in {p.parent.name for p in SKILLS}
 
 
-def test_exactly_the_six_skills():
+def test_exactly_the_seven_skills():
     assert {p.parent.name for p in SKILLS} == {
-        "review-local", "review-pr", "review-prs", "address-comments", "babysit-pr", "babysit-prs"}
+        "review-local", "review-pr", "review-prs", "address-comments", "babysit-pr", "babysit-prs", "feedback"}
+
+
+@pytest.mark.parametrize("name", ["review-local", "review-pr", "address-comments", "babysit-pr"])
+def test_working_skills_hand_off_to_the_feedback_skill_in_one_line(tmp_path, name):
+    text = (REPO / f"skills/{name}/SKILL.md").read_text()
+    section = text.split("## Feedback\n\n")[1].strip()
+    assert "\n" not in section and "invoke the `code-check:feedback` skill with no argument" in section
+    assert "`CODE_CHECK_UNATTENDED` or `CODE_CHECK_HEADLESS`" in section
+
+
+def test_the_feedback_skill_lists_exactly_the_known_signal_kinds():
+    from codecheck.commands.feedback import KINDS
+
+    text = (REPO / "skills/feedback/SKILL.md").read_text()
+    kinds = {k for k in re.findall(r"`([a-z]+(?:-[a-z]+)+)`", text.split("## Recording")[1]) if k in KINDS}
+    assert kinds == set(KINDS) - {"user-reported"}
+
+
+def test_feedback_skill_never_runs_unattended_and_only_posts_on_an_explicit_choice():
+    text = (REPO / "skills/feedback/SKILL.md").read_text()
+    assert "`CODE_CHECK_UNATTENDED` or `CODE_CHECK_HEADLESS`" in text and "Never post without an explicit" in text
+    for choice in ("post", "decline", "snooze", "never"):
+        assert f"--choice {choice}" in text
+    assert '--note "' not in text and "--note -" in text  # the user's words go in on stdin, never inline in the command
 
 
 @pytest.mark.parametrize("path", SKILLS, ids=lambda p: p.parent.name)

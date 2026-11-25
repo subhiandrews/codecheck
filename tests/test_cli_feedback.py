@@ -1,0 +1,192 @@
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+from clihelp import call, make_ctx
+from fakes import FakeRunner
+from gitutil import make_origin_and_clone
+
+from codecheck.config import ConfigError, FeedbackConfig, load_config
+
+pytestmark = pytest.mark.usefixtures("git_env")
+
+LIST_PREFIX = ("gh", "issue", "list", "--repo", "subhiandrews/codecheck")
+
+
+def ctx_for(tmp_path, runner=None, **over):
+    _origin, clone = make_origin_and_clone(tmp_path)
+    return make_ctx(tmp_path, clone, runner=runner, **over)
+
+
+def signal(ctx, kind="attempt-exhausted", **ids):
+    args = ["feedback", "signal", "--kind", kind, "--source", "babysit-pr"]
+    for k, v in (ids or {"pr": "5"}).items():
+        args += ["--id", f"{k}={v}"]
+    return call(ctx, *args)
+
+
+def test_signal_records_a_draft_and_counts_repeats(tmp_path):
+    ctx = ctx_for(tmp_path)
+    code, out = signal(ctx)
+    assert code == 0 and out["recorded"] is True and out["count"] == 1
+    draft = Path(out["draft"])
+    assert draft.exists() and "feedback-fingerprint" in draft.read_text()
+    assert signal(ctx)[1]["count"] == 2 and signal(ctx)[1]["fingerprint"] == out["fingerprint"]
+
+
+def test_unknown_kind_and_bad_id_are_errors(tmp_path):
+    ctx = ctx_for(tmp_path)
+    assert signal(ctx, kind="nope")[0] != 0
+    assert call(ctx, "feedback", "signal", "--kind", "attempt-exhausted", "--source", "x", "--id", "noequals")[0] != 0
+
+
+def test_disabled_config_records_nothing(tmp_path):
+    ctx = ctx_for(tmp_path, feedback=FeedbackConfig(enabled=False))
+    assert signal(ctx)[1] == {"recorded": False, "reason": "disabled"}
+    assert call(ctx, "feedback", "pending", "--interactive")[1]["ask"] is False
+
+
+def test_pending_asks_only_when_interactive_and_not_unattended(tmp_path):
+    ctx = ctx_for(tmp_path)
+    signal(ctx)
+    assert call(ctx, "feedback", "pending")[1] == {"ask": False, "reason": "not-interactive", "drafts": []}
+    unattended = replace(ctx, env={"CODE_CHECK_UNATTENDED": "1"})
+    assert call(unattended, "feedback", "pending", "--interactive")[1]["reason"] == "unattended"
+    out = call(ctx, "feedback", "pending", "--interactive")[1]
+    assert out["ask"] is True and len(out["drafts"]) == 1
+    d = out["drafts"][0]
+    assert d["title"].startswith("[code-check]") and "feedback-fingerprint" in d["body"] and Path(d["path"]).exists()
+
+
+def test_env_kill_switch(tmp_path):
+    ctx = replace(ctx_for(tmp_path), env={"CODE_CHECK_FEEDBACK": "off"})
+    assert signal(ctx)[1] == {"recorded": False, "reason": "disabled"}
+
+
+def test_decline_uses_up_the_day_even_for_a_new_signal(tmp_path):
+    ctx = ctx_for(tmp_path)
+    fp = signal(ctx)[1]["fingerprint"]
+    out = call(ctx, "feedback", "answer", "--id", fp, "--choice", "decline")[1]
+    assert out["choice"] == "decline" and not Path(ctx.config.state_dir, "feedback", f"{fp}.md").exists()
+    signal(ctx, pr="6")
+    assert call(ctx, "feedback", "pending", "--interactive")[1]["reason"] == "asked-recently"
+
+
+def test_snooze_and_never_stop_asking(tmp_path):
+    ctx = ctx_for(tmp_path)
+    fp = signal(ctx)[1]["fingerprint"]
+    call(ctx, "feedback", "answer", "--id", fp, "--choice", "snooze")
+    assert call(ctx, "feedback", "pending", "--interactive")[1]["ask"] is False
+    call(ctx, "feedback", "answer", "--id", fp, "--choice", "never")
+    assert call(ctx, "feedback", "pending", "--interactive")[1]["reason"] == "never"
+    assert signal(ctx, pr="9")[1] == {"recorded": False, "reason": "never"}
+
+
+def test_post_files_the_exact_draft_file_content(tmp_path):
+    runner = FakeRunner()
+    ctx = ctx_for(tmp_path, runner=runner)
+    runner.on_prefix("git")  # unrelated git calls from the fixture repo are not scripted here
+    fp = signal(ctx)[1]["fingerprint"]
+    path = Path(ctx.config.state_dir, "feedback", f"{fp}.md")
+    path.write_text(f"# [code-check] my edited title\n\nmy edited body\n<!-- feedback-fingerprint: {fp} -->\n")
+    runner.on_prefix(*LIST_PREFIX, stdout="[]")
+    runner.on_prefix("gh", "issue", "create", stdout="https://github.com/subhiandrews/codecheck/issues/1\n")
+    out = call(ctx, "feedback", "answer", "--id", fp, "--choice", "post")[1]
+    assert out["outcome"] == "created" and out["url"].endswith("/issues/1")
+    create = next(c for c in runner.calls if c.argv[:3] == ("gh", "issue", "create"))
+    assert create.input == path_text_body(fp) and "--title=[code-check] my edited title" in create.argv
+    signal(ctx, pr="6")  # posting used up the day, so a new signal waits
+    assert call(ctx, "feedback", "pending", "--interactive")[1]["reason"] == "asked-recently"
+    assert not path.exists()
+
+
+def path_text_body(fp):
+    return f"my edited body\n<!-- feedback-fingerprint: {fp} -->"
+
+
+def test_post_failure_keeps_the_draft_and_returns_a_fallback_url(tmp_path):
+    runner = FakeRunner().on_prefix("git")
+    ctx = ctx_for(tmp_path, runner=runner)
+    fp = signal(ctx)[1]["fingerprint"]
+    runner.on_prefix(*LIST_PREFIX, returncode=127, stderr="gh missing")
+    out = call(ctx, "feedback", "answer", "--id", fp, "--choice", "post")[1]
+    assert out["outcome"] == "fallback" and out["url"].startswith("https://github.com/subhiandrews/codecheck/issues/new")
+    assert Path(ctx.config.state_dir, "feedback", f"{fp}.md").exists()
+
+
+def test_user_initiated_bypasses_cooldown_and_never_but_not_consent(tmp_path):
+    runner = FakeRunner().on_prefix("git")
+    ctx = ctx_for(tmp_path, runner=runner)
+    fp0 = signal(ctx)[1]["fingerprint"]
+    call(ctx, "feedback", "answer", "--id", fp0, "--choice", "never")
+    out = call(ctx, "feedback", "signal", "--kind", "user-reported", "--source", "feedback", "--note", "babysit reran wrongly")[1]
+    assert out["recorded"] is True
+    fp = out["fingerprint"]
+    assert call(ctx, "feedback", "pending", "--interactive")[1]["ask"] is False
+    p = call(ctx, "feedback", "pending", "--interactive", "--user-initiated", "--only", fp)[1]
+    assert p["ask"] is True and [d["fingerprint"] for d in p["drafts"]] == [fp]
+    assert "babysit reran wrongly" in p["drafts"][0]["body"]
+    assert not [c for c in runner.calls if c.argv[:2] == ("gh", "issue")]  # nothing filed until `answer --choice post`
+
+
+def test_post_with_unknown_id_is_an_error(tmp_path):
+    assert call(ctx_for(tmp_path), "feedback", "answer", "--id", "abcdef123456", "--choice", "post")[0] != 0
+
+
+def test_repository_config_cannot_set_feedback_keys(tmp_path):
+    (tmp_path / ".code-check.toml").write_text("[feedback]\nenabled = true\n")
+    with pytest.raises(ConfigError, match="feedback"):
+        load_config(tmp_path, tmp_path / "home", {})
+
+
+def test_feedback_config_is_validated(tmp_path):
+    (tmp_path / "home" / ".config" / "code-check").mkdir(parents=True)
+    cfg = tmp_path / "home" / ".config" / "code-check" / "config.toml"
+    cfg.write_text('[feedback]\ntarget_repo = "-bad/repo"\n')
+    with pytest.raises(ConfigError, match="feedback.target_repo"):
+        load_config(tmp_path, tmp_path / "home", {})
+    cfg.write_text("[feedback]\nmin_interval_hours = 0\n")
+    with pytest.raises(ConfigError, match="min_interval_hours"):
+        load_config(tmp_path, tmp_path / "home", {})
+
+
+def test_note_is_read_from_stdin_so_the_shell_never_sees_it(tmp_path):
+    ctx = ctx_for(tmp_path)
+    note = "the `ingest` step failed $(echo hi) \"quoted\""
+    code, out = call(ctx, "feedback", "signal", "--kind", "user-reported", "--source", "feedback", "--note", "-", stdin=note + "\n")
+    assert code == 0 and out["recorded"] is True
+    assert note in Path(out["draft"]).read_text()
+
+
+def test_two_user_reports_are_two_drafts(tmp_path):
+    ctx = ctx_for(tmp_path)
+    a = call(ctx, "feedback", "signal", "--kind", "user-reported", "--source", "feedback", "--note", "first")[1]
+    b = call(ctx, "feedback", "signal", "--kind", "user-reported", "--source", "feedback", "--note", "second")[1]
+    assert a["fingerprint"] != b["fingerprint"] and "second" in Path(b["draft"]).read_text()
+
+
+def test_recording_again_keeps_the_users_edit_of_the_draft(tmp_path):
+    ctx = ctx_for(tmp_path)
+    out = signal(ctx)[1]
+    path = Path(out["draft"])
+    path.write_text("# [code-check] edited\n\nmy words\n")
+    assert signal(ctx)[1]["count"] == 2
+    assert path.read_text() == "# [code-check] edited\n\nmy words\n"
+
+
+@pytest.mark.parametrize("env", [{"CODE_CHECK_FEEDBACK": "off"}, {"CODE_CHECK_UNATTENDED": "1"}, {"CODE_CHECK_HEADLESS": "1"}])
+def test_answer_post_is_refused_when_feedback_is_off_or_unattended(tmp_path, env):
+    runner = FakeRunner().on_prefix("git")
+    ctx = ctx_for(tmp_path, runner=runner)
+    fp = signal(ctx)[1]["fingerprint"]
+    code, out = call(replace(ctx, env=env), "feedback", "answer", "--id", fp, "--choice", "post")
+    assert code != 0 and "error" in out
+    assert not [c for c in runner.calls if c.argv[:2] == ("gh", "issue")]
+    assert Path(ctx.config.state_dir, "feedback", f"{fp}.md").exists()  # nothing was lost
+
+
+def test_min_interval_must_be_a_real_integer(tmp_path):
+    (tmp_path / "home" / ".config" / "code-check").mkdir(parents=True)
+    (tmp_path / "home" / ".config" / "code-check" / "config.toml").write_text('[feedback]\nmin_interval_hours = "24"\n')
+    with pytest.raises(ConfigError, match="wrong type|min_interval_hours"):
+        load_config(tmp_path, tmp_path / "home", {})

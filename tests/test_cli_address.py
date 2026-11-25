@@ -550,3 +550,42 @@ def test_status_ignores_the_checkout_when_unattended(tmp_path):
     assert call(ctx, "status", "--pr", str(pr.ref))[1]["on_pr_branch"] is True
     ctx.env = {"CODE_CHECK_UNATTENDED": "1"}
     assert call(ctx, "status", "--pr", str(pr.ref))[1]["on_pr_branch"] is False
+
+
+def _pending_kinds(ctx):
+    from codecheck.core.feedback.store import FeedbackStore
+
+    return sorted(e["kind"] for e in FeedbackStore(ctx.state).pending())
+
+
+def test_exhausted_ci_attempts_record_a_feedback_signal_once_per_failure_shape(tmp_path):
+    ctx, _provider, pr, *_ = own_pr_setup(tmp_path, address=AddressConfig(max_ci_attempts=1))
+    assert call(ctx, "attempt", "--pr", str(pr.ref), "--check", "it")[1]["exhausted"] is False
+    assert _pending_kinds(ctx) == []
+    assert call(ctx, "attempt", "--pr", str(pr.ref), "--check", "it")[1]["exhausted"] is True
+    assert _pending_kinds(ctx) == ["attempt-exhausted"]
+
+
+def test_a_refused_rerun_records_a_feedback_signal_but_a_non_failing_check_does_not(tmp_path):
+    ctx, provider, pr, *_ = own_pr_setup(tmp_path)
+    provider.checks[pr.ref] = [Check("it", "fail", "", "5"), Check("lint", "pass", "", "6")]
+    call(ctx, "rerun-check", "--pr", str(pr.ref), "--check", "lint")
+    assert _pending_kinds(ctx) == []
+    provider.rerun_error = "HTTP 500"
+    call(ctx, "rerun-check", "--pr", str(pr.ref), "--check", "it")
+    assert _pending_kinds(ctx) == ["rerun-refused"]
+    from codecheck.core.feedback.store import FeedbackStore
+
+    assert FeedbackStore(ctx.state).pending()[0]["detail"] == {}  # the host's text can name a private repository
+
+
+def test_feedback_recording_failing_never_changes_the_command_result(tmp_path, monkeypatch, capsys):
+    ctx, _provider, pr, *_ = own_pr_setup(tmp_path, address=AddressConfig(max_ci_attempts=0))
+
+    def boom(*a, **k):
+        raise RuntimeError("store exploded")
+
+    monkeypatch.setattr("codecheck.commands.feedback.record", boom)
+    code, out = call(ctx, "attempt", "--pr", str(pr.ref), "--check", "it")
+    assert code == 0 and out == {"attempt": 1, "exhausted": True}
+    assert "warning: feedback recording failed" in capsys.readouterr().err
