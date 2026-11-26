@@ -8,7 +8,7 @@ does, in isolated state. Findings are scored against the human comments recorded
 `anchor_recall` counts the anchor only). Nothing is posted and the user's own clones, state and shadow store are never
 touched. Use `--dry-run` to rebuild and check every case without calling a model.
 
-    python -m codecheck.evals.replay manifest|from-git|seed|run --help
+    python -m codecheck.evals.replay manifest|from-git|seed|run|compare --help
 
 The commands and options are described in the "PR replay" section of docs/MAINTAINING.md.
 """
@@ -29,6 +29,7 @@ from codecheck.core.existing import ExistingComment, ExistingThread
 from codecheck.core.render import render_existing
 from codecheck.errors import CodeCheckError
 from codecheck.evals import live
+from codecheck.evals.compare import MIN_RUNS, compare_arms, load_results
 from codecheck.models import is_service_login
 from codecheck.runner import run_checked
 from codecheck.shadow.store import ShadowStore
@@ -570,6 +571,10 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("seed", help="give each later case the earlier cases' findings as existing comments (no model; prints JSON)")
     s.add_argument("cases", type=Path)
     s.add_argument("results", type=Path, help="the --out file of an earlier run of these cases, one JSON line per case")
+    c = sub.add_parser("compare", help="compare two arms' run results, each case run several times (no model; prints JSON)")
+    c.add_argument("a", type=Path, help="the --out file of arm A")
+    c.add_argument("b", type=Path, help="the --out file of arm B")
+    c.add_argument("--min-runs", type=_non_negative(int), default=MIN_RUNS, help="runs per arm and case before a verdict")
     r = sub.add_parser("run", help="rebuild each case and review it (costs tokens unless --dry-run)")
     r.add_argument("cases", type=Path)
     r.add_argument("--dry-run", action="store_true", help="rebuild and check every case; no model")
@@ -583,6 +588,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--out", type=Path, default=None, help="append one JSON line per case here")
     args = parser.parse_args(argv)
     try:
+        if args.command == "compare":
+            print(json.dumps(compare_arms(load_results(args.a), load_results(args.b), min_runs=args.min_runs), indent=2))
+            return 0
         ctx = _context()
         if args.command == "from-git":
             try:
