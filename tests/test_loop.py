@@ -595,3 +595,12 @@ def test_an_answered_suggestion_does_not_stop_a_pr_from_settling(tmp_path):
     provider.threads[pr.ref][0] = replace(answered, comments=(*answered.comments, ours))
     out = call(ctx, "loop", "--mode", "babysit")[1]
     assert out["processed"] == 0 and claude_calls(fake) == [] and "ready for you to merge" in out["skipped"][0]["reason"]
+
+
+def test_answered_suggestions_still_count_toward_the_open_thread_limit(tmp_path):
+    ctx, provider, _fake, pr = _babysit_setup(tmp_path, "Suggestion", "Suggestion", "Suggestion", rounds=1)
+    for i in (0, 1):
+        old = provider.threads[pr.ref][i]
+        ours = ThreadComment(10 + i, "me", "declined", "2026-01-02T00:00:00Z")
+        provider.threads[pr.ref][i] = replace(old, comments=(*old.comments, ours))
+    assert call(ctx, "loop", "--mode", "babysit")[1]["processed"] == 1

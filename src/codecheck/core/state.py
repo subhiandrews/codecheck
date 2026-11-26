@@ -305,21 +305,18 @@ def settled(threads: Sequence[Thread], checks: Sequence[Check], me: str, rounds:
 
     if rounds < 1 or any(c.state == "fail" for c in checks):
         return None
-    open_ = actionable_threads(threads, me)
-    if len(open_) >= min_open:
+    live = [t for t in threads if not t.is_resolved and not t.is_outdated and t.comments]
+    if len(live) >= min_open:
         return None
-    waiting = {t.id for t in open_}
-    for t in threads:
-        # An open thread we already answered needs no work, but it still has to be a Suggestion of the bot's.
-        if t.is_resolved or t.is_outdated or not t.comments:
-            continue
+    waiting = {t.id for t in actionable_threads(threads, me)}
+    for t in live:
         first = t.comments[0]
         parsed = parse_comment(first.body)
         if parsed is None or parsed["severity"] != "suggestion" or not FINDING_MARKER.search(first.body) or not first.is_bot:
             return None
         if t.id in waiting and not all(c.is_bot for c in t.comments):
             return None
-    return f"{len(open_)} suggestion(s) left after round {rounds}: ready for you to merge"
+    return f"{len(live)} suggestion(s) left after round {rounds}: ready for you to merge"
 
 
 def select_work(items: Sequence[WorkItem], state: StateStore, mode: str, limit: int) -> list[WorkItem]:
