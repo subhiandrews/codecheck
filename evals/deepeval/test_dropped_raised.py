@@ -70,6 +70,15 @@ def test_a_reason_or_line_that_is_not_text_does_not_stop_the_ledger():
     assert result["dropped_by_reason"] == {"unknown": 2}
 
 
+def test_reviewers_come_from_the_drop_itself_and_only_text_is_kept():
+    first = {**DROPPED, "reviewers": ["lang-go", None, 3]}
+    second = {**DROPPED, "reviewers": ["skeptic"]}  # same file, line and reason as the first
+    third = {**DROPPED, "line": 150, "reviewers": "skeptic"}  # a bare string is not a list of names
+    result = ledger([_handoff("r1", [_comment("compat subscriptions owned by the root injector")], dropped=[first, second, third])])
+    assert [h["reviewers"] for h in result["hits"]] == [["lang-go"], ["skeptic"], []]
+    assert "lang-go" in "\n".join(summary(result))
+
+
 def test_summary_and_main_read_the_store(tmp_path, capsys):
     folder = tmp_path / "r1.handoff"
     folder.mkdir()

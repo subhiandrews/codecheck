@@ -1,7 +1,7 @@
 """Which findings the aggregator dropped were later raised by a person? Evidence only: no model, no tokens, nothing changes.
 
 Reads the hand-offs in the shadow store. For each human comment that no kept finding matched by location, it takes the
-comment's `related` findings (recomputed with `related_findings` when the hand-off predates that field) and keeps the
+comment's `related` findings (always recomputed with `related_findings`, uncapped, since the stored list keeps only 3) and keeps the
 dropped ones. The result is a ledger by drop reason: how many drops there were, and which of them a person's comment
 looks like (a pointer to read, not a verdict; a human raising something does not make the drop wrong).
 
@@ -46,23 +46,24 @@ def _reason(item: dict) -> str:
     return reason if isinstance(reason, str) and reason else "unknown"
 
 
+def _reviewers(item: dict) -> list[str]:
+    """The reviewers who raised a dropped finding; the aggregator's list is stored as written, so keep only text."""
+    names = item.get("reviewers")
+    return [n for n in names if isinstance(n, str)] if isinstance(names, list) else []
+
+
 def _dropped_hits(handoff: dict) -> list[dict]:
     """One row per (human comment, dropped finding) pair the comment looks related to."""
-    kept, dropped = _dicts(handoff.get("findings")), _dicts(handoff.get("dropped"))
+    dropped = _dicts(handoff.get("dropped"))
     rows = []
     for c in handoff["comparison"].get("human_comments") or []:
         if c.get("matched_finding"):
             continue
-        # Recomputed without the cap: the stored `related` keeps only 3, and kept findings come first.
-        related = related_findings(c.get("body") or "", c.get("path"), kept, dropped, limit=None)
-        for r in related:
-            if r.get("kind") != "dropped":
-                continue
-            twin = next((d for d in dropped if d.get("file") == r.get("file") and d.get("line") == r.get("line")
-                         and d.get("reason") == r.get("reason")), {})
-            rows.append({"run_id": handoff.get("run_id"), "pr": handoff.get("pr"), "reason": _reason(r),
-                         "file": r.get("file"), "line": r.get("line"), "reviewers": twin.get("reviewers") or [],
-                         "comment_author": c.get("author"), "comment_line": c.get("line"), "shared": r.get("shared")})
+        for d in dropped:  # each drop on its own: the stored `related` keeps only 3, and carries no reviewers
+            for r in related_findings(c.get("body") or "", c.get("path"), [], [d], limit=None):
+                rows.append({"run_id": handoff.get("run_id"), "pr": handoff.get("pr"), "reason": _reason(r),
+                             "file": r.get("file"), "line": r.get("line"), "reviewers": _reviewers(d),
+                             "comment_author": c.get("author"), "comment_line": c.get("line"), "shared": r.get("shared")})
     return rows
 
 
