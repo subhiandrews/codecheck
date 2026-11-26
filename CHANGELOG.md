@@ -5,7 +5,7 @@ User-visible changes per release, newest first. Earlier releases: `git log`. The
 ## [1.6.1]
 
 ### Fixed
-- `rerun-check` on GitHub now also requires GitHub to report the job's own conclusion as `failure`, so a stale check list can no longer rerun a job that has since passed, been cancelled or is still running.
+- `rerun-check` on GitHub no longer reruns a job that did not fail or time out (passed, cancelled or still running).
 
 ## [1.6.0]
 

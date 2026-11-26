@@ -200,11 +200,19 @@ def test_rerun_check_refuses_a_job_that_is_not_this_check_on_the_pr_head(name, s
     assert not any(a[:3] == ("gh", "run", "rerun") for a in runner.argvs())
 
 
+@pytest.mark.parametrize("conclusion", ["failure", "timed_out"])
+def test_rerun_check_reruns_a_job_that_failed_or_timed_out(conclusion):
+    """gh puts a timed-out job in the fail bucket, and a hung job is a typical flaky case."""
+    runner = rerun_runner(conclusion=conclusion)
+    GitHubProvider(runner).rerun_check(REF, Check("build", "fail", LINK, "999"))
+    assert runner.argvs()[-1] == ("gh", "run", "rerun", "--job", "4242", "--repo", "o/r")
+
+
 @pytest.mark.parametrize("conclusion", ["success", "cancelled", "skipped", None])
 def test_rerun_check_refuses_a_job_that_did_not_fail(conclusion):
     """The check list can be stale: GitHub must say this job itself failed, not passed, still run, or was cancelled."""
     runner = rerun_runner(conclusion=conclusion)
-    with pytest.raises(ProviderError, match="did not fail"):
+    with pytest.raises(ProviderError, match="did not fail or time out"):
         GitHubProvider(runner).rerun_check(REF, Check("build", "fail", LINK, "999"))
     assert not any(a[:3] == ("gh", "run", "rerun") for a in runner.argvs())
 
