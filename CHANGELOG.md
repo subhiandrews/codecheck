@@ -2,6 +2,11 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.7.1]
+
+### Changed
+- With `shadow.handoff` on, the hand-off lists same-file findings that look like the same concern next to each human comment it could not match.
+
 ## [1.7.0]
 
 ### Added
