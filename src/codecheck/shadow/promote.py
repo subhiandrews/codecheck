@@ -56,6 +56,18 @@ def _signals(shadow: ShadowStore, run_id: str):
     return {**{k: v for k, v in signals.items() if k not in ("ignored_guidance",)}, "tool_errors": errors}
 
 
+def _handoff_findings(shadow: ShadowStore, run_id: str) -> list[dict]:
+    """The findings the hand-off recorded as kept, for a run whose store has no `finding` records."""
+    path = shadow.root / f"{run_id}.handoff" / "handoff.json"
+    if path.is_symlink() or not path.is_file():
+        return []
+    try:
+        found = json.loads(path.read_text(encoding="utf-8")).get("findings")
+    except (OSError, ValueError, AttributeError):
+        return []
+    return [f for f in found if isinstance(f, dict) and isinstance(f.get("id"), str)] if isinstance(found, list) else []
+
+
 def _pr_number(pr) -> int | None:
     number = str(pr or "").rpartition("#")[2]
     return int(number) if number.isdigit() else None
@@ -76,11 +88,14 @@ def draft_case(shadow: ShadowStore, run_id: str) -> dict:
     root = raw.get("root") if isinstance(raw.get("root"), str) else None
     view = posted_view(raw["aggregator"], diff, root=root)  # as `post` saw it; raises on invalid output
     outcomes, humans = run_feedback(shadow).get(run_id, ({}, {}))
+    posted = [r for r in records if r.get("type") == "finding" and isinstance(r.get("id"), str)]
+    # a local review posts nothing, so the store has no `finding` records: the hand-off lists what it kept
+    findings = posted or _handoff_findings(shadow, run_id)
     labels = [
         {"id": r["id"], "file": _clean_path(str(r.get("file")), root), "line": r.get("line"), "severity": r.get("severity"),
          "category": r.get("category"), "message": r.get("message"),
          "label": _LABELS.get(finding_label(r["id"], outcomes, humans), "unlabelled")}
-        for r in records if r.get("type") == "finding" and isinstance(r.get("id"), str)
+        for r in findings
     ]
     repo, head_sha, number = run.get("repo"), run.get("head_sha"), _pr_number(run.get("pr"))
     reviewers = raw.get("reviewers") if isinstance(raw.get("reviewers"), dict) else {}

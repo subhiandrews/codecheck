@@ -2,6 +2,11 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.6.2]
+
+### Fixed
+- `shadow promote --run` on a local review now lists the findings its hand-off kept, so they can be labelled. Before, the draft had none.
+
 ## [1.6.1]
 
 ### Fixed
