@@ -2,6 +2,11 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.7.3]
+
+### Changed
+- Guidance learning counts a `preference` verdict like an incorrect one, so a kind of suggestion (never security) you keep declining as taste can become a proposed `CODE_CHECK.md` rule. The golden export is unchanged; `dispute_rate` now counts those findings, so earlier baselines are not comparable.
+
 ## [1.7.2]
 
 ### Changed

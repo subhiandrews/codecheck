@@ -19,6 +19,7 @@ from codecheck.core.learn import (
     gather,
 )
 from codecheck.runids import new_run_id
+from codecheck.shadow.export import _label
 from codecheck.shadow.store import ShadowStore
 from codecheck.vcs.git import Git
 
@@ -29,7 +30,7 @@ SECRET = "ghp_" + "a" * 30
 
 
 def seed(shadow, pr, findings=(), humans=(), repo=REPO):
-    """One run on `pr`. findings: (id, file, category, label) with label disputed|confirmed|none; humans: (path, body, matches)."""
+    """One run on `pr`. findings: (id, file, category, label) with label disputed|preference|confirmed|none; humans: (path, body, matches)."""
     rid = new_run_id()
     shadow.append(rid, {"type": "run", "repo": repo, "pr": f"{repo}#{pr}"})
     for i, (fid, file, category, label) in enumerate(findings):
@@ -40,7 +41,7 @@ def seed(shadow, pr, findings=(), humans=(), repo=REPO):
         tid = f"t-{rid}-{i}"
         shadow.append(rid, {"type": "outcome", "finding_id": fid, "thread_id": tid, "resolved": False, "outdated": False,
                             "replies": [], "reactions": {}})
-        shadow.append(rid, {"type": "verdict", "thread_id": tid, "verdict": "incorrect" if label == "disputed" else "valid"})
+        shadow.append(rid, {"type": "verdict", "thread_id": tid, "verdict": {"disputed": "incorrect", "preference": "preference"}.get(label, "valid")})
     for j, (path, body, matches) in enumerate(humans):
         shadow.append(rid, {"type": "human_comment", "thread_id": f"h-{rid}-{j}", "path": path, "line": 1, "author": "bob",
                             "body": body, "matches_finding": matches})
@@ -60,6 +61,43 @@ def test_a_category_disputed_in_two_prs_is_evidence_and_in_one_pr_is_not(shadow)
     assert ev["proposable"] is True
     assert [(d["category"], d["prs"], d["confirmed_prs"]) for d in ev["disputed"]] == [("style", 2, 0)]
     assert ev["disputed"][0]["examples"][0]["message"] == "style problem in app/x.py"
+
+
+def test_a_preference_verdict_counts_as_a_dispute_for_learning(shadow):
+    seed(shadow, 1, [("a1", "docs/x.md", "docs", "preference")])
+    assert gather(shadow, REPO, "")["proposable"] is False  # one PR is not a pattern
+    seed(shadow, 2, [("a2", "docs/y.md", "docs", "preference")])
+    ev = gather(shadow, REPO, "")
+    assert [(d["category"], d["prs"]) for d in ev["disputed"]] == [("docs", 2)]
+    assert ev["stats"]["disputed"] == 2
+
+
+def test_a_preference_verdict_beats_a_resolve(shadow):
+    for pr in (1, 2):  # the author declined it as taste and the reviewer then resolved the thread
+        rid = new_run_id()
+        shadow.append(rid, {"type": "run", "repo": REPO, "pr": f"{REPO}#{pr}"})
+        shadow.append(rid, {"type": "finding", "id": f"r{pr}", "file": "docs/x.md", "category": "docs", "severity": "suggestion", "message": "m"})
+        shadow.append(rid, {"type": "outcome", "finding_id": f"r{pr}", "thread_id": f"t{pr}", "resolved": True, "outdated": False, "replies": [], "reactions": {}})
+        shadow.append(rid, {"type": "verdict", "thread_id": f"t{pr}", "verdict": "preference"})
+    assert [d["category"] for d in gather(shadow, REPO, "")["disputed"]] == ["docs"]
+
+
+def test_a_preference_verdict_is_not_a_dispute_when_a_person_raised_the_same_point(shadow):
+    for pr in (1, 2):
+        seed(shadow, pr, [(f"h{pr}", "docs/y.md", "style", "preference")], humans=[("docs/y.md", "same point", f"h{pr}")])
+    assert gather(shadow, REPO, "")["disputed"] == []
+
+
+@pytest.mark.parametrize("category", ["security", "Security", " security/injection "])
+def test_a_declined_security_finding_is_never_learned_as_a_dispute(shadow, category):
+    for pr in (1, 2):
+        seed(shadow, pr, [(f"s{pr}", "app/x.py", category, "preference")])
+    assert gather(shadow, REPO, "")["disputed"] == []
+
+
+def test_the_shared_labeller_is_unchanged_by_the_preference_rule():
+    assert _label({"verdict": "preference"}) == "no_signal"
+    assert _label({"verdict": "preference", "resolved": True}) == "confirmed"
 
 
 def test_a_category_that_was_confirmed_as_often_as_disputed_is_not_noise(shadow):

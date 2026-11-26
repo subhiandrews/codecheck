@@ -1,7 +1,7 @@
 """Evidence for improving a CODE_CHECK.md, and the checks a proposed new text must pass. No model, no clock; only `gather` reads the shadow store.
 
 The evidence is what the shadow store learned about past reviews of one repository: findings the author's own
-verdicts called incorrect, and human review comments the panel did not match to any finding. It only says where the
+verdicts called incorrect or only a preference, and human review comments the panel did not match to any finding. It only says where the
 guidance could be better; a model writes the rules, and `check_proposal` limits what that text may do.
 """
 
@@ -39,7 +39,7 @@ def _clip(text: object) -> str:
 def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
     """What the store says about `repo` for files under `directory` ("" is the whole repository).
 
-    `disputed` lists finding categories whose findings were disputed in at least `MIN_PRS` PRs and in more PRs than
+    `disputed` lists finding categories whose findings were disputed (verdict `incorrect` or `preference`) in at least `MIN_PRS` PRs and in more PRs than
     they were confirmed in. `misses` are human comments no finding matched, kept when they come from at least
     `MIN_PRS` PRs. `proposable` says there is enough of either to be worth a proposal, and `digest` identifies exactly
     this evidence. When not proposable, `reason` says why; it is not part of the digest."""
@@ -65,6 +65,12 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
             if not _under(f.get("file"), directory):
                 continue
             label = finding_label(f["id"], outcomes, humans)
+            if (
+                (outcomes.get(f["id"]) or {}).get("verdict") == "preference"
+                and not str(f.get("category") or "").strip().lower().startswith("security")  # `preference` is also how big or late Suggestions are declined: never learn to stop raising security
+                and not any(h.get("matches_finding") == f["id"] for h in humans.values())
+            ):
+                label = "disputed"  # declined as taste, and no person raised it: guidance can say when not to raise it. Only this evidence changes; the golden export labels as before
             key = (pr, f["id"])  # runs are chronological: a later decided label replaces an earlier one
             if key not in seen or label in ("confirmed", "disputed"):
                 seen[key] = (_clip(f.get("category")) or "other", label)  # clipped: stats is added after the scrub
