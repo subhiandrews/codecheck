@@ -211,7 +211,7 @@ Nothing is filed without `answer --choice post`, and the filed body is the draft
 
 - Never force-pushes: the git layer has no force option. Pushes happen only after the configured `address.test_command` passes (when set) and only when the remote branch has no commits you lack.
 - Draft PRs are never posted to and never approved. A PR whose head moved while the review ran is not posted either; re-run the review.
-- Babysit rounds are counted per PR in `state.json` (`loop:babysit:<ref>:rounds`): a run that moved the PR's head is one round, and the count restarts when someone else pushes (it is tied to the head our last push left). At `loop.max_babysit_rounds` the PR is listed under `skipped` and left to the owner; so is a PR that has had a round and has fewer than 3 open threads, all code-check Suggestions (written only by the review bot), and no failing check (decision 0056). A PR named to `babysit-pr` by hand is not limited.
+- The babysit loop counts rounds per PR (`loop:babysit:<ref>:rounds` in `state.json`) and leaves a PR to its owner at `loop.max_babysit_rounds` or once only a few bot Suggestions remain (decision 0056); a PR named to `babysit-pr` by hand is not limited.
 - The loop never handles more than `loop.max_prs_per_iteration` (review mode: `loop.max_review_prs_per_iteration`) PRs per iteration, one at a time.
 - Unattended runs can use only the tools in `run_pr.review_allowed_tools` / `run_pr.babysit_allowed_tools`, which include plain `Bash` and unscoped `Write` by default. See "Prompt injection and unattended runs" below.
 - Refuses to run `address-comments` on a working tree with uncommitted changes, and works in an isolated worktree when you are not on the PR branch.

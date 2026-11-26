@@ -297,8 +297,9 @@ def note_round(state: StateStore, ref: PRRef, head_before: str, head_after: str)
 
 def settled(threads: Sequence[Thread], checks: Sequence[Check], me: str, rounds: int, min_open: int = 3) -> str | None:
     """Why a PR that already had a babysit round needs no more: fewer than `min_open` open threads, every one a
-    code-check Suggestion, and no failing check. A thread is one only when the review bot wrote every comment in it
-    and the first carries our finding marker; a person's reply or comment, or a forged header, never settles."""
+    code-check Suggestion, and no failing check. A thread is one only when a bot wrote its first comment, with our
+    finding marker, and no person has replied while it waits for us; a person's comment or a forged header never
+    settles. An open thread we already answered is not work, but a Warning there still keeps the PR out."""
     # imported here because render reaches precheck, which imports this module
     from codecheck.core.render import FINDING_MARKER, parse_comment
 
@@ -307,10 +308,16 @@ def settled(threads: Sequence[Thread], checks: Sequence[Check], me: str, rounds:
     open_ = actionable_threads(threads, me)
     if len(open_) >= min_open:
         return None
-    for t in open_:
-        parsed = parse_comment(t.comments[0].body)
-        if (parsed is None or parsed["severity"] != "suggestion" or not FINDING_MARKER.search(t.comments[0].body)
-                or not all(c.is_bot for c in t.comments)):
+    waiting = {t.id for t in open_}
+    for t in threads:
+        # An open thread we already answered needs no work, but it still has to be a Suggestion of the bot's.
+        if t.is_resolved or t.is_outdated or not t.comments:
+            continue
+        first = t.comments[0]
+        parsed = parse_comment(first.body)
+        if parsed is None or parsed["severity"] != "suggestion" or not FINDING_MARKER.search(first.body) or not first.is_bot:
+            return None
+        if t.id in waiting and not all(c.is_bot for c in t.comments):
             return None
     return f"{len(open_)} suggestion(s) left after round {rounds}: ready for you to merge"
 

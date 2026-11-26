@@ -577,3 +577,21 @@ def test_a_state_error_while_counting_a_round_does_not_fail_the_run(tmp_path):
     ctx.state.update = update
     out = call(ctx, "loop", "--mode", "babysit")[1]["results"][0]
     assert out["ok"] is True and out["rounds"] is None and "not counted" in out["rounds_note"]
+
+
+def test_a_warning_we_already_answered_still_keeps_the_pr_out_of_ready(tmp_path):
+    ctx, provider, _fake, pr = _babysit_setup(tmp_path, "Warning", "Suggestion", rounds=1)
+    answered = provider.threads[pr.ref][0]
+    ours = ThreadComment(2, "me", "I disagree, here is why", "2026-01-02T00:00:00Z")
+    provider.threads[pr.ref][0] = replace(answered, comments=(*answered.comments, ours))  # last comment is ours
+    out = call(ctx, "loop", "--mode", "babysit")[1]
+    assert out["processed"] == 1 and out["skipped"] == []
+
+
+def test_an_answered_suggestion_does_not_stop_a_pr_from_settling(tmp_path):
+    ctx, provider, fake, pr = _babysit_setup(tmp_path, "Suggestion", "Suggestion", rounds=1)
+    answered = provider.threads[pr.ref][0]
+    ours = ThreadComment(2, "me", "declined, see reply", "2026-01-02T00:00:00Z")
+    provider.threads[pr.ref][0] = replace(answered, comments=(*answered.comments, ours))
+    out = call(ctx, "loop", "--mode", "babysit")[1]
+    assert out["processed"] == 0 and claude_calls(fake) == [] and "ready for you to merge" in out["skipped"][0]["reason"]
