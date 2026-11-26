@@ -72,7 +72,7 @@ def test_a_preference_verdict_counts_as_a_dispute_for_learning(shadow):
     assert ev["stats"]["disputed"] == 2
 
 
-def test_a_preference_verdict_beats_a_resolve_but_not_a_person_who_raised_the_same_point(shadow):
+def test_a_preference_verdict_beats_a_resolve(shadow):
     for pr in (1, 2):  # the author declined it as taste and the reviewer then resolved the thread
         rid = new_run_id()
         shadow.append(rid, {"type": "run", "repo": REPO, "pr": f"{REPO}#{pr}"})
@@ -80,14 +80,18 @@ def test_a_preference_verdict_beats_a_resolve_but_not_a_person_who_raised_the_sa
         shadow.append(rid, {"type": "outcome", "finding_id": f"r{pr}", "thread_id": f"t{pr}", "resolved": True, "outdated": False, "replies": [], "reactions": {}})
         shadow.append(rid, {"type": "verdict", "thread_id": f"t{pr}", "verdict": "preference"})
     assert [d["category"] for d in gather(shadow, REPO, "")["disputed"]] == ["docs"]
-    for pr in (3, 4):  # the same verdict, but a human comment matched the finding
-        seed(shadow, pr, [(f"h{pr}", "docs/y.md", "style", "preference")], humans=[("docs/y.md", "same point", f"h{pr}")])
-    assert "style" not in [d["category"] for d in gather(shadow, REPO, "")["disputed"]]
 
 
-def test_a_declined_security_finding_is_never_learned_as_a_dispute(shadow):
+def test_a_preference_verdict_is_not_a_dispute_when_a_person_raised_the_same_point(shadow):
     for pr in (1, 2):
-        seed(shadow, pr, [(f"s{pr}", "app/x.py", "security", "preference")])
+        seed(shadow, pr, [(f"h{pr}", "docs/y.md", "style", "preference")], humans=[("docs/y.md", "same point", f"h{pr}")])
+    assert gather(shadow, REPO, "")["disputed"] == []
+
+
+@pytest.mark.parametrize("category", ["security", "Security", " security/injection "])
+def test_a_declined_security_finding_is_never_learned_as_a_dispute(shadow, category):
+    for pr in (1, 2):
+        seed(shadow, pr, [(f"s{pr}", "app/x.py", category, "preference")])
     assert gather(shadow, REPO, "")["disputed"] == []
 
 

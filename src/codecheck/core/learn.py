@@ -67,7 +67,7 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
             label = finding_label(f["id"], outcomes, humans)
             if (
                 (outcomes.get(f["id"]) or {}).get("verdict") == "preference"
-                and f.get("category") != "security"  # `preference` is also how big or late Suggestions are declined: never learn to stop raising security
+                and not str(f.get("category") or "").strip().lower().startswith("security")  # `preference` is also how big or late Suggestions are declined: never learn to stop raising security
                 and not any(h.get("matches_finding") == f["id"] for h in humans.values())
             ):
                 label = "disputed"  # declined as taste, and no person raised it: guidance can say when not to raise it. Only this evidence changes; the golden export labels as before
