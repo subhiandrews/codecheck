@@ -2,6 +2,11 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.7.2]
+
+### Changed
+- The skeptic reviewer now names, for each added or changed test, the line where its setup reaches the changed code and any assertion another assertion in the same test already guarantees.
+
 ## [1.7.1]
 
 ### Changed
