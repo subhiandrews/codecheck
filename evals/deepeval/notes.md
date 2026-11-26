@@ -189,7 +189,7 @@ What it suggests, and what it does not:
 ### Outcomes of posted reviews (first check, 2026-11-26)
 - **Tool.** `outcomes.py` (see the README row); its signals are candidates, never labels.
 - **Result, 2 days after posting 8 reviews (17 inline findings, plugin 1.5.1).** One PR answered (tokio#8803, 3 findings); the other 7 had no reply, no new commit and no new review, and all 8 are still open. Silence after 2 days is `no_response_yet`, not a negative label.
-- **Why a reply is not a label.** The #8803 author said all three points were fixed. At the new head `tokio/src/sync/broadcast.rs` equals the base branch: the sharding code the PR describes, and our comments about it, are gone, and only a benchmark and tests remain. Two findings are `claimed_only`; the test finding was acted on but is moot. None became a golden case. The collector prints `+added/-deleted` for each finding's cited file so a rewrite like this stands out.
+- **Why a reply is not a label.** The #8803 author said all three points were fixed. At the new head `tokio/src/sync/broadcast.rs` equals the base branch: the sharding code the PR describes, and our comments about it, are gone, and only a benchmark and tests remain. Two findings are a claim with no change behind them (my hand label `claimed_only`, not a signal the tool prints: it shows `changed_without_reply`, because the author's claim was a PR comment, not a reply in the thread); the test finding was acted on but is moot. None became a golden case. The collector prints `+added/-deleted` for each finding's cited file so a rewrite like this stands out.
 - **Recheck.** 2026-12-08 and 2026-12-22, plus the 27 blind PRs for new human comments (match the concern by hand; a location match is not recall).
 
 ### Open
