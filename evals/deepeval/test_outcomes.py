@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 
 import pytest
@@ -7,6 +8,7 @@ from outcomes import (
     code_change,
     collect,
     gh_api,
+    main,
     run,
     signal,
     summary,
@@ -34,6 +36,60 @@ def _gh(*, head="new1", replies=(), issue=(), files=()):
 
 ENTRY = {"repo": "o/r", "pr": 1, "review_id": 7, "status": "posted"}
 REPLY = {"id": 5, "in_reply_to_id": 100, "user": {"login": "author", "type": "User"}, "created_at": "2026-11-25T00:00:00Z"}
+
+
+def test_a_file_missing_from_a_capped_compare_is_unknown_not_untouched():
+    assert code_change([], "a.py", 11, 3, capped=True) == "unknown"
+    assert code_change([], "a.py", 11, 3) == "file_untouched"
+    assert code_change([{"filename": "b.py", "patch": PATCH}], "a.py", 11, 3, capped=True) == "unknown"
+
+
+def test_collect_treats_a_full_list_of_files_as_capped():
+    files = [{"filename": f"f{i}.py", "patch": PATCH} for i in range(300)]
+    assert collect(ENTRY, _gh(files=files), "me")["findings"][0]["code"] == "unknown"
+    assert collect(ENTRY, _gh(files=files[:299]), "me")["findings"][0]["code"] == "file_untouched"
+
+
+def test_the_reviewed_commit_line_is_used_not_the_current_head_line():
+    base = _gh(files=[{"filename": "a.py", "patch": PATCH}])
+
+    def gh(endpoint):  # a push added 40 lines above the comment: the head says 51, the reviewed commit said 11
+        if endpoint.endswith("/reviews/7/comments"):
+            return [{"id": 100, "path": "a.py", "line": 51, "original_line": 11, "body": "**Warning** · x"}]
+        return base(endpoint)
+
+    f = collect(ENTRY, gh, "me")["findings"][0]
+    assert (f["line"], f["code"]) == (11, "changed_near")
+
+
+def test_an_entry_with_a_review_id_but_no_usable_pr_is_reported_not_fatal():
+    no_key = {"repo": "o/r", "review_id": 7, "status": "posted"}
+    null_pr = {"repo": "o/r", "pr": None, "review_id": 7, "status": "posted"}
+    result = run({"prs": [no_key, null_pr, ENTRY]}, _gh())
+    assert [p.get("error") is not None for p in result["prs"]] == [True, True, False]
+    assert [p["error"].split(":")[0] for p in result["prs"][:2]] == ["KeyError", "TypeError"]
+
+
+def test_the_error_row_keeps_gh_stderr():
+    def gh(endpoint):
+        if endpoint == "user":
+            return {"login": "me"}
+        raise subprocess.CalledProcessError(1, ["gh"], stderr="gh: Not Found (HTTP 404)\n")
+
+    assert "HTTP 404" in run({"prs": [ENTRY]}, gh)["prs"][0]["error"]
+
+
+def test_main_gives_one_line_and_exit_1_when_gh_itself_fails(tmp_path, monkeypatch, capsys):
+    posted = tmp_path / "posted.json"
+    posted.write_text(json.dumps({"prs": [ENTRY]}))
+
+    def boom(*args, **kwargs):
+        raise subprocess.CalledProcessError(4, ["gh"], stderr="To get started with GitHub CLI, run: gh auth login")
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    assert main(["--posted", str(posted)]) == 1
+    err = capsys.readouterr().err
+    assert "gh auth login" in err and err.count("\n") == 1
 
 
 def test_touched_old_lines_marks_removals_and_insertions():

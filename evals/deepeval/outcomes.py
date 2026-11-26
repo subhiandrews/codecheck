@@ -4,7 +4,7 @@ For each posted review in a `posted-reviews-*.json` file it asks GitHub (`gh api
 inline comments, reactions, later reviews and comments by other people, the PR state, and the diff between the head
 we reviewed and the head now. Each inline finding gets one signal:
 
-  candidate_acted_on    someone replied (or mentioned us) AND the code changed within NEAR lines of the cited line
+  candidate_acted_on    someone replied in the thread AND the code changed within NEAR lines of the cited line
   changed_without_reply the code changed near the cited line and nobody said anything
   replied_no_change     someone replied but the cited area is untouched: a claim, not a fix
   no_response_yet       nothing yet; this is not evidence the finding was wrong
@@ -29,6 +29,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 NEAR = 10
+COMPARE_CAP = 300  # GitHub lists at most this many changed files for a whole comparison, even when paged
 REPO_RE = re.compile(r"^[A-Za-z0-9_][\w.-]*/[A-Za-z0-9_][\w.-]*$")  # never starts with "-": it reaches gh's argv
 KIND_RE = re.compile(r"^\*\*(\w+)\*\*")
 HUNK_RE = re.compile(r"^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@")
@@ -85,8 +86,11 @@ def touched_old_lines(patch: str) -> set[int]:
     return touched
 
 
-def code_change(files: list[dict], path: str, line: int, near: int) -> str:
-    """changed_near, file_changed (elsewhere in the file), file_untouched, or unknown (no line, or no patch to read)."""
+def code_change(files: list[dict], path: str, line: int, near: int, capped: bool = False) -> str:
+    """changed_near, file_changed (elsewhere in the file), file_untouched, or unknown.
+
+    `line` is the cited line in the reviewed commit, the old side of the compare. Unknown means no line, no patch to
+    read, or (when `capped`) a file the cap may have cut off, so its absence does not show it is untouched."""
     for f in files:
         if path in (f.get("filename"), f.get("previous_filename")):  # a rename lists the old path here
             if not line or not f.get("patch"):
@@ -94,7 +98,7 @@ def code_change(files: list[dict], path: str, line: int, near: int) -> str:
             if any(abs(t - line) <= near for t in touched_old_lines(f["patch"])):
                 return "changed_near"
             return "file_changed"
-    return "file_untouched"
+    return "unknown" if capped else "file_untouched"
 
 
 def signal(replied: bool, change: str) -> str:
@@ -131,9 +135,11 @@ def collect(entry: dict, gh: Gh, me: str, near: int = NEAR) -> dict:
     for c in ours:
         # the review-scoped listing returns null lines for outdated comments; the PR-wide listing keeps them
         full = {**c, **{k: v for k, v in by_id.get(c["id"], {}).items() if v is not None}}
-        line = full.get("line") or full.get("original_line") or 0
+        # original_line is the line in the reviewed commit, which the compare's old side numbers; `line` is the
+        # current head's and shifts when a push adds or removes lines above the comment
+        line = full.get("original_line") or full.get("line") or 0
         replies = [r for r in everything if r.get("in_reply_to_id") == c["id"] and _human(r.get("user"), me)]
-        change = code_change(files, c["path"], line, near)
+        change = code_change(files, c["path"], line, near, capped=len(files) >= COMPARE_CAP)
         severity = KIND_RE.match(c.get("body") or "")
         findings.append({
             "comment_id": c["id"], "path": c["path"], "line": line,
@@ -151,6 +157,12 @@ def collect(entry: dict, gh: Gh, me: str, near: int = NEAR) -> dict:
     }
 
 
+def _detail(exc: Exception) -> str:
+    """gh's own message when there is one (auth, 404, rate limit); `str(CalledProcessError)` has only the exit status."""
+    stderr = getattr(exc, "stderr", None)
+    return (stderr.strip() if isinstance(stderr, str) else "") or str(exc)
+
+
 def run(posted: dict, gh: Gh, near: int = NEAR) -> dict:
     me = gh("user")["login"]
     rows = []
@@ -159,8 +171,8 @@ def run(posted: dict, gh: Gh, near: int = NEAR) -> dict:
             continue
         try:
             rows.append(collect(e, gh, me, near))
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, KeyError, ValueError, OSError) as exc:
-            rows.append({"repo": e.get("repo"), "pr": e.get("pr"), "error": f"{type(exc).__name__}: {exc}"[:300],
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, KeyError, TypeError, ValueError, OSError) as exc:
+            rows.append({"repo": e.get("repo"), "pr": e.get("pr"), "error": f"{type(exc).__name__}: {_detail(exc)}"[:300],
                          "findings": []})  # one unreadable PR must not lose the others
     return {"source": posted.get("posted_on"), "near": near, "prs": rows,
             "note": "signals are candidates; read the diff at the head before writing any label"}
@@ -184,7 +196,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path)
     ap.add_argument("--near", type=int, default=NEAR)
     args = ap.parse_args(argv)
-    result = run(json.loads(args.posted.expanduser().read_text(encoding="utf-8")), gh_api, args.near)
+    try:
+        result = run(json.loads(args.posted.expanduser().read_text(encoding="utf-8")), gh_api, args.near)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError, ValueError, KeyError) as exc:  # e.g. no gh, bad auth
+        print(f"outcomes: {type(exc).__name__}: {_detail(exc)}"[:300], file=sys.stderr)
+        return 1
     if args.out:
         args.out.expanduser().write_text(json.dumps(result, indent=1) + "\n", encoding="utf-8")
     print("\n".join(summary(result)))
