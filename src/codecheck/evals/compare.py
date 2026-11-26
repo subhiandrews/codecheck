@@ -1,8 +1,6 @@
-"""Compare two arms of a PR replay without mistaking sampling noise for an effect (no model, no tokens).
+"""Compare two arms of a PR replay, several runs per case, without mistaking sampling noise for an effect (no model).
 
-One review of the same prompts finds a different share of a PR's labelled comments each time (8 to 14 of 20 on one
-case), so one run per arm cannot say which arm is better. An arm is better on a case only when every one of its runs
-beats every run of the other arm, and only when both arms have `min_runs` or more runs."""
+The rule and the verdicts are described in the "PR replay" section of docs/MAINTAINING.md."""
 
 import json
 from pathlib import Path
@@ -62,7 +60,7 @@ def _stats(entry: dict) -> dict:
 
 
 def _verdict(a: dict, b: dict, min_runs: int) -> str:
-    if a["runs"] < min_runs or b["runs"] < min_runs:
+    if min(a["runs"], b["runs"]) < max(min_runs, 1):  # an arm with no run has no min or max to compare
         return "too-few-runs"
     if a["min"] > b["max"]:
         return "a-better"

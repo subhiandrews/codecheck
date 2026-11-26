@@ -82,3 +82,11 @@ def test_the_compare_subcommand_prints_the_report(tmp_path, capsys):
     assert replay.main(["compare", str(a), str(b)]) == 0
     assert json.loads(capsys.readouterr().out)["verdict"] == "a-better"
     assert replay.main(["compare", str(a), str(tmp_path / "nope.jsonl")]) == 1
+
+
+def test_a_minimum_of_zero_runs_still_needs_one_run_in_each_arm():
+    """`--min-runs 0` is accepted by the parser; an arm with no usable run must not reach the min/max comparison."""
+    failed = [{"name": "pr6", "error": "claude run failed"}] * 3
+    report = compare_arms(failed, arm("pr6", 1, 2, 3), min_runs=0)
+    assert only(report, "pr6")["verdict"] == "too-few-runs" and report["verdict"] == "too-few-runs"
+    assert compare_arms(arm("pr6", 9), arm("pr6", 1), min_runs=0)["verdict"] == "a-better"
