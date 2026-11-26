@@ -20,6 +20,8 @@ It writes to `<shadow.store>/<run_id>.handoff/`:
 - `handoff.md`: the same run as a short narrative for a person or a later session.
 - `transcript/`: copies of the Claude Code session transcript that mentions the run id (under `$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects`, newest first, last 24 hours) and its subagent transcripts. When none is found, `handoff.json` says so with `transcript: false` and a reason.
 
+In the hand-off's `comparison`, a human comment is matched to a finding only by location (same file, within 3 lines), which misses a comment that names the same concern from elsewhere. So each human comment without a match also carries `related`: up to 3 kept or dropped findings in the same file that share at least 3 distinctive words with it (`kind`, the finding `id` or the drop `reason`, `line`, and the `shared` words), and `handoff.md` lists them after the comment as "possibly the same concern". It is a pointer for a person to check, not a match: `matched_finding`, `misses` and `unraised_findings` do not change. On the 2026-11-26 runs it gave candidates for 7 of 22 unmatched comments, and by hand about five of those were the same concern.
+
 Two things the design lists are deliberately not in `handoff.json`: tokens and duration per reviewer (subagent transcripts are named by file, not by panel member, so they cannot be attributed reliably; `signals` gives turns and output tokens per transcript file instead) and stale-PR retries (a stale review restarts the skill with a new run id). The docstring of `src/codecheck/shadow/handoff.py` lists the fields.
 
 It also saves the raw reviewer and aggregator outputs with the panel and chunk metadata as `<run_id>.raw.json`, so the run can be replayed later.

@@ -399,6 +399,98 @@ def test_build_comparison_uses_the_latest_record_per_thread():
     assert no_word["human_severity"] is None and no_word["severity_agrees"] is None
 
 
+def _human(thread, path, body, line=200, match=None):
+    return {"type": "human_comment", "thread_id": thread, "path": path, "line": line, "author": "h", "body": body,
+            "matches_finding": match}
+
+
+def test_related_names_kept_and_dropped_findings_in_the_same_file_that_share_terms():
+    kept = [{"id": "f1", "severity": "warning", "file": "a.go", "line": 534,
+             "message": "The export star re-exports case is expected to match although the description says it does not"}]
+    dropped = [{"file": "a.go", "line": 146, "reason": "out-of-scope", "reviewers": ["lang-go"],
+                "message": "Compat subscriptions are owned by the root injector, so destroying a structure does not release them"}]
+    records = [
+        _human("T1", "a.go", "I know the description excludes export star on purpose, but re-exports should match too"),
+        _human("T2", "a.go", "Note the existing limitation: compat subscriptions are owned by the root injector"),
+        _human("T3", "b.go", "I know the description excludes export star on purpose, but re-exports should match too"),
+        _human("T4", "a.go", "Please rename this variable"),
+    ]
+    by = {c["thread_id"]: c for c in build_comparison(records, kept, dropped=dropped)["human_comments"]}
+    (rk,) = by["T1"]["related"]
+    assert (rk["kind"], rk["id"], rk["reason"], rk["file"], rk["line"]) == ("kept", "f1", None, "a.go", 534)
+    assert {"export", "description", "match"} <= set(rk["shared"])
+    (rd,) = by["T2"]["related"]
+    assert (rd["kind"], rd["id"], rd["reason"], rd["line"]) == ("dropped", None, "out-of-scope", 146)
+    assert by["T3"]["related"] == [] and by["T4"]["related"] == []  # other file; too little in common
+
+
+def test_related_never_changes_matched_unraised_or_misses():
+    kept = [{"id": "f1", "severity": "warning", "file": "a.go", "line": 5, "message": "export star re-exports case should match"},
+            {"id": "f2", "severity": "warning", "file": "a.go", "line": 900, "message": "unrelated words entirely here"}]
+    records = [_human("T1", "a.go", "export star re-exports case should match", line=5, match="f1"),
+               _human("T2", "a.go", "export star re-exports case should match", line=300)]
+    cmp = build_comparison(records, kept)
+    t1, t2 = cmp["human_comments"]
+    assert t1["related"] == []  # already matched by location
+    assert t2["related"][0]["id"] == "f1" and t2["matched_finding"] is None
+    assert cmp["misses"] == ["T2"] and cmp["unraised_findings"] == ["f2"]
+
+
+def test_related_needs_three_shared_terms_and_is_capped_and_ordered():
+    kept = [{"id": f"f{i}", "severity": "suggestion", "file": "a.go", "line": i, "message": "alpha bravo charlie " + "delta " * i}
+            for i in range(1, 6)]
+    kept.append({"id": "two", "severity": "suggestion", "file": "a.go", "line": 9, "message": "alpha bravo only"})
+    rec = _human("T1", "a.go", "alpha bravo charlie delta")
+    related = build_comparison([rec], kept)["human_comments"][0]["related"]
+    assert len(related) == 3 and "two" not in [r["id"] for r in related]
+    assert [r["id"] for r in related] == sorted(r["id"] for r in related)  # equal scores keep the findings' order
+
+
+def test_related_puts_the_most_shared_words_first_and_kept_before_dropped_on_a_tie():
+    kept = [{"id": "few", "file": "a.go", "line": 1, "message": "alpha bravo charlie"},
+            {"id": "tie", "file": "a.go", "line": 2, "message": "alpha bravo charlie delta"}]
+    dropped = [{"file": "a.go", "line": 3, "reason": "low-value", "message": "alpha bravo charlie delta echo"},
+               {"file": "a.go", "line": 4, "reason": "duplicate", "message": "alpha bravo charlie delta"}]
+    rec = _human("T1", "a.go", "alpha bravo charlie delta echo")
+    related = build_comparison([rec], kept, dropped=dropped)["human_comments"][0]["related"]
+    assert [(r["kind"], r["id"] or r["reason"]) for r in related] == [("dropped", "low-value"), ("kept", "tie"), ("dropped", "duplicate")]
+
+
+def test_related_skips_findings_whose_message_is_not_text():
+    kept = [{"id": "f1", "file": "a.go", "line": 1, "message": 7}]
+    dropped = [{"file": "a.go", "line": 2, "reason": "low-value", "message": ["alpha", "bravo"]}, "not a finding",
+               {"file": "a.go", "line": 3, "reason": "low-value", "message": "alpha bravo charlie delta"}]
+    related = build_comparison([_human("T1", "a.go", "alpha bravo charlie delta")], kept, dropped=dropped)["human_comments"][0]["related"]
+    assert [(r["kind"], r["line"]) for r in related] == [("dropped", 3)]
+
+
+def test_related_ignores_stop_words_short_words_and_plural_endings():
+    kept = [{"id": "f1", "severity": "warning", "file": "a.go", "line": 1, "message": "responses return errors that users think failed"}]
+    rec = _human("T1", "a.go", "this should have been about response returns, error, user thinks, failing")
+    assert build_comparison([rec], kept)["human_comments"][0]["related"][0]["id"] == "f1"
+    rec2 = _human("T1", "a.go", "this that with from been will have than then")
+    assert build_comparison([rec2], kept)["human_comments"][0]["related"] == []
+
+
+def test_render_markdown_lists_related_findings_for_a_miss():
+    md = render_markdown({
+        "run_id": "r", "reviewers": {}, "findings": [], "comparison_reason": "x", "transcript_reason": "y",
+        "comparison": {"human_comments": [
+            {"thread_id": "T1", "author": "h", "path": "a.go", "line": 3, "matched_finding": None, "body": "why", "human_severity": None,
+             "related": [{"kind": "kept", "id": "f1", "reason": None, "file": "a.go", "line": 9, "shared": ["export", "match", "star"]},
+                         {"kind": "dropped", "id": None, "reason": "out-of-scope", "file": "a.go", "line": 2, "shared": ["compat"]}]}],
+            "unraised_findings": [], "misses": ["T1"], "general_comments": []}})
+    assert "possibly the same concern: kept f1 at a.go:9; dropped (out-of-scope) at a.go:2" in md
+
+
+def test_render_markdown_tolerates_comparisons_written_before_related_existed():
+    md = render_markdown({"run_id": "r", "reviewers": {}, "findings": [], "comparison_reason": "x", "transcript_reason": "y",
+                          "comparison": {"human_comments": [{"thread_id": "T1", "author": "h", "path": "a", "line": 1,
+                                                             "matched_finding": None, "body": "why", "human_severity": None}],
+                                         "unraised_findings": [], "misses": ["T1"], "general_comments": []}})
+    assert "missed by us" in md and "possibly" not in md
+
+
 def test_render_markdown_mentions_the_essentials():
     md = render_markdown({
         "run_id": "abcdef012345", "skill": "review-pr", "mode": "pr", "repo": "o/r", "pr": "o/r#7", "pr_url": "u",

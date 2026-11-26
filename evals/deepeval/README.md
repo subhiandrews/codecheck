@@ -21,6 +21,7 @@ python3.14 -m venv ~/.venvs/codecheck-evals       # any venv outside the repo wo
 | `metrics.py` | Six DeepEval `BaseMetric`s: anchoring share, no aggregator process notes, message length, no comment-cap findings, findings file written, aggregator accounting. |
 | `scorecard.py` | Runs those metrics over each run as an `LLMTestCase` in an `EvaluationDataset`. |
 | `f1_baseline.py` | For each human comment a golden case's panel missed, reports the furthest pipeline stage that held a finding at the same place (kept, dropped, raw only, same file, not raised). Location matching only, so a nearby finding is a candidate, not proof. Reads `tests/golden`; no model. |
+| `dropped_raised.py` | Reads the hand-offs in the shadow store and lists, by drop reason, the findings the aggregator dropped that a human comment later looks like (same file, 3 shared words). Evidence only, no model. |
 | `review_sheets.py` | Builds blind labelling sheets (dropped and kept findings, drawn at random with a seed) from your shadow store, with the diff around each finding and the aggregator's reason hidden until you choose. Sheets and the answer key are written outside the repo because they hold finding text. No model. |
 | `routing_ab.py` | Runs the reviewer routing at a git ref and the checkout's over every distinct stored diff and lists where the decision flipped. No model. See "Routing A/B" below. |
 | `_env.py` | Sets DeepEval's telemetry opt-out before it is imported. |

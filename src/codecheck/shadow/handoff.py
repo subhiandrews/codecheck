@@ -5,7 +5,7 @@
 prompts) and `build_reason` (why they are null), `config_hash`, `models`, `panel`, `blind`), each reviewer's ingest status
 (`reviewers`), the aggregated `findings` (ids and order as `post` gives them, each with its scrubbed message capped at 300 characters, and its `rated_because` capped the same when the aggregator gave one), the aggregator's `dropped` list, the
 `decision`, transcript `signals` (tool calls and errors, retries, permission denials, turns and output tokens per
-transcript file), `ignored_guidance` lines from the transcripts, the human `comparison` (or `comparison_reason`; each human comment carries `in_review`, false when its path was not among the files the reviewers were given, and such a thread is not in `misses`; `general_comments_reason` says why its general comments are missing, null when fine) with `comparison_mode` (`posted`, `unposted` or null), `head_moved`
+transcript file), `ignored_guidance` lines from the transcripts, the human `comparison` (or `comparison_reason`; each human comment carries `in_review`, false when its path was not among the files the reviewers were given, and such a thread is not in `misses`, and `related`, the kept or dropped findings in the same file that share words with an unmatched comment, for a person to check; `general_comments_reason` says why its general comments are missing, null when fine) with `comparison_mode` (`posted`, `unposted` or null), `head_moved`
 and `pr_state` (`open`, `closed`, `merged`; both null for local runs, on the posted path, for drafts and when the PR fetch
 failed; `head_moved` is also null when the run recorded no head SHA), and
 `transcript`, `transcript_reason`, `transcript_files`.
@@ -31,6 +31,55 @@ def implied_severity(body: str) -> str | None:
     return m.group(1).lower() if m else None
 
 
+# A human comment and a finding can name the same concern from lines far apart (a test file against the code it
+# tests, a description against its fix), so `related` pairs them by shared words in the same file. It is a
+# pointer for a person to check, never a match: it changes none of `matched_finding`, `misses` or `unraised_findings`.
+MIN_SHARED = 3
+MAX_RELATED = 3
+_WORD = re.compile(r"[a-z_][a-z0-9_]{3,}")
+_STOP = frozenset(
+    ["about", "above", "after", "again", "also", "because", "been", "before", "being", "between", "both", "bring", "could", "does", "done", "each", "either", "else", "even", "ever", "from", "have", "here", "into", "just", "like", "made", "make", "many", "might", "more", "most", "much", "must", "need", "only", "other", "over", "same", "should", "since", "some", "such", "than", "that", "their", "them", "then", "there", "these", "they", "this", "those", "through", "under", "until", "upon", "very", "want", "were", "what", "when", "where", "which", "while", "will", "with", "would", "your"])
+
+
+def _terms(text) -> set[str]:
+    """Distinctive lowercase words of at least four letters, with a plural or -ed/-ing ending folded away.
+
+    Anything that is not text has no words: the aggregator's dropped list is stored as the agent wrote it."""
+    out: set[str] = set()
+    if not isinstance(text, str):
+        return out
+    for word in _WORD.findall(text.lower()):
+        if word in _STOP:
+            continue
+        for suffix in ("ing", "ed", "s"):
+            if word.endswith(suffix) and not word.endswith("ss") and len(word) - len(suffix) >= 4:
+                word = word[: -len(suffix)]
+                break
+        out.add(word)
+    return out - _STOP
+
+
+def related_findings(body: str, path, kept: Sequence[dict], dropped: Sequence[dict]) -> list[dict]:
+    """Kept and dropped findings in the same file that share at least MIN_SHARED words with a human comment.
+
+    Most shared words first, kept before dropped on a tie; at most MAX_RELATED."""
+    mine = _terms(body)
+    if not isinstance(path, str) or len(mine) < MIN_SHARED:
+        return []
+    scored = []
+    for kind, items in (("kept", kept), ("dropped", dropped)):
+        for f in items:
+            if not isinstance(f, dict) or f.get("file") != path:
+                continue
+            shared = sorted(mine & _terms(f.get("message")))
+            if len(shared) >= MIN_SHARED:
+                scored.append({"kind": kind, "id": f.get("id") if kind == "kept" else None,
+                               "reason": f.get("reason") if kind == "dropped" else None,
+                               "file": path, "line": f.get("line"), "shared": shared[:8]})
+    scored.sort(key=lambda r: -len(r["shared"]))
+    return scored[:MAX_RELATED]
+
+
 def build_general_comments(reviews: Sequence[Review], issue_comments: Sequence[IssueComment], *, pr_author: str) -> list[dict]:
     """Review bodies and PR-level comments from people. The caller scrubs the bodies."""
     out = []
@@ -50,11 +99,12 @@ def _skip_body(body: str) -> bool:
 
 
 def build_comparison(records: Sequence[dict], findings: Sequence[dict], general_comments: Sequence[dict] = (),
-                     reviewed: set[str] | None = None) -> dict:
+                     reviewed: set[str] | None = None, dropped: Sequence[dict] = ()) -> dict:
     """`records` are a run's shadow records; the newest `human_comment` per thread wins, as in export.
 
     `reviewed` is the set of paths the run's reviewers were given. A thread on any other path is marked
-    `in_review: false` and is not a miss, since no reviewer could have seen it; without it no claim is made."""
+    `in_review: false` and is not a miss, since no reviewer could have seen it; without it no claim is made.
+    `dropped` is the aggregator's dropped list; with the kept findings it feeds each unmatched comment's `related`."""
     latest: dict[str, dict] = {}
     for rec in records:
         if rec.get("type") == "human_comment" and isinstance(rec.get("thread_id"), str):
@@ -73,6 +123,7 @@ def build_comparison(records: Sequence[dict], findings: Sequence[dict], general_
             "thread_id": rec["thread_id"], "path": rec.get("path"), "line": rec.get("line"), "author": rec.get("author"),
             "matched_finding": fid, "human_severity": human, "finding_severity": ours,
             "severity_agrees": (human == ours) if human and ours else None, "body": " ".join((rec.get("body") or "").split())[:300],
+            "related": [] if fid else related_findings(rec.get("body") or "", rec.get("path"), findings, dropped),
         })
         outside = reviewed is not None and isinstance(rec.get("path"), str) and rec["path"] not in reviewed
         if reviewed is not None:
@@ -133,6 +184,10 @@ def render_markdown(h: dict) -> str:
                 "not in the reviewed diff" if c.get("in_review") is False else "missed by us")
             if not c["matched_finding"] and (c.get("body") or "").strip():  # a miss is only useful with its text
                 match += f": {' '.join(c['body'].split())[:160]}"
+            if c.get("related"):
+                match += " (possibly the same concern: " + "; ".join(
+                    f"kept {r['id']} at {r['file']}:{r['line']}" if r["kind"] == "kept"
+                    else f"dropped ({r.get('reason')}) at {r['file']}:{r['line']}" for r in c["related"]) + ")"
             lines.append(f"- {c['thread_id']} by {c['author']} at {c['path']}:{c['line']}: {match}"
                          + (f", human says {c['human_severity']}, we said {c['finding_severity']}" if c["human_severity"] else ""))
         for g in cmp.get("general_comments") or []:
