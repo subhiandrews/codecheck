@@ -11,8 +11,8 @@ we reviewed and the head now. Each inline finding gets one signal:
 
 A signal is a candidate only: an author's reply is not evidence that the code changed, so a person reads the diff
 before any label is written. A mention of us is reported once per PR (`mentions_us`), never counted as a reply.
-`replied_unverified` / `unverified` mean the cited line or the file's patch was unavailable, or the compare hit GitHub's
-300-file cap and did not list the file.
+`replied_unverified` / `unverified` mean the cited line or the file's patch was unavailable, the compare hit GitHub's
+300-file cap and did not list the file, or the head no longer descends from the reviewed commit (`diverged`).
 
 Usage:
   python -B evals/deepeval/outcomes.py --posted ~/.local/share/code-check-evals/posted-reviews-2026-11-24.json \
