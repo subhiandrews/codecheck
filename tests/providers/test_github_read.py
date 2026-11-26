@@ -178,10 +178,10 @@ def test_check_log_is_tail_truncated_and_needs_run_id():
 LINK = "https://github.com/o/r/actions/runs/999/job/4242"
 
 
-def rerun_runner(job_name="build", job_sha="abc123", rerun_rc=0, rerun_err=""):
+def rerun_runner(job_name="build", job_sha="abc123", rerun_rc=0, rerun_err="", conclusion="failure"):
     """The PR's head is abc123; job 4242 is what GitHub says it is, whatever the check's link claims."""
     return (FakeRunner().on_prefix("gh", "pr", "view", "7", stdout=PR_JSON)
-            .on("gh", "api", "repos/o/r/actions/jobs/4242", stdout=json.dumps({"name": job_name, "head_sha": job_sha}))
+            .on("gh", "api", "repos/o/r/actions/jobs/4242", stdout=json.dumps({"name": job_name, "head_sha": job_sha, "conclusion": conclusion}))
             .on("gh", "run", "rerun", "--job", "4242", "--repo", "o/r", returncode=rerun_rc, stderr=rerun_err))
 
 
@@ -197,6 +197,23 @@ def test_rerun_check_refuses_a_job_that_is_not_this_check_on_the_pr_head(name, s
     runner = rerun_runner(job_name=name, job_sha=sha)
     with pytest.raises(ProviderError, match="not this check"):
         GitHubProvider(runner).rerun_check(REF, Check("build", "fail", "https://ci.example/x/o/r/actions/runs/111/job/4242", "111"))
+    assert not any(a[:3] == ("gh", "run", "rerun") for a in runner.argvs())
+
+
+@pytest.mark.parametrize("conclusion", ["failure", "timed_out"])
+def test_rerun_check_reruns_a_job_that_failed_or_timed_out(conclusion):
+    """gh puts a timed-out job in the fail bucket, and a hung job is a typical flaky case."""
+    runner = rerun_runner(conclusion=conclusion)
+    GitHubProvider(runner).rerun_check(REF, Check("build", "fail", LINK, "999"))
+    assert runner.argvs()[-1] == ("gh", "run", "rerun", "--job", "4242", "--repo", "o/r")
+
+
+@pytest.mark.parametrize("conclusion", ["success", "cancelled", "skipped", None])
+def test_rerun_check_refuses_a_job_that_did_not_fail(conclusion):
+    """The check list can be stale: GitHub must say this job itself failed, not passed, still run, or was cancelled."""
+    runner = rerun_runner(conclusion=conclusion)
+    with pytest.raises(ProviderError, match="did not fail or time out"):
+        GitHubProvider(runner).rerun_check(REF, Check("build", "fail", LINK, "999"))
     assert not any(a[:3] == ("gh", "run", "rerun") for a in runner.argvs())
 
 

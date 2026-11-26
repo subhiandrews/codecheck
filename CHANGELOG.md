@@ -2,6 +2,11 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.6.1]
+
+### Fixed
+- `rerun-check` on GitHub no longer reruns a job that did not fail or time out (passed, cancelled or still running).
+
 ## [1.6.0]
 
 ### Added

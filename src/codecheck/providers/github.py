@@ -32,6 +32,7 @@ _LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\[bot\])?")
 _LABEL = re.compile(r"[A-Za-z0-9._ :-]{1,50}")
 _SHA = re.compile(r"[0-9A-Fa-f]{1,64}")
 _DIGITS = re.compile(r"[0-9]+")
+_RERUNNABLE_CONCLUSIONS = ("failure", "timed_out")  # what GitHub calls a job that failed; gh files both under its fail bucket
 _LOG_TAIL_CHARS = 20_000
 
 # GitHub rejects a query whose requested nodes (the product of the nested `first:` values) exceed 500,000.
@@ -257,7 +258,8 @@ class GitHubProvider:
         """Rerun this check's own job, never the whole run: a run-wide rerun would also rerun jobs the PR broke.
 
         A check's link can come from a third party, so it only suggests a job id; GitHub has to confirm that the job has
-        this check's name and ran on the PR's head commit before it is rerun (a deploy job with secrets must not be)."""
+        this check's name, ran on the PR's head commit and itself failed or timed out before it is rerun (a deploy job with secrets must
+        not be, and a stale check list must not rerun a job that has since passed or is still running)."""
         if not check.run_id:
             raise ProviderError(f"check {check.name!r} has no run to rerun")
         if not _DIGITS.fullmatch(check.run_id):
@@ -269,6 +271,8 @@ class GitHubProvider:
         data = self._json("api", f"repos/{_repo(ref.repo)}/actions/jobs/{job_id}") or {}
         if data.get("name") != check.name or data.get("head_sha") != self.get_pr(ref).head_sha:
             raise ProviderError(f"job {job_id} is not this check ({check.name!r}) on the PR head; refusing to rerun it")
+        if data.get("conclusion") not in _RERUNNABLE_CONCLUSIONS:
+            raise ProviderError(f"job {job_id} did not fail or time out (conclusion {data.get('conclusion')!r}); refusing to rerun it")
         self._gh("run", "rerun", "--job", job_id, "--repo", _repo(ref.repo))
 
     def post_review(
