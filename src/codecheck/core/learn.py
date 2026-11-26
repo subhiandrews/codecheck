@@ -65,8 +65,12 @@ def gather(shadow: ShadowStore, repo: str, directory: str) -> dict:
             if not _under(f.get("file"), directory):
                 continue
             label = finding_label(f["id"], outcomes, humans)
-            if (outcomes.get(f["id"]) or {}).get("verdict") == "preference":
-                label = "disputed"  # declined as taste: guidance can say when not to raise it; golden export still leaves it undecided
+            if (
+                (outcomes.get(f["id"]) or {}).get("verdict") == "preference"
+                and f.get("category") != "security"  # `preference` is also how big or late Suggestions are declined: never learn to stop raising security
+                and not any(h.get("matches_finding") == f["id"] for h in humans.values())
+            ):
+                label = "disputed"  # declined as taste, and no person raised it: guidance can say when not to raise it. Only this evidence changes; the golden export labels as before
             key = (pr, f["id"])  # runs are chronological: a later decided label replaces an earlier one
             if key not in seen or label in ("confirmed", "disputed"):
                 seen[key] = (_clip(f.get("category")) or "other", label)  # clipped: stats is added after the scrub
