@@ -124,6 +124,40 @@ def test_draft_counts_a_matching_human_comment_as_expected(tmp_path):
     assert case["misses"] == []
 
 
+def without_finding_records(ctx, run_id):
+    """What a local review leaves in the store: the run record, but no `finding` records (nothing was posted)."""
+    path = ctx.shadow.root / f"{run_id}.jsonl"
+    kept = [ln for ln in path.read_text().splitlines() if ln.strip() and json.loads(ln).get("type") != "finding"]
+    path.write_text("\n".join(kept) + "\n")
+
+
+def test_draft_of_a_run_without_finding_records_labels_the_findings_of_its_handoff(tmp_path):
+    ctx, _pr, out, ids = review_run(tmp_path)
+    without_finding_records(ctx, out["run_id"])
+    case = draft_case(ctx.shadow, out["run_id"])
+    assert case["label_status"] == "auto"
+    assert {lab["id"]: lab["label"] for lab in case["labels"]} == {ids[2]: "unlabelled", ids[500]: "unlabelled"}
+    first = next(lab for lab in case["labels"] if lab["id"] == ids[2])
+    assert (first["file"], first["line"], first["severity"], first["category"], first["message"]) == (
+        "app.py", 2, "warning", "bug", "y is unused")
+
+
+def test_a_local_runs_label_keeps_the_full_message_the_handoff_cut_short(tmp_path):
+    """The hand-off keeps 300 characters of a message; the judge of `eval --calibrate` should read the whole of it."""
+    long = "y is unused, " + "and that matters. " * 40
+    ctx, _pr, out, ids = review_run(tmp_path, aggregated={"findings": [{**FINDING, "message": long}], "dropped": []})
+    without_finding_records(ctx, out["run_id"])
+    labels = draft_case(ctx.shadow, out["run_id"])["labels"]
+    assert len(long) > 300 and [lab["message"] for lab in labels] == [long] and labels[0]["id"] == ids[2]
+
+
+def test_draft_of_a_run_without_finding_records_or_a_handoff_has_no_labels(tmp_path):
+    ctx, _pr, out, _ids = review_run(tmp_path)
+    without_finding_records(ctx, out["run_id"])
+    (ctx.shadow.root / f"{out['run_id']}.handoff" / "handoff.json").unlink()
+    assert draft_case(ctx.shadow, out["run_id"])["labels"] == []
+
+
 def test_finalize_refuses_unconfirmed(tmp_path):
     ctx, _pr, out, _ids = review_run(tmp_path)
     draft = write(tmp_path / "draft.json", labelled(draft_case(ctx.shadow, out["run_id"]), status="auto"))
