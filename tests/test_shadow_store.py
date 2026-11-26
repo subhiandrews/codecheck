@@ -211,6 +211,17 @@ def test_handoff_dir_is_created_private_and_rejects_bad_ids(tmp_path):
         store.handoff_dir("../../etc")
 
 
+def test_has_handoff_is_a_read_that_needs_the_json_file(tmp_path):
+    store = ShadowStore(tmp_path / "shadow")
+    assert store.has_handoff(RID) is False and not (tmp_path / "shadow").exists()  # no folder made by asking
+    folder = store.handoff_dir(RID)
+    assert store.has_handoff(RID) is False  # a folder alone is not a hand-off
+    (folder / "handoff.json").write_text("{}")
+    assert store.has_handoff(RID) is True
+    with pytest.raises(CodeCheckError):
+        store.has_handoff("../../etc")
+
+
 def test_save_raw_stays_valid_json_when_keys_look_like_secret_assignments(tmp_path):
     store = ShadowStore(tmp_path)
     store.save_raw(RID, {"usage": {"output_tokens": 3}, "note": "password=hunter2"})

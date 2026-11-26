@@ -912,3 +912,54 @@ def test_handoff_unposted_run_keeps_unreviewed_threads_out_of_misses(tmp_path):
     _folder, data = handoff_files(ctx, out["run_id"])
     assert data["comparison"]["misses"] == ["T2"]
     assert {h["thread_id"]: h["in_review"] for h in data["comparison"]["human_comments"]} == {"T2": True, "T3": False}
+
+
+def test_cleanup_writes_the_handoff_a_skipped_step_left_out(tmp_path):
+    ctx, out = local_run(tmp_path)  # post ran, the skill's handoff step did not
+    code, res = call(ctx, "cleanup", "--run", out["run_id"])
+    assert code == 0 and res["handoff"] is True and res["run_dir_removed"] is True
+    _folder, data = handoff_files(ctx, out["run_id"])
+    assert data["run_id"] == out["run_id"] and len(data["findings"]) == 1
+    assert ctx.shadow.read_raw(out["run_id"]) is not None
+
+
+def test_cleanup_leaves_an_existing_handoff_alone(tmp_path):
+    ctx, out = local_run(tmp_path)
+    call(ctx, "handoff", "--run", out["run_id"])
+    path = ctx.shadow.root / f"{out['run_id']}.handoff" / "handoff.json"
+    before = path.read_text()
+    ctx.provider = NoCalls()
+    code, res = call(ctx, "cleanup", "--run", out["run_id"])
+    assert code == 0 and "handoff" not in res and res["run_dir_removed"] is True
+    assert path.read_text() == before
+
+
+def test_cleanup_writes_no_handoff_when_the_flag_is_off(tmp_path):
+    ctx, out = local_run(tmp_path, handoff=False)
+    before = sorted(p.name for p in ctx.shadow.root.iterdir())
+    code, res = call(ctx, "cleanup", "--run", out["run_id"])
+    assert code == 0 and "handoff" not in res and res["run_dir_removed"] is True
+    assert sorted(p.name for p in ctx.shadow.root.iterdir()) == before
+
+
+def test_cleanup_still_cleans_up_when_the_handoff_fails(tmp_path, monkeypatch):
+    import codecheck.commands.handoff as cmd
+
+    ctx, out = local_run(tmp_path)
+
+    def boom(*a, **k):
+        raise RuntimeError("broke")
+
+    monkeypatch.setattr(cmd, "build_handoff", boom)
+    code, res = call(ctx, "cleanup", "--run", out["run_id"])
+    assert code == 0 and res["handoff"] is False and res["run_dir_removed"] is True
+    assert "broke" in res["handoff_error"]
+    assert not (ctx.shadow.root / f"{out['run_id']}.handoff" / "handoff.json").exists()
+
+
+def test_cleanup_writes_no_handoff_when_the_flag_is_turned_off_after_context(tmp_path):
+    ctx, out = local_run(tmp_path)  # context ran with the flag on, so the run asks for a hand-off
+    ctx.config = replace(ctx.config, shadow=replace(ctx.config.shadow, handoff=False))
+    code, res = call(ctx, "cleanup", "--run", out["run_id"])
+    assert code == 0 and "handoff" not in res and res["run_dir_removed"] is True
+    assert not (ctx.shadow.root / f"{out['run_id']}.handoff").exists()

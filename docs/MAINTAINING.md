@@ -12,7 +12,7 @@ Everything is local: nothing leaves your machine. It is written as JSONL under `
 
 ### Hand-off data
 
-With `shadow.handoff = true`, `context` reports `handoff: true` and the `review-local` and `review-pr` skills run one extra step after `post` and before `cleanup`: `code-check handoff --run <run_id>`. With the flag off the skills skip that step, so nothing about a run changes; called directly, the command prints `{"handoff": false}` and writes nothing. It is an internal step and is not listed in `code-check --help`. It never fails a review: any error comes back as `{"handoff": false, "error": ...}`.
+With `shadow.handoff = true`, `context` reports `handoff: true` and the `review-local` and `review-pr` skills run one extra step after `post` and before `cleanup`: `code-check handoff --run <run_id>`. With the flag off the skills skip that step, so nothing about a run changes; called directly, the command prints `{"handoff": false}` and writes nothing. It is an internal step and is not listed in `code-check --help`. It never fails a review: any error comes back as `{"handoff": false, "error": ...}`. If a run reaches `cleanup` without a hand-off (a model dropped the step), `cleanup` writes it first and adds `"handoff": true` or `false` to its output (with `handoff_error` giving the reason on `false`); with the flag off, or a hand-off already there, it adds nothing.
 
 It writes to `<shadow.store>/<run_id>.handoff/`:
 

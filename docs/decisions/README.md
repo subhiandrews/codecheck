@@ -73,3 +73,4 @@ Records dated before 2026-11-20 were reconstructed from the original design spec
 - [0052-babysit-pr-reruns-a-flaky-check-once.md](0052-babysit-pr-reruns-a-flaky-check-once.md): babysit-pr reruns a flaky check once
 - [0053-feedback-is-consent-gated-asked-once-a-day-and-queued-when-unattended.md](0053-feedback-is-consent-gated-asked-once-a-day-and-queued-when-unattended.md): Feedback is consent-gated, asked once a day, and queued when unattended
 - [0054-reviewers-are-not-told-again-to-anchor-on-changed-lines.md](0054-reviewers-are-not-told-again-to-anchor-on-changed-lines.md): Reviewers are not told again to anchor on changed lines
+- [0055-cleanup-writes-a-hand-off-the-skill-step-skipped.md](0055-cleanup-writes-a-hand-off-the-skill-step-skipped.md): cleanup writes a hand-off the skill step skipped
