@@ -40,6 +40,12 @@ def _dicts(items) -> list[dict]:
     return [i for i in items if isinstance(i, dict)] if isinstance(items, list) else []
 
 
+def _reason(item: dict) -> str:
+    """The drop reason as text: the aggregator's list is stored as written, so it may not be a string."""
+    reason = item.get("reason")
+    return reason if isinstance(reason, str) and reason else "unknown"
+
+
 def _dropped_hits(handoff: dict) -> list[dict]:
     """One row per (human comment, dropped finding) pair the comment looks related to."""
     kept, dropped = _dicts(handoff.get("findings")), _dicts(handoff.get("dropped"))
@@ -47,13 +53,14 @@ def _dropped_hits(handoff: dict) -> list[dict]:
     for c in handoff["comparison"].get("human_comments") or []:
         if c.get("matched_finding"):
             continue
-        related = c["related"] if "related" in c else related_findings(c.get("body") or "", c.get("path"), kept, dropped)
+        # Recomputed without the cap: the stored `related` keeps only 3, and kept findings come first.
+        related = related_findings(c.get("body") or "", c.get("path"), kept, dropped, limit=None)
         for r in related:
             if r.get("kind") != "dropped":
                 continue
             twin = next((d for d in dropped if d.get("file") == r.get("file") and d.get("line") == r.get("line")
                          and d.get("reason") == r.get("reason")), {})
-            rows.append({"run_id": handoff.get("run_id"), "pr": handoff.get("pr"), "reason": r.get("reason"),
+            rows.append({"run_id": handoff.get("run_id"), "pr": handoff.get("pr"), "reason": _reason(r),
                          "file": r.get("file"), "line": r.get("line"), "reviewers": twin.get("reviewers") or [],
                          "comment_author": c.get("author"), "comment_line": c.get("line"), "shared": r.get("shared")})
     return rows
@@ -62,11 +69,11 @@ def _dropped_hits(handoff: dict) -> list[dict]:
 def ledger(handoffs: list[dict]) -> dict:
     drops, hits, distinct = Counter(), [], set()
     for h in handoffs:
-        drops.update(d.get("reason") or "unknown" for d in _dicts(h.get("dropped")))
+        drops.update(_reason(d) for d in _dicts(h.get("dropped")))
         for row in _dropped_hits(h):
             hits.append(row)
-            distinct.add((row["run_id"], row["file"], row["line"], row["reason"]))  # one drop, however many comments
-    raised = Counter(reason or "unknown" for _, _, _, reason in distinct)
+            distinct.add(tuple(str(row[k]) for k in ("run_id", "file", "line", "reason")))  # one drop, however many comments
+    raised = Counter(reason for _, _, _, reason in distinct)
     return {"runs": len(handoffs), "dropped_by_reason": dict(drops), "dropped_with_related_comment": dict(raised), "hits": hits}
 
 

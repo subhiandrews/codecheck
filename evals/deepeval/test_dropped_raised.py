@@ -55,10 +55,19 @@ def test_malformed_dropped_entries_are_skipped_not_fatal():
     assert result["dropped_by_reason"] == {"out-of-scope": 1, "x": 1} and [h["reason"] for h in result["hits"]] == ["out-of-scope"]
 
 
-def test_a_stored_related_list_is_used_as_written():
-    stored = {"kind": "dropped", "id": None, "reason": "low-value", "file": "a.go", "line": 146, "shared": ["x"]}
-    result = ledger([_handoff("r1", [_comment("nothing in common", related=[stored])])])
-    assert [h["reason"] for h in result["hits"]] == ["low-value"]
+def test_the_ledger_recomputes_related_without_the_cap():
+    """Three kept findings fill the stored `related`; the dropped one a person also raised must still count."""
+    kept = [{"id": f"k{i}", "file": "a.go", "line": i, "message": "compat subscriptions owned by the root injector"} for i in range(3)]
+    stored = [{"kind": "kept", "id": k["id"], "reason": None, "file": "a.go", "line": k["line"], "shared": ["x"]} for k in kept]
+    h = _handoff("r1", [_comment("compat subscriptions owned by the root injector", related=stored)], dropped=[DROPPED])
+    h["findings"] = kept
+    assert [r["reason"] for r in ledger([h])["hits"]] == ["out-of-scope"]
+
+
+def test_a_reason_or_line_that_is_not_text_does_not_stop_the_ledger():
+    odd = [{**DROPPED, "reason": ["out-of-scope"]}, {**DROPPED, "reason": {"a": 1}, "line": [3]}]
+    result = ledger([_handoff("r1", [_comment("compat subscriptions owned by the root injector")], dropped=odd)])
+    assert result["dropped_by_reason"] == {"unknown": 2}
 
 
 def test_summary_and_main_read_the_store(tmp_path, capsys):

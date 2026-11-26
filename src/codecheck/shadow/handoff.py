@@ -59,10 +59,10 @@ def _terms(text) -> set[str]:
     return out - _STOP
 
 
-def related_findings(body: str, path, kept: Sequence[dict], dropped: Sequence[dict]) -> list[dict]:
+def related_findings(body: str, path, kept: Sequence[dict], dropped: Sequence[dict], *, limit: int | None = MAX_RELATED) -> list[dict]:
     """Kept and dropped findings in the same file that share at least MIN_SHARED words with a human comment.
 
-    Most shared words first, kept before dropped on a tie; at most MAX_RELATED."""
+    Most shared words first, kept before dropped on a tie; at most `limit` (MAX_RELATED by default, None for all)."""
     mine = _terms(body)
     if not isinstance(path, str) or len(mine) < MIN_SHARED:
         return []
@@ -75,9 +75,11 @@ def related_findings(body: str, path, kept: Sequence[dict], dropped: Sequence[di
             if len(shared) >= MIN_SHARED:
                 scored.append({"kind": kind, "id": f.get("id") if kind == "kept" else None,
                                "reason": f.get("reason") if kind == "dropped" else None,
-                               "file": path, "line": f.get("line"), "shared": shared[:8]})
-    scored.sort(key=lambda r: -len(r["shared"]))
-    return scored[:MAX_RELATED]
+                               "file": path, "line": f.get("line"), "shared": shared})
+    scored.sort(key=lambda r: -len(r["shared"]))  # on the full count; the stored list is cut to 8 words below
+    for r in scored:
+        r["shared"] = r["shared"][:8]
+    return scored if limit is None else scored[:limit]
 
 
 def build_general_comments(reviews: Sequence[Review], issue_comments: Sequence[IssueComment], *, pr_author: str) -> list[dict]:

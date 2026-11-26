@@ -5,7 +5,7 @@ User-visible changes per release, newest first. Earlier releases: `git log`. The
 ## [1.7.1]
 
 ### Changed
-- With `shadow.handoff` on, each human comment the hand-off could not match by location now lists the kept or dropped findings in the same file that share words with it (`related` in `handoff.json`, "possibly the same concern" in `handoff.md`). Matching, `misses` and `unraised_findings` are unchanged.
+- With `shadow.handoff` on, the hand-off lists same-file findings that look like the same concern next to each human comment it could not match.
 
 ## [1.7.0]
 

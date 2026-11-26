@@ -456,6 +456,29 @@ def test_related_puts_the_most_shared_words_first_and_kept_before_dropped_on_a_t
     assert [(r["kind"], r["id"] or r["reason"]) for r in related] == [("dropped", "low-value"), ("kept", "tie"), ("dropped", "duplicate")]
 
 
+def test_related_ranks_on_the_full_shared_count_even_though_it_stores_eight_words():
+    words = [f"word{chr(97 + i)}{chr(97 + i)}" for i in range(11)]  # wordaa .. wordkk, none a stop word
+    kept = [{"id": "nine", "file": "a.go", "line": 1, "message": " ".join(words[:9])},
+            {"id": "eleven", "file": "a.go", "line": 2, "message": " ".join(words)}]
+    related = build_comparison([_human("T1", "a.go", " ".join(words))], kept)["human_comments"][0]["related"]
+    assert [r["id"] for r in related] == ["eleven", "nine"] and all(len(r["shared"]) == 8 for r in related)
+
+
+def test_handoff_passes_the_aggregators_dropped_findings_to_related(tmp_path):
+    ctx, provider, pr = pr_setup(tmp_path)
+    enable_handoff(ctx, tmp_path)
+    out = run_pr_context(ctx, pr)
+    dropped = {"file": "app.py", "line": 40, "reason": "low-value", "message": "retry loop swallows timeout errors silently"}
+    finish_review(ctx, out, {"skeptic": [FINDING]}, {"findings": [FINDING], "dropped": [dropped]})
+    call(ctx, "ingest", "--run", out["run_id"])
+    call(ctx, "post", "--run", out["run_id"])
+    provider.threads[pr.ref] = [human("T1", 300, "the retry loop swallows timeout errors silently")]
+    call(ctx, "handoff", "--run", out["run_id"])
+    _folder, data = handoff_files(ctx, out["run_id"])
+    (c,) = data["comparison"]["human_comments"]
+    assert c["matched_finding"] is None and [(r["kind"], r["reason"]) for r in c["related"]] == [("dropped", "low-value")]
+
+
 def test_related_skips_findings_whose_message_is_not_text():
     kept = [{"id": "f1", "file": "a.go", "line": 1, "message": 7}]
     dropped = [{"file": "a.go", "line": 2, "reason": "low-value", "message": ["alpha", "bravo"]}, "not a finding",
