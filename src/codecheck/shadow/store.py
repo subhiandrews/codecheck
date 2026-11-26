@@ -95,6 +95,10 @@ class ShadowStore:
             return None
         return data if isinstance(data, dict) else None
 
+    def has_handoff(self, run_id: str) -> bool:
+        """Whether a hand-off was written for the run; a read, so it creates no folder."""
+        return (self._path(run_id, ".handoff") / "handoff.json").is_file()
+
     def handoff_dir(self, run_id: str) -> Path:
         path = self._path(run_id, ".handoff")
         self._ensure_dir()

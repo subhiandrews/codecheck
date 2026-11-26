@@ -2,6 +2,11 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.6.3]
+
+### Fixed
+- With `shadow.handoff` on, `cleanup` now writes the run's hand-off when the skill's own `handoff` step was skipped. About a quarter of `review-local` runs had lost their record that way, because `cleanup` deletes the run directory the hand-off is built from.
+
 ## [1.6.2]
 
 ### Fixed
