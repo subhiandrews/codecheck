@@ -39,16 +39,22 @@ def _aggregator(raw: object, root: str | None) -> object:
     return _relative(raw, root)
 
 
-def _signals(shadow: ShadowStore, run_id: str):
-    """The hand-off's transcript signals without tool output: a case is committed, and error text can hold home
-    paths, user names or PR text. Counts and per-agent stats stay; each tool error keeps only its agent and tool."""
+def _handoff(shadow: ShadowStore, run_id: str) -> dict | None:
+    """The run's `handoff.json`, or None when it is missing, a symlink or not a JSON object."""
     path = shadow.root / f"{run_id}.handoff" / "handoff.json"
     if path.is_symlink() or not path.is_file():
         return None
     try:
-        signals = json.loads(path.read_text(encoding="utf-8")).get("signals")
-    except (OSError, ValueError, AttributeError):
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return None
+    return data if isinstance(data, dict) else None
+
+
+def _signals(shadow: ShadowStore, run_id: str):
+    """The hand-off's transcript signals without tool output: a case is committed, and error text can hold home
+    paths, user names or PR text. Counts and per-agent stats stay; each tool error keeps only its agent and tool."""
+    signals = (_handoff(shadow, run_id) or {}).get("signals")
     if not isinstance(signals, dict):
         return None
     errors = signals.get("tool_errors")
@@ -56,16 +62,27 @@ def _signals(shadow: ShadowStore, run_id: str):
     return {**{k: v for k, v in signals.items() if k not in ("ignored_guidance",)}, "tool_errors": errors}
 
 
-def _handoff_findings(shadow: ShadowStore, run_id: str) -> list[dict]:
-    """The findings the hand-off recorded as kept, for a run whose store has no `finding` records."""
-    path = shadow.root / f"{run_id}.handoff" / "handoff.json"
-    if path.is_symlink() or not path.is_file():
+def _handoff_findings(shadow: ShadowStore, run_id: str, aggregator: object, root: str | None) -> list[dict]:
+    """The findings the hand-off recorded as kept, for a run whose store has no `finding` records. The hand-off cuts
+    a message to 300 characters; the aggregator's own text replaces it when it is the same message, so a judge reads
+    the whole of it."""
+    found = (_handoff(shadow, run_id) or {}).get("findings")
+    if not isinstance(found, list):
         return []
-    try:
-        found = json.loads(path.read_text(encoding="utf-8")).get("findings")
-    except (OSError, ValueError, AttributeError):
-        return []
-    return [f for f in found if isinstance(f, dict) and isinstance(f.get("id"), str)] if isinstance(found, list) else []
+    items = _aggregator(aggregator, root)
+    items = items.get("findings") if isinstance(items, dict) else items
+    full = {(f.get("file"), f.get("line"), f.get("category"), f.get("severity")): f["message"]
+            for f in items if isinstance(f, dict) and isinstance(f.get("message"), str)} if isinstance(items, list) else {}
+    out = []
+    for f in found:
+        if not isinstance(f, dict) or not isinstance(f.get("id"), str):
+            continue
+        whole = full.get((_clean_path(str(f.get("file")), root), f.get("line"), f.get("category"), f.get("severity")))
+        cut = f.get("message")
+        if isinstance(cut, str) and whole is not None and " ".join(whole.split())[:300] == cut:
+            f = {**f, "message": whole}
+        out.append(f)
+    return out
 
 
 def _pr_number(pr) -> int | None:
@@ -90,7 +107,7 @@ def draft_case(shadow: ShadowStore, run_id: str) -> dict:
     outcomes, humans = run_feedback(shadow).get(run_id, ({}, {}))
     posted = [r for r in records if r.get("type") == "finding" and isinstance(r.get("id"), str)]
     # a local review posts nothing, so the store has no `finding` records: the hand-off lists what it kept
-    findings = posted or _handoff_findings(shadow, run_id)
+    findings = posted or _handoff_findings(shadow, run_id, raw["aggregator"], root)
     labels = [
         {"id": r["id"], "file": _clean_path(str(r.get("file")), root), "line": r.get("line"), "severity": r.get("severity"),
          "category": r.get("category"), "message": r.get("message"),

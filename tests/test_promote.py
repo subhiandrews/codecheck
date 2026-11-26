@@ -142,6 +142,15 @@ def test_draft_of_a_run_without_finding_records_labels_the_findings_of_its_hando
         "app.py", 2, "warning", "bug", "y is unused")
 
 
+def test_a_local_runs_label_keeps_the_full_message_the_handoff_cut_short(tmp_path):
+    """The hand-off keeps 300 characters of a message; the judge of `eval --calibrate` should read the whole of it."""
+    long = "y is unused, " + "and that matters. " * 40
+    ctx, _pr, out, ids = review_run(tmp_path, aggregated={"findings": [{**FINDING, "message": long}], "dropped": []})
+    without_finding_records(ctx, out["run_id"])
+    labels = draft_case(ctx.shadow, out["run_id"])["labels"]
+    assert len(long) > 300 and [lab["message"] for lab in labels] == [long] and labels[0]["id"] == ids[2]
+
+
 def test_draft_of_a_run_without_finding_records_or_a_handoff_has_no_labels(tmp_path):
     ctx, _pr, out, _ids = review_run(tmp_path)
     without_finding_records(ctx, out["run_id"])
