@@ -25,7 +25,8 @@ def _gh(*, head="new1", replies=(), issue=(), files=()):
         "repos/o/r/pulls/1/reviews/7": REVIEW,
         "repos/o/r/pulls/1": {"head": {"sha": head}, "state": "open", "merged_at": None},
         "repos/o/r/pulls/1/reviews/7/comments": [
-            {"id": 100, "path": "a.py", "line": 11, "body": "**Warning** · tests\n\ntext", "reactions": {"total_count": 1}}],
+            {"id": 100, "path": "a.py", "line": 11, "original_line": 11, "body": "**Warning** · tests\n\ntext",
+             "reactions": {"total_count": 1}}],
         "repos/o/r/pulls/1/comments": list(replies),
         "repos/o/r/issues/1/comments": list(issue),
         "repos/o/r/pulls/1/reviews": [],
@@ -60,6 +61,27 @@ def test_the_reviewed_commit_line_is_used_not_the_current_head_line():
 
     f = collect(ENTRY, gh, "me")["findings"][0]
     assert (f["line"], f["code"]) == (11, "changed_near")
+
+
+def test_a_comment_with_only_a_head_side_line_is_unknown_not_guessed():
+    base = _gh(files=[{"filename": "a.py", "patch": PATCH}])
+
+    def gh(endpoint):
+        if endpoint.endswith("/reviews/7/comments"):
+            return [{"id": 100, "path": "a.py", "line": 11, "original_line": None, "body": "**Warning** · x"}]
+        return base(endpoint)
+
+    assert collect(ENTRY, gh, "me")["findings"][0]["code"] == "unknown"
+
+
+def test_main_reports_malformed_input_in_one_line_and_an_unwritable_out_path(tmp_path, capsys):
+    posted = tmp_path / "posted.json"
+    posted.write_text(json.dumps(["not", "an", "object"]))
+    assert main(["--posted", str(posted)]) == 1
+    assert capsys.readouterr().err.count("\n") == 1
+    posted.write_text(json.dumps({"prs": []}))
+    assert main(["--posted", str(posted), "--out", str(tmp_path / "no-such-dir" / "out.json")]) == 1
+    assert "FileNotFoundError" in capsys.readouterr().err
 
 
 def test_an_entry_with_a_review_id_but_no_usable_pr_is_reported_not_fatal():

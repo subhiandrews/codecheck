@@ -135,9 +135,10 @@ def collect(entry: dict, gh: Gh, me: str, near: int = NEAR) -> dict:
     for c in ours:
         # the review-scoped listing returns null lines for outdated comments; the PR-wide listing keeps them
         full = {**c, **{k: v for k, v in by_id.get(c["id"], {}).items() if v is not None}}
-        # original_line is the line in the reviewed commit, which the compare's old side numbers; `line` is the
-        # current head's and shifts when a push adds or removes lines above the comment
-        line = full.get("original_line") or full.get("line") or 0
+        # original_line is the line in the reviewed commit, which the compare's old side numbers. `line` is the
+        # current head's and shifts when a push adds or removes lines above the comment, so it is never a fallback:
+        # without original_line the code change is unknown
+        line = full.get("original_line") or 0
         replies = [r for r in everything if r.get("in_reply_to_id") == c["id"] and _human(r.get("user"), me)]
         change = code_change(files, c["path"], line, near, capped=len(files) >= COMPARE_CAP)
         severity = KIND_RE.match(c.get("body") or "")
@@ -198,11 +199,12 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     try:
         result = run(json.loads(args.posted.expanduser().read_text(encoding="utf-8")), gh_api, args.near)
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError, ValueError, KeyError) as exc:  # e.g. no gh, bad auth
+        if args.out:
+            args.out.expanduser().write_text(json.dumps(result, indent=1) + "\n", encoding="utf-8")
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError, ValueError, KeyError, TypeError,
+            AttributeError) as exc:  # no gh, bad auth, a malformed posted file, an unwritable --out
         print(f"outcomes: {type(exc).__name__}: {_detail(exc)}"[:300], file=sys.stderr)
         return 1
-    if args.out:
-        args.out.expanduser().write_text(json.dumps(result, indent=1) + "\n", encoding="utf-8")
     print("\n".join(summary(result)))
     return 0
 
