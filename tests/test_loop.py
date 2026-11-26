@@ -16,6 +16,7 @@ from gitutil import make_origin_and_clone
 from codecheck.commands import loop
 from codecheck.config import LoopConfig
 from codecheck.core.state import FileLock, babysit_rounds, note_round, rounds_key
+from codecheck.errors import CodeCheckError
 from codecheck.models import Check, Thread, ThreadComment
 from codecheck.runner import CommandResult
 
@@ -561,3 +562,18 @@ def test_a_run_whose_head_cannot_be_read_before_it_starts_says_so_too(tmp_path):
     provider.get_pr = lambda ref: (_ for _ in ()).throw(RuntimeError("api down"))
     out = call(ctx, "run-pr", "--mode", "babysit", "--pr", str(pr.ref), "--fingerprint", "fp1")[1]
     assert out["rounds"] is None and "not counted" in out["rounds_note"]
+
+
+def test_a_state_error_while_counting_a_round_does_not_fail_the_run(tmp_path):
+    ctx, provider, fake, pr = _babysit_setup(tmp_path, "Warning")
+    _push_during_run(provider, fake, pr)
+    real = ctx.state.update
+
+    def update(key, fn):
+        if key.endswith(":rounds"):
+            raise CodeCheckError("state lock timeout")
+        return real(key, fn)
+
+    ctx.state.update = update
+    out = call(ctx, "loop", "--mode", "babysit")[1]["results"][0]
+    assert out["ok"] is True and out["rounds"] is None and "not counted" in out["rounds_note"]

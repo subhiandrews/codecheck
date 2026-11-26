@@ -116,10 +116,13 @@ def run_one(ctx, mode: str, ref, fingerprint: str | None = None, dry_run: bool =
     if fingerprint:
         extra = loop_bookkeeping(ctx, mode, ref, fingerprint, parsed["ok"])
         if counting:
-            rounds = note_round(ctx.state, ref, head_before, _head(ctx, ref))
+            try:
+                rounds = note_round(ctx.state, ref, head_before, _head(ctx, ref))
+            except Exception:  # noqa: BLE001 - a locked or unreadable state file must not turn a run that pushed into a failure
+                rounds = None
             extra["rounds"] = rounds
             if rounds is None:
-                extra["rounds_note"] = "the PR head could not be read, so this run was not counted against the round limit"
+                extra["rounds_note"] = "the PR head or the round count could not be read or saved, so this run was not counted against the round limit"
     ctx.record(new_run_id(), {"type": "headless_run", "pr": str(ref), "mode": mode, "ok": parsed["ok"],
                               "cost_usd": parsed["cost"], "usage": parsed["usage"], "duration_s": duration})
     return {"pr": str(ref), "ok": parsed["ok"], "summary": parsed["summary"], "cost_usd": parsed["cost"],
