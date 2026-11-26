@@ -69,7 +69,9 @@ ROLES: dict[str, tuple[str, str]] = {
         (
             "You are the skeptic. You own ALL changed files. Try to break the change: hidden assumptions, unhandled failure modes, concurrency and ordering, "
             "error handling that swallows problems, input validation and security, resource leaks, and missing or weak tests. "
-            "Also look at what is NOT in the diff: callers that may now break and tests that should have changed."
+            "Also look at what is NOT in the diff: callers that may now break and tests that should have changed.\n\n"
+            "For every added or changed test, name the line where its setup reaches the changed code (a missing fixture, import or flag can make the code return early so the test proves nothing), "
+            "and name any assertion that another assertion in the same test already guarantees."
         ),
     ),
 }

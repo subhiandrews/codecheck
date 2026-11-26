@@ -240,3 +240,9 @@ def test_findings_file_is_the_last_step_and_done_needs_it():
         assert "last tool call must be the Write" in text, name
         assert "`done:` line is only valid after the file exists" in text, name
         assert "Finding nothing is not a reason to skip the file" in text, name
+
+
+def test_skeptic_checks_test_reach_and_redundant_assertions():
+    body = render_all(ModelsConfig())["skeptic.md"]
+    assert "name the line where its setup reaches the changed code" in body
+    assert "assertion that another assertion in the same test already guarantees" in body

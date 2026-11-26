@@ -76,3 +76,4 @@ Records dated before 2026-11-20 were reconstructed from the original design spec
 - [0055-cleanup-writes-a-hand-off-the-skill-step-skipped.md](0055-cleanup-writes-a-hand-off-the-skill-step-skipped.md): cleanup writes a hand-off the skill step skipped
 - [0056-the-babysit-loop-counts-rounds-per-pr-and-stops-at-five.md](0056-the-babysit-loop-counts-rounds-per-pr-and-stops-at-five.md): the babysit loop counts rounds per PR and stops at five
 - [0057-hand-off-comments-get-related-findings-by-shared-words.md](0057-hand-off-comments-get-related-findings-by-shared-words.md): hand-off comments get related findings by shared words
+- [0058-the-skeptic-checks-that-tests-reach-the-changed-code.md](0058-the-skeptic-checks-that-tests-reach-the-changed-code.md): The skeptic checks that tests reach the changed code
