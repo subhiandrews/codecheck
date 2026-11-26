@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 
+import outcomes
 import pytest
 from outcomes import (
     code_change,
@@ -112,14 +113,16 @@ def test_a_comment_with_only_a_head_side_line_is_unknown_not_guessed():
     assert collect(ENTRY, gh, "me")["findings"][0]["code"] == "unknown"
 
 
-def test_main_reports_malformed_input_in_one_line_and_an_unwritable_out_path(tmp_path, capsys):
+def test_main_reports_malformed_input_in_one_line_and_an_unwritable_out_path(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(outcomes, "gh_api", lambda endpoint: {"login": "me"})  # never reach the real gh
     posted = tmp_path / "posted.json"
     posted.write_text(json.dumps(["not", "an", "object"]))
     assert main(["--posted", str(posted)]) == 1
     assert capsys.readouterr().err.count("\n") == 1
     posted.write_text(json.dumps({"prs": []}))
     assert main(["--posted", str(posted), "--out", str(tmp_path / "no-such-dir" / "out.json")]) == 1
-    assert "FileNotFoundError" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "FileNotFoundError" in err and "no-such-dir" in err  # the --out write, not a missing gh
 
 
 def test_an_entry_with_a_review_id_but_no_usable_pr_is_reported_not_fatal():
