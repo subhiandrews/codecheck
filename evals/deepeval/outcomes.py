@@ -11,7 +11,8 @@ we reviewed and the head now. Each inline finding gets one signal:
 
 A signal is a candidate only: an author's reply is not evidence that the code changed, so a person reads the diff
 before any label is written. A mention of us is reported once per PR (`mentions_us`), never counted as a reply.
-`replied_unverified` / `unverified` mean the cited line or the file's patch was unavailable.
+`replied_unverified` / `unverified` mean the cited line or the file's patch was unavailable, or the compare hit GitHub's
+300-file cap and did not list the file.
 
 Usage:
   python -B evals/deepeval/outcomes.py --posted ~/.local/share/code-check-evals/posted-reviews-2026-11-24.json \
@@ -127,11 +128,15 @@ def collect(entry: dict, gh: Gh, me: str, near: int = NEAR) -> dict:
     issue = gh(f"{base}/issues/{pr}/comments")
     reviews = gh(f"{base}/pulls/{pr}/reviews")
     files = [] if head == reviewed else gh(f"{base}/compare/{reviewed}...{head}").get("files", [])
-    mentioned = any(_human(c.get("user"), me) and c["created_at"] > posted_at and f"@{me}" in (c.get("body") or "")
+    mentioned = any(_human(c.get("user"), me) and c["created_at"] > posted_at and f"@{me}".lower() in (c.get("body") or "").lower()
                     for c in issue)
     findings = []
     by_id = {c["id"]: c for c in everything}
-    sizes = {f["filename"]: f"+{f.get('additions', 0)}/-{f.get('deletions', 0)}" for f in files}
+    sizes = {}
+    for f in files:  # a renamed file is cited by its old path
+        for name in (f.get("filename"), f.get("previous_filename")):
+            if name:
+                sizes[name] = f"+{f.get('additions', 0)}/-{f.get('deletions', 0)}"
     for c in ours:
         # the review-scoped listing returns null lines for outdated comments; the PR-wide listing keeps them
         full = {**c, **{k: v for k, v in by_id.get(c["id"], {}).items() if v is not None}}

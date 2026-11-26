@@ -63,6 +63,17 @@ def test_the_reviewed_commit_line_is_used_not_the_current_head_line():
     assert (f["line"], f["code"]) == (11, "changed_near")
 
 
+def test_a_mention_is_found_whatever_the_case_of_the_login():
+    note = {"user": {"login": "author", "type": "User"}, "created_at": "2026-11-25T00:00:00Z", "body": "thanks @ME"}
+    assert collect(ENTRY, _gh(issue=[note]), "me")["mentions_us"] is True
+
+
+def test_the_size_of_a_renamed_file_is_found_under_its_old_path():
+    renamed = {"filename": "new.py", "previous_filename": "a.py", "patch": PATCH, "additions": 2, "deletions": 1}
+    f = collect(ENTRY, _gh(files=[renamed]), "me")["findings"][0]
+    assert (f["code"], f["file_delta"]) == ("changed_near", "+2/-1")
+
+
 def test_a_comment_with_only_a_head_side_line_is_unknown_not_guessed():
     base = _gh(files=[{"filename": "a.py", "patch": PATCH}])
 
