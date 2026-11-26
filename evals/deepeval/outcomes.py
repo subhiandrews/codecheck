@@ -28,6 +28,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 NEAR = 10
 COMPARE_CAP = 300  # GitHub lists at most this many changed files for a whole comparison, even when paged
@@ -35,7 +36,7 @@ REPO_RE = re.compile(r"^[A-Za-z0-9_][\w.-]*/[A-Za-z0-9_][\w.-]*$")  # never star
 KIND_RE = re.compile(r"^\*\*(\w+)\*\*")
 HUNK_RE = re.compile(r"^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@")
 
-Gh = Callable[[str], object]
+Gh = Callable[[str], Any]  # endpoint to parsed JSON: a dict or a list, whichever the endpoint returns
 
 
 def gh_api(endpoint: str) -> object:
@@ -44,7 +45,7 @@ def gh_api(endpoint: str) -> object:
         raise ValueError(f"unexpected endpoint {endpoint!r}")
     # argv list; the endpoint is built from validated repo and integer parts
     out = subprocess.run(  # noqa: S603
-        ["gh", "api", "--paginate", endpoint], capture_output=True, text=True, check=True, timeout=120  # noqa: S607
+        ["gh", "api", "--paginate", endpoint], capture_output=True, encoding="utf-8", check=True, timeout=120  # noqa: S607
     ).stdout
     decoder, pos, parts = json.JSONDecoder(), 0, []
     while pos < len(out):
@@ -127,8 +128,14 @@ def collect(entry: dict, gh: Gh, me: str, near: int = NEAR) -> dict:
     everything = gh(f"{base}/pulls/{pr}/comments")
     issue = gh(f"{base}/issues/{pr}/comments")
     reviews = gh(f"{base}/pulls/{pr}/reviews")
-    files = [] if head == reviewed else gh(f"{base}/compare/{reviewed}...{head}").get("files", [])
-    mentioned = any(_human(c.get("user"), me) and c["created_at"] > posted_at and f"@{me}".lower() in (c.get("body") or "").lower()
+    compared = {} if head == reviewed else gh(f"{base}/compare/{reviewed}...{head}")
+    # `a...b` diffs from the merge-base, which is the reviewed commit only while the head descends from it; after a
+    # rebase or force-push the old side no longer numbers the commit the comments were made on
+    merge_base = (compared.get("merge_base_commit") or {}).get("sha")
+    diverged = bool(merge_base) and merge_base != reviewed
+    files = [] if diverged else compared.get("files", [])
+    mention = re.compile(rf"(?<![\w-])@{re.escape(me)}(?![\w-])", re.IGNORECASE)  # the whole login, not a prefix
+    mentioned = any(_human(c.get("user"), me) and c["created_at"] > posted_at and mention.search(c.get("body") or "")
                     for c in issue)
     findings = []
     by_id = {c["id"]: c for c in everything}
@@ -145,7 +152,7 @@ def collect(entry: dict, gh: Gh, me: str, near: int = NEAR) -> dict:
         # without original_line the code change is unknown
         line = full.get("original_line") or 0
         replies = [r for r in everything if r.get("in_reply_to_id") == c["id"] and _human(r.get("user"), me)]
-        change = code_change(files, c["path"], line, near, capped=len(files) >= COMPARE_CAP)
+        change = code_change(files, c["path"], line, near, capped=diverged or len(files) >= COMPARE_CAP)
         severity = KIND_RE.match(c.get("body") or "")
         findings.append({
             "comment_id": c["id"], "path": c["path"], "line": line,
@@ -159,7 +166,7 @@ def collect(entry: dict, gh: Gh, me: str, near: int = NEAR) -> dict:
         "state": pull["state"], "merged": bool(pull.get("merged_at")),
         "new_reviews_by_others": sum(1 for r in reviews if _human(r.get("user"), me) and r["submitted_at"] > posted_at),
         "comments_by_others": sum(1 for c in issue if _human(c.get("user"), me) and c["created_at"] > posted_at),
-        "mentions_us": mentioned, "findings": findings,
+        "mentions_us": mentioned, "diverged": diverged, "findings": findings,
     }
 
 
@@ -177,7 +184,8 @@ def run(posted: dict, gh: Gh, near: int = NEAR) -> dict:
             continue
         try:
             rows.append(collect(e, gh, me, near))
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, KeyError, TypeError, ValueError, OSError) as exc:
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, KeyError, TypeError, AttributeError, ValueError,
+                OSError) as exc:
             rows.append({"repo": e.get("repo"), "pr": e.get("pr"), "error": f"{type(exc).__name__}: {_detail(exc)}"[:300],
                          "findings": []})  # one unreadable PR must not lose the others
     return {"source": posted.get("posted_on"), "near": near, "prs": rows,

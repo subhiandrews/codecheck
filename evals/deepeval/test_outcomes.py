@@ -19,7 +19,7 @@ PATCH = "@@ -10,4 +10,5 @@\n keep\n-old\n+new\n+newer\n keep\n"
 REVIEW = {"submitted_at": "2026-11-24T20:00:00Z", "commit_id": "old1"}
 
 
-def _gh(*, head="new1", replies=(), issue=(), files=()):
+def _gh(*, head="new1", replies=(), issue=(), files=(), merge_base=None):
     data = {
         "user": {"login": "me"},
         "repos/o/r/pulls/1/reviews/7": REVIEW,
@@ -30,7 +30,7 @@ def _gh(*, head="new1", replies=(), issue=(), files=()):
         "repos/o/r/pulls/1/comments": list(replies),
         "repos/o/r/issues/1/comments": list(issue),
         "repos/o/r/pulls/1/reviews": [],
-        "repos/o/r/compare/old1...new1": {"files": list(files)},
+        "repos/o/r/compare/old1...new1": {"files": list(files), **({"merge_base_commit": {"sha": merge_base}} if merge_base else {})},
     }
     return data.__getitem__
 
@@ -61,6 +61,33 @@ def test_the_reviewed_commit_line_is_used_not_the_current_head_line():
 
     f = collect(ENTRY, gh, "me")["findings"][0]
     assert (f["line"], f["code"]) == (11, "changed_near")
+
+
+def test_a_head_that_no_longer_descends_from_the_reviewed_commit_is_unknown():
+    files = [{"filename": "a.py", "patch": PATCH}]
+    rebased = collect(ENTRY, _gh(files=files, merge_base="someone-elses-base"), "me")
+    assert rebased["diverged"] is True and rebased["findings"][0]["code"] == "unknown"
+    descended = collect(ENTRY, _gh(files=files, merge_base="old1"), "me")
+    assert descended["diverged"] is False and descended["findings"][0]["code"] == "changed_near"
+
+
+@pytest.mark.parametrize(("body", "found"), [
+    ("thanks @me", True), ("(@Me)", True), ("@me, please look", True),
+    ("thanks @menace", False), ("see @me-too", False), ("mail me@example.com", False),
+])
+def test_a_mention_matches_the_whole_login_in_any_case(body, found):
+    note = {"user": {"login": "author", "type": "User"}, "created_at": "2026-11-25T00:00:00Z", "body": body}
+    assert collect(ENTRY, _gh(issue=[note]), "me")["mentions_us"] is found
+
+
+def test_an_unexpected_response_shape_ends_one_pr_not_the_run():
+    base = _gh()
+
+    def gh(endpoint):
+        return [5] if endpoint.endswith("/issues/1/comments") else base(endpoint)
+
+    row = run({"prs": [ENTRY]}, gh)["prs"][0]
+    assert row["error"].startswith("AttributeError") and row["findings"] == []
 
 
 def test_a_mention_is_found_whatever_the_case_of_the_login():
