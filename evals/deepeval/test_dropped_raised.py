@@ -79,6 +79,19 @@ def test_reviewers_come_from_the_drop_itself_and_only_text_is_kept():
     assert "lang-go" in "\n".join(summary(result))
 
 
+def test_two_drops_at_the_same_place_and_reason_are_counted_twice():
+    twin = {**DROPPED, "reviewers": ["skeptic"]}
+    result = ledger([_handoff("r1", [_comment("compat subscriptions owned by the root injector")], dropped=[DROPPED, twin])])
+    assert result["dropped_by_reason"] == {"out-of-scope": 2} and result["dropped_with_related_comment"] == {"out-of-scope": 2}
+
+
+def test_human_comments_that_are_not_a_list_of_objects_do_not_stop_the_ledger():
+    for bad in ("text", None, ["x", 3], {"a": 1}):
+        h = _handoff("r1", [], dropped=[DROPPED])
+        h["comparison"]["human_comments"] = bad
+        assert ledger([h])["hits"] == []
+
+
 def test_summary_and_main_read_the_store(tmp_path, capsys):
     folder = tmp_path / "r1.handoff"
     folder.mkdir()

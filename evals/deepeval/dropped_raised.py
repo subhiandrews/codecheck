@@ -56,25 +56,25 @@ def _dropped_hits(handoff: dict) -> list[dict]:
     """One row per (human comment, dropped finding) pair the comment looks related to."""
     dropped = _dicts(handoff.get("dropped"))
     rows = []
-    for c in handoff["comparison"].get("human_comments") or []:
+    for c in _dicts(handoff["comparison"].get("human_comments")):
         if c.get("matched_finding"):
             continue
-        for d in dropped:  # each drop on its own: the stored `related` keeps only 3, and carries no reviewers
+        for i, d in enumerate(dropped):  # each drop on its own: the stored `related` keeps only 3, and carries no reviewers
             for r in related_findings(c.get("body") or "", c.get("path"), [], [d], limit=None):
-                rows.append({"run_id": handoff.get("run_id"), "pr": handoff.get("pr"), "reason": _reason(r),
+                rows.append({"run_id": handoff.get("run_id"), "pr": handoff.get("pr"), "drop": i, "reason": _reason(r),
                              "file": r.get("file"), "line": r.get("line"), "reviewers": _reviewers(d),
                              "comment_author": c.get("author"), "comment_line": c.get("line"), "shared": r.get("shared")})
     return rows
 
 
 def ledger(handoffs: list[dict]) -> dict:
-    drops, hits, distinct = Counter(), [], set()
+    drops, hits, distinct = Counter(), [], {}
     for h in handoffs:
         drops.update(_reason(d) for d in _dicts(h.get("dropped")))
         for row in _dropped_hits(h):
             hits.append(row)
-            distinct.add(tuple(str(row[k]) for k in ("run_id", "file", "line", "reason")))  # one drop, however many comments
-    raised = Counter(reason for _, _, _, reason in distinct)
+            distinct[(str(row["run_id"]), row["drop"])] = row["reason"]  # one drop, however many comments
+    raised = Counter(distinct.values())
     return {"runs": len(handoffs), "dropped_by_reason": dict(drops), "dropped_with_related_comment": dict(raised), "hits": hits}
 
 
