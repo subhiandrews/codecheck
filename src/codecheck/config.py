@@ -46,7 +46,7 @@ class ReviewConfig:
 @dataclass(frozen=True, slots=True)
 class LoopConfig:
     max_prs_per_iteration: int = 5
-    max_babysit_rounds: int = 5  # babysit: pushes the unattended loop makes to one PR before it is left to you
+    max_babysit_rounds: int = 5  # babysit: unattended runs that move a PR's head before the loop leaves it to you
     max_review_prs_per_iteration: int = 3  # review mode only: the newest open PRs of the repository come first
     repos: tuple[str, ...] = ()
     review_forks: bool = False  # the unattended review loop skips fork-based PRs unless this is true

@@ -554,3 +554,10 @@ def test_a_corrupt_round_entry_counts_as_zero_and_never_raises(tmp_path):
     ctx.state.set(rounds_key(pr.ref), {"head": "mine9", "count": "many"})
     assert babysit_rounds(ctx.state, pr.ref, "mine9") == 0
     assert note_round(ctx.state, pr.ref, "mine9", "next") == 1
+
+
+def test_a_run_whose_head_cannot_be_read_before_it_starts_says_so_too(tmp_path):
+    ctx, provider, _fake, pr = _babysit_setup(tmp_path, "Warning")
+    provider.get_pr = lambda ref: (_ for _ in ()).throw(RuntimeError("api down"))
+    out = call(ctx, "run-pr", "--mode", "babysit", "--pr", str(pr.ref), "--fingerprint", "fp1")[1]
+    assert out["rounds"] is None and "not counted" in out["rounds_note"]

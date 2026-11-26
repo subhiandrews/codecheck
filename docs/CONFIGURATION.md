@@ -37,7 +37,7 @@ performance_min_score = 3      # score of the loop, query and memory signals in 
 
 [loop]
 max_prs_per_iteration = 5      # babysit: PRs of yours handled per iteration
-max_babysit_rounds = 5         # babysit: pushes the unattended loop makes to one PR before it leaves it to you (user config or environment only)
+max_babysit_rounds = 5         # babysit: unattended runs that move a PR's head before the loop leaves it to you (user config or environment only)
 max_review_prs_per_iteration = 3  # review: open PRs reviewed per iteration, newest first
 repos = []                     # empty = the clone you run in, or every clone directly under the directory you run in
 review_forks = false           # the unattended review loop skips fork-based PRs unless true

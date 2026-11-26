@@ -90,7 +90,8 @@ def run_one(ctx, mode: str, ref, fingerprint: str | None = None, dry_run: bool =
     if dry_run:
         return {"pr": str(ref), "argv": argv}
     started = time.time()
-    head_before = _head(ctx, ref) if mode == "babysit" and fingerprint else ""
+    counting = mode == "babysit" and bool(fingerprint)  # loop babysit runs count against the round limit
+    head_before = _head(ctx, ref) if counting else ""
     try:
         # The clone found under the working directory serves both modes: a review only reads it, and babysit
         # edits in a worktree under state_dir (CODE_CHECK_UNATTENDED stops `workspace` from using the checkout
@@ -114,7 +115,7 @@ def run_one(ctx, mode: str, ref, fingerprint: str | None = None, dry_run: bool =
     extra = {}
     if fingerprint:
         extra = loop_bookkeeping(ctx, mode, ref, fingerprint, parsed["ok"])
-        if head_before:
+        if counting:
             rounds = note_round(ctx.state, ref, head_before, _head(ctx, ref))
             extra["rounds"] = rounds
             if rounds is None:
