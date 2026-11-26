@@ -128,6 +128,13 @@ class AddressConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class FeedbackConfig:
+    enabled: bool = True  # false: nothing is recorded and nothing is ever asked
+    min_interval_hours: int = 24  # at most one automatic ask per this many hours
+    target_repo: str = ""  # "" = the manifest's repository (OWNER/REPO)
+
+
+@dataclass(frozen=True, slots=True)
 class RunPrConfig:
     claude_bin: str = "claude"
     timeout_seconds: int = 1800
@@ -165,6 +172,7 @@ class Config:
     shadow: ShadowConfig = field(default_factory=ShadowConfig)
     golden: GoldenConfig = field(default_factory=GoldenConfig)
     address: AddressConfig = field(default_factory=AddressConfig)
+    feedback: FeedbackConfig = field(default_factory=FeedbackConfig)
     run_pr: RunPrConfig = field(default_factory=RunPrConfig)
 
 
@@ -173,7 +181,7 @@ _FREEFORM = {(table, "per_language") for table in ("models", "codex_models", "co
 _REMOVED = {("review", "routing", "max_comment_percent"), ("review", "routing", "docs_min_comment_lines")}
 # Keys (or whole tables) a repository's .code-check.toml may not set.
 REPO_FORBIDDEN = {
-    ("state_dir",), ("run_pr",), ("shadow",), ("golden",), ("review", "auto_approve"), ("review", "attribution"), ("review", "label"), ("review", "login"), ("review", "ci_login"), ("review", "seed_comments"), ("review", "learn_guidance"), ("loop", "review_forks"),
+    ("state_dir",), ("run_pr",), ("feedback",), ("shadow",), ("golden",), ("review", "auto_approve"), ("review", "attribution"), ("review", "label"), ("review", "login"), ("review", "ci_login"), ("review", "seed_comments"), ("review", "learn_guidance"), ("loop", "review_forks"),
     ("address", "test_command"), ("deep_reviewer", "command"),
     ("codex",), ("codex_models",), ("codex_reasoning",),
 }
@@ -182,6 +190,8 @@ CODEX_EFFORTS = ("low", "medium", "high")
 LABEL_NAME = re.compile(r"[A-Za-z0-9._ :-]{1,50}")
 # A GitHub login, optionally a bot: octocat, github-actions[bot]. Never starts with '-'.
 LOGIN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}(\[bot\])?")
+# OWNER/REPO for `gh --repo`: neither part starts with '-' or '.'.
+REPO_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}")
 # Values accepted by `claude --permission-mode` (headless spike, docs/spikes/).
 PERMISSION_MODES = ("acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")
 _TRUE = {"1", "true", "yes", "on"}
@@ -367,6 +377,11 @@ def validate(cfg: Config) -> Config:
     for lic in cfg.golden.licenses:
         if not re.fullmatch(r"[a-z0-9.+-]{2,64}", lic):
             raise ConfigError(f"config key golden.licenses must be a list of license ids such as \"mit\"; got {lic!r}")
+    fb = cfg.feedback
+    if type(fb.min_interval_hours) is not int or fb.min_interval_hours < 1:
+        raise ConfigError("config key feedback.min_interval_hours must be a positive integer")
+    if fb.target_repo and not REPO_NAME.fullmatch(fb.target_repo):
+        raise ConfigError(f"config key feedback.target_repo must look like OWNER/REPO: {fb.target_repo!r}")
     r = cfg.run_pr
     for key in ("review_allowed_tools", "babysit_allowed_tools"):
         for tool in getattr(r, key):

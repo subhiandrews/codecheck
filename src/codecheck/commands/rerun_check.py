@@ -1,3 +1,4 @@
+from codecheck.commands._common import note_feedback
 from codecheck.errors import CodeCheckError, ProviderError
 
 NAME = "rerun-check"
@@ -22,5 +23,6 @@ def run(args, ctx) -> dict:
     try:
         ctx.provider.rerun_check(ref, c)
     except ProviderError as e:  # a rerun that the host refuses (it has answered HTTP 500) is for the skill to report
+        note_feedback(ctx, "rerun-refused", "rerun-check")  # no provider text: it names checks and repositories
         return {"name": c.name, "rerun": False, "reason": str(e)}
     return {"name": c.name, "rerun": True}

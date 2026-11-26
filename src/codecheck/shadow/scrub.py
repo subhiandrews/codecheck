@@ -9,6 +9,7 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
     ), REDACTED),
     (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"), REDACTED),
     (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"), REDACTED),
+    (re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}"), REDACTED),
     (re.compile(r"\bsk-ant-[A-Za-z0-9_-]{16,}"), REDACTED),
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), REDACTED),
     (re.compile(r"(?i)\bauthorization\b\s*[:=]\s*(?:bearer\s+|basic\s+|token\s+)?\S+"), f"Authorization: {REDACTED}"),

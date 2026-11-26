@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 
 from codecheck.core.paths import check_finding_paths, contained, finding_items  # noqa: F401 - re-exported
@@ -31,6 +32,16 @@ def busy_checkout(ctx, clone: str) -> str | None:
     except CodeCheckError:
         return "the checkout's state could not be read"
     return "checkout has uncommitted changes; babysit will not start in it" if dirty else None
+
+
+def note_feedback(ctx, kind: str, source: str, **ids) -> None:
+    """Record a feedback signal. It must never change what a command returns, so every failure is swallowed."""
+    try:
+        from codecheck.commands.feedback import record
+
+        record(ctx, kind, source, ids)
+    except Exception as e:  # noqa: BLE001 - best effort by design, like ctx.guarded
+        print(f"warning: feedback recording failed: {type(e).__name__}: {e}", file=sys.stderr)
 
 
 def local_key(ctx) -> str:

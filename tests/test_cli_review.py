@@ -977,3 +977,32 @@ def test_context_full_uses_every_reviewer_without_routing(tmp_path):
         assert out["panel"]["full"] is True and out["panel"]["routing"] == ["full: every reviewer, routing skipped"]
         assert meta["models"]["security"] == "opus" and meta["models"]["doc-skeptic"] == "sonnet"
         assert (Path(out["run_dir"]) / "docs-metrics.json").is_file()
+
+
+def test_missing_reviewer_files_record_a_feedback_signal_without_run_specific_ids(tmp_path):
+    from codecheck.core.feedback.store import FeedbackStore
+
+    ctx, _provider, pr = pr_setup(tmp_path)
+    out = run_pr_context(ctx, pr)
+    run_dir = Path(out["run_dir"])
+    members = out["panel"]["members"]
+    write_findings(run_dir, {m: [] for m in members[1:]})  # the first reviewer never wrote its file
+    write_findings(run_dir, {"aggregator": {"findings": []}})
+    call(ctx, "ingest", "--run", out["run_id"])
+    [entry] = FeedbackStore(ctx.state).pending()
+    assert entry["kind"] == "findings-missing" and entry["detail"]["missing"] == members[0]
+    assert entry["detail"]["stray"] == 1  # aggregator.json is a stray file at this point; present or not, never a count
+    assert "run" not in entry["detail"]  # the same failure in another run counts up instead of filing twice
+
+
+def test_a_stray_file_with_nothing_missing_still_records_a_feedback_signal(tmp_path):
+    from codecheck.core.feedback.store import FeedbackStore
+
+    ctx, _provider, pr = pr_setup(tmp_path)
+    out = run_pr_context(ctx, pr)
+    run_dir = Path(out["run_dir"])
+    write_findings(run_dir, {m: [] for m in out["panel"]["members"]})
+    (run_dir / "findings" / "rust-reviewer.json").write_text("[]")  # #105: a reviewer wrote its file under the wrong name
+    call(ctx, "ingest", "--run", out["run_id"])
+    [entry] = FeedbackStore(ctx.state).pending()
+    assert entry["kind"] == "findings-missing" and entry["detail"] == {"missing": "none", "stray": 1}

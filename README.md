@@ -47,6 +47,7 @@ A PR is `123` (current repository), `OWNER/REPO#123` or a URL; on GitLab a merge
 | `review-pr` | Reviews a teammate's PR and posts one inline review with Critical, Warning and Suggestion findings. Approves only when `review.auto_approve` is on and nothing Critical or Warning remains. Never posts to drafts or to your own PRs. From the third review of a PR it posts new Suggestions only on lines changed since its last review (`review.quiet_after_round`). |
 | `address-comments` | On your own PR: checks each unresolved thread against the code, fixes what is valid, reviews the fixes once and fixes what that finds, pushes back with evidence on what is not, pushes behind your test gate, replies, resolves fixed threads, re-requests review. |
 | `babysit-pr` | `address-comments` plus failing CI checks, across your PRs. Meant for `/loop`. |
+| `feedback` | Files a GitHub issue about a problem or missing feature in this tool, only after you have read the exact text and chosen to post it. Other skills offer it at most once a day, never when unattended; `/code-check:feedback <text>` always works. |
 | `review-prs`, `babysit-prs` | Aliases of `review-pr` and `babysit-pr` with no PR argument: the loop forms. Run them in a clone, or in a directory that holds clones (`~/opensource`): every clone directly under it is covered, found by its remote; nothing depends on a review-request queue. |
 
 If there is nothing new to do, a run stops after the no-LLM `precheck` and spends no tokens.
@@ -104,7 +105,7 @@ aggregator = "opus"
 language_experts = "haiku"
 ```
 
-A repository's `.code-check.toml` cannot set `state_dir`, `[run_pr]`, `[shadow]`, `[golden]`, `[codex]`, `[codex_models]`, `[codex_reasoning]`, `review.auto_approve`, `review.attribution`, `review.label`, `review.login`, `review.ci_login`, `review.seed_comments`, `loop.review_forks`, `address.test_command` or `deep_reviewer.command`: a repository you review is not trusted to decide what an unattended run may do. Set those in your user file or the environment. After changing `[models]`, re-run the installer or `code-check gen-agents --out agents`. Every key, with defaults: [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+A repository's `.code-check.toml` cannot set `state_dir`, `[run_pr]`, `[feedback]`, `[shadow]`, `[golden]`, `[codex]`, `[codex_models]`, `[codex_reasoning]`, `review.auto_approve`, `review.attribution`, `review.label`, `review.login`, `review.ci_login`, `review.seed_comments`, `loop.review_forks`, `address.test_command` or `deep_reviewer.command`: a repository you review is not trusted to decide what an unattended run may do. Set those in your user file or the environment. After changing `[models]`, re-run the installer or `code-check gen-agents --out agents`. Every key, with defaults: [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
 ### CODE_CHECK.md
 

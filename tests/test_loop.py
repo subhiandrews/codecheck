@@ -176,7 +176,7 @@ def test_babysit_loop_uses_babysit_prompt_and_failing_checks(tmp_path):
     (c,) = claude_calls(fake)
     assert "babysit-pr" in c.argv[2] and "o/r#9" in c.argv[2]
     # the clone found under the working directory is used, and `workspace` is told not to edit it in place
-    assert c.cwd == clone and c.env == {"CODE_CHECK_UNATTENDED": "1"}
+    assert c.cwd == clone and c.env == {"CODE_CHECK_HEADLESS": "1", "CODE_CHECK_UNATTENDED": "1"}
 
 
 def test_unattended_babysit_never_uses_the_users_checkout_even_on_the_pr_branch(tmp_path):
@@ -397,3 +397,18 @@ def test_run_pr_full_flag_is_review_only(tmp_path):
     code, out = call(ctx, "run-pr", "--mode", "babysit", "--pr", str(refs[0]), "--full", "--dry-run")
     assert code != 0 and "review mode only" in json.dumps(out)
     assert claude_calls(fake) == []
+
+
+def test_a_failed_headless_run_records_a_feedback_signal_a_successful_one_does_not(tmp_path):
+    from codecheck.core.feedback.store import FeedbackStore
+
+    ok = FakeRunner().on_prefix("claude", stdout=json.dumps({"result": "done", "is_error": False}))
+    ctx, _provider, _, refs, _ = setup(tmp_path, claude=ok)
+    call(ctx, "run-pr", "--mode", "review", "--pr", str(refs[0]), "--fingerprint", "sha1")
+    assert FeedbackStore(ctx.state).pending() == []
+    bad = FakeRunner().on_prefix("claude", stdout="", returncode=1, stderr="boom")
+    (tmp_path / "again").mkdir()
+    ctx, _provider, _, refs, _ = setup(tmp_path / "again", claude=bad)
+    call(ctx, "run-pr", "--mode", "review", "--pr", str(refs[0]), "--fingerprint", "sha1")
+    [entry] = FeedbackStore(ctx.state).pending()
+    assert entry["kind"] == "loop-failed" and entry["detail"] == {"mode": "review"}

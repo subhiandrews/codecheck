@@ -32,3 +32,7 @@ Without `full`, `code-check context` routes the optional reviewers itself: it dr
 
 - Never ask the user questions mid-run, never edit files (the one exception is `CODE_CHECK.md` through `code-check guidance apply` in step 8), and never post anywhere.
 - Keep your own commentary to the final report. The reviewers' output lives on disk, not in this conversation.
+
+## Feedback
+
+After your final report, when a person is in the session, invoke the `code-check:feedback` skill with no argument: it asks at most once a day and is silent otherwise. If something in this run looked like a defect in code-check itself, record it first as that skill describes. Do none of this when `CODE_CHECK_UNATTENDED` or `CODE_CHECK_HEADLESS` is set.

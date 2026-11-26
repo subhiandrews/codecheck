@@ -12,6 +12,7 @@ PANEL = (
     "If `failed_members` includes `aggregator` or the command errors, report the failure and go straight to cleanup. "
     "Otherwise continue and report any failed reviewers."
 )
+FEEDBACK_RULE = (r"\n## Feedback\n\n[^\n]+\n", "")  # the hand-off is Claude Code only
 QUEUE = "## Without an argument\n\nAsk for a PR reference and stop until one is provided.\n\n"
 QUEUE_RULE = (r"^## Without an argument \(repository mode\)\n\n[^\n]+\n\n", QUEUE)
 PUSH_WAIT = "Allow up to 10 minutes for the push because it runs the configured tests first. Wait for the command to finish."
@@ -26,6 +27,7 @@ REVIEW_RULES = (
 SUBSTITUTIONS = {
     "review-local": (
         *REVIEW_RULES,
+        FEEDBACK_RULE,
         (r" Safe under /loop because it costs nothing while the work is unchanged\.", ""),
         (r" Under `/loop` it spends no tokens while your work is unchanged\.", ""),
     ),
@@ -36,15 +38,18 @@ SUBSTITUTIONS = {
         (r"\(step 9\)", "(step 7)"),
         (r" A keyword without a PR means repository mode, where it has no effect because configuration controls it\.", ""),
         (r", and `?\(ignored guidance: <reasons>\)`? when any subagent.*\.", "."),
-        (r"Ask no questions, except the replies-only question in step 1, and only when run interactively\.",
+        (r"Ask no questions, except the replies-only question in step 1 and the feedback hand-off at the end, and only when run interactively\.",
          "Ask for a missing PR reference or ask the replies-only question in step 1 when run interactively."),
         QUEUE_RULE,
+        FEEDBACK_RULE,
     ),
     "address-comments": (
+        FEEDBACK_RULE,
         (r"`code-check:review-local`", "`$review-local`"),
         (r"Run it with the Bash tool's maximum timeout .*? wait for it instead\.", PUSH_WAIT),
     ),
     "babysit-pr": (
+        FEEDBACK_RULE,
         (r" With no argument it works your open PRs .*? Use under /loop to keep your PRs moving\.", ""),
         (r"`code-check:address-comments`", "`$address-comments`"),
         (r"with the Bash tool's maximum timeout of 600000 ms \(tests gate the push; handle a slow test run and a refused push as in address-comments\)",

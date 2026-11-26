@@ -29,3 +29,7 @@ Run `code-check loop --mode babysit` with the Bash tool's `run_in_background` op
 
 - Never ask questions when running unattended. Never force-push. Do not retry a check whose attempts are exhausted.
 - A CI-only fix does not re-request review; re-requesting happens in address-comments when threads were handled.
+
+## Feedback
+
+After your final report, when a person is in the session, invoke the `code-check:feedback` skill with no argument: it asks at most once a day and is silent otherwise. If something in this run looked like a defect in code-check itself, record it first as that skill describes. Do none of this when `CODE_CHECK_UNATTENDED` or `CODE_CHECK_HEADLESS` is set.

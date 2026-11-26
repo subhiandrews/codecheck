@@ -2,7 +2,7 @@ import json
 import time
 from pathlib import Path
 
-from codecheck.commands._common import busy_checkout, safe_repo
+from codecheck.commands._common import busy_checkout, note_feedback, safe_repo
 from codecheck.commands.workspace import managed_clone
 from codecheck.config import expand_path
 from codecheck.core.state import (
@@ -94,11 +94,13 @@ def run_one(ctx, mode: str, ref, fingerprint: str | None = None, dry_run: bool =
         else:
             cwd = managed_clone(ctx, ref.repo).cwd
         # input="" closes stdin: claude -p otherwise waits for it.
-        res = ctx.runner.run(argv, cwd=cwd, timeout=cfg.timeout_seconds, input="", env={"CODE_CHECK_UNATTENDED": "1"} if mode == "babysit" else None)
+        res = ctx.runner.run(argv, cwd=cwd, timeout=cfg.timeout_seconds, input="", env={"CODE_CHECK_HEADLESS": "1", **({"CODE_CHECK_UNATTENDED": "1"} if mode == "babysit" else {})})
         parsed = parse_result(res.stdout, res.returncode, res.stderr)
     except Exception as e:  # noqa: BLE001 - report, and still do the bookkeeping below
         parsed = {"ok": False, "summary": f"error: {type(e).__name__}: {e}"[:500], "cost": None, "usage": None}
     duration = round(time.time() - started, 1)
+    if not parsed["ok"]:
+        note_feedback(ctx, "loop-failed", "run-pr", mode=mode)
     extra = {}
     if fingerprint:
         extra = loop_bookkeeping(ctx, mode, ref, fingerprint, parsed["ok"])
