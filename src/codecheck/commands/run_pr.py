@@ -49,7 +49,7 @@ def parse_result(stdout: str, returncode: int, stderr: str) -> dict:
 
 
 def _head(ctx, ref) -> str:
-    """The PR's head commit, or "" when it cannot be read (the round is then not counted)."""
+    """The PR's head commit, or "" when it cannot be read (`note_round` then counts the run without comparing)."""
     try:
         return ctx.provider.get_pr(ref).head_sha
     except Exception:  # noqa: BLE001 - counting rounds must never fail a run

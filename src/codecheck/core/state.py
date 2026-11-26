@@ -300,8 +300,7 @@ def note_round(state: StateStore, ref: PRRef, head_before: str, head_after: str)
 def settled(threads: Sequence[Thread], checks: Sequence[Check], me: str, rounds: int, min_open: int = 3) -> str | None:
     """Why a PR that already had a babysit round needs no more: fewer than `min_open` open threads, every one a
     code-check Suggestion, and no failing check. A thread is one only when a bot wrote its first comment, with our
-    finding marker, and no person has replied while it waits for us; a person's comment or a forged header never
-    settles. An open thread we already answered, or one gone outdated, is not work, but a Warning there still keeps the PR out."""
+    finding marker, and every other comment is a bot's or ours; a person's comment or a forged header never settles. An open thread we already answered, or one gone outdated, is not work, but a Warning there still keeps the PR out."""
     # imported here because render reaches precheck, which imports this module
     from codecheck.core.render import FINDING_MARKER, parse_comment
 
@@ -310,14 +309,13 @@ def settled(threads: Sequence[Thread], checks: Sequence[Check], me: str, rounds:
     live = [t for t in threads if not t.is_resolved and t.comments]
     if len(live) >= min_open:
         return None
-    waiting = {t.id for t in actionable_threads(threads, me)}
     for t in live:
         first = t.comments[0]
         parsed = parse_comment(first.body)
         if parsed is None or parsed["severity"] != "suggestion" or not FINDING_MARKER.search(first.body) or not first.is_bot:
             return None
-        if t.id in waiting and not all(c.is_bot for c in t.comments):
-            return None
+        if not all(c.is_bot or comment_is_ours(c, me) for c in t.comments):
+            return None  # a person has written in this thread, whether or not we answered
     return f"{len(live)} suggestion(s) left after round {rounds}: ready for you to merge"
 
 

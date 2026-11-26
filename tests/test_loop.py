@@ -614,3 +614,12 @@ def test_an_outdated_warning_keeps_the_pr_out_of_ready(tmp_path):
     outdated = Thread("O", "a.py", 3, False, True, (ThreadComment(1, "github-actions[bot]", body, "2026-01-01T00:00:00Z", is_bot=True),))
     provider.threads[pr.ref].append(outdated)
     assert call(ctx, "loop", "--mode", "babysit")[1]["processed"] == 1
+
+
+def test_a_person_who_wrote_in_a_thread_we_then_answered_still_keeps_the_pr_out_of_ready(tmp_path):
+    ctx, provider, _fake, pr = _babysit_setup(tmp_path, "Suggestion", "Suggestion", rounds=1)
+    old = provider.threads[pr.ref][0]
+    person = ThreadComment(2, "bob", "no, this is wrong", "2026-01-02T00:00:00Z")
+    ours = ThreadComment(3, "me", "I disagree, see above", "2026-01-03T00:00:00Z")
+    provider.threads[pr.ref][0] = replace(old, comments=(*old.comments, person, ours))  # our reply is last
+    assert call(ctx, "loop", "--mode", "babysit")[1]["processed"] == 1
