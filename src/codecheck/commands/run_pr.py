@@ -9,6 +9,7 @@ from codecheck.core.state import (
     MAX_LOOP_FAILURES,
     WorkItem,
     mark_processed,
+    note_round,
     record_failure,
 )
 from codecheck.errors import CodeCheckError
@@ -47,6 +48,14 @@ def parse_result(stdout: str, returncode: int, stderr: str) -> dict:
             "cost": data.get("total_cost_usd"), "usage": data.get("usage")}
 
 
+def _head(ctx, ref) -> str:
+    """The PR's head commit, or "" when it cannot be read (`note_round` then counts the run without comparing)."""
+    try:
+        return ctx.provider.get_pr(ref).head_sha
+    except Exception:  # noqa: BLE001 - counting rounds must never fail a run
+        return ""
+
+
 def run_one(ctx, mode: str, ref, fingerprint: str | None = None, dry_run: bool = False,
             security: bool = False, performance: bool = False, full: bool = False, clone: str | None = None) -> dict:
     if security and mode != "review":
@@ -81,6 +90,8 @@ def run_one(ctx, mode: str, ref, fingerprint: str | None = None, dry_run: bool =
     if dry_run:
         return {"pr": str(ref), "argv": argv}
     started = time.time()
+    counting = mode == "babysit" and bool(fingerprint)  # loop babysit runs count against the round limit
+    head_before = _head(ctx, ref) if counting else ""
     try:
         # The clone found under the working directory serves both modes: a review only reads it, and babysit
         # edits in a worktree under state_dir (CODE_CHECK_UNATTENDED stops `workspace` from using the checkout
@@ -104,6 +115,17 @@ def run_one(ctx, mode: str, ref, fingerprint: str | None = None, dry_run: bool =
     extra = {}
     if fingerprint:
         extra = loop_bookkeeping(ctx, mode, ref, fingerprint, parsed["ok"])
+        if counting:
+            head_after = _head(ctx, ref)
+            try:
+                rounds = note_round(ctx.state, ref, head_before, head_after)
+            except Exception:  # noqa: BLE001 - a locked or unreadable state file must not turn a run that pushed into a failure
+                rounds = None
+            extra["rounds"] = rounds
+            if rounds is None:
+                extra["rounds_note"] = "the round count could not be saved, so this run was not counted against the round limit"
+            elif not head_before or not head_after:
+                extra["rounds_note"] = "the PR head could not be read, so this run was counted as a round without checking that it pushed"
     ctx.record(new_run_id(), {"type": "headless_run", "pr": str(ref), "mode": mode, "ok": parsed["ok"],
                               "cost_usd": parsed["cost"], "usage": parsed["usage"], "duration_s": duration})
     return {"pr": str(ref), "ok": parsed["ok"], "summary": parsed["summary"], "cost_usd": parsed["cost"],

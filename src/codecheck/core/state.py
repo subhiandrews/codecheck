@@ -265,6 +265,60 @@ def loop_key(mode: str, ref: PRRef) -> str:
     return f"loop:{mode}:{ref}"
 
 
+def rounds_key(ref: PRRef) -> str:
+    return f"{loop_key('babysit', ref)}:rounds"
+
+
+def _count(v) -> int:
+    return v["count"] if isinstance(v, dict) and type(v.get("count")) is int and v["count"] >= 0 else 0
+
+
+UNKNOWN_HEAD = "?"  # stored when a head could not be read: the count is kept until a head can be compared again
+
+
+def babysit_rounds(state: StateStore, ref: PRRef, head: str) -> int:
+    """How many unattended babysit runs have pushed to this PR (per PR, never per iteration). The count is tied to
+    the head our last push left; when someone else has pushed since, a person has taken over and it starts again."""
+    v = state.get(rounds_key(ref))
+    return _count(v) if isinstance(v, dict) and v.get("head") in (head, UNKNOWN_HEAD) else 0
+
+
+def note_round(state: StateStore, ref: PRRef, head_before: str, head_after: str) -> int:
+    """Count one round when a run moved the PR's head; a run that only replied or reran a check costs nothing.
+    When either head could not be read the run is counted anyway and the head is stored as unknown, so one
+    failed read can never restart the count."""
+    if head_before and head_before == head_after:
+        return babysit_rounds(state, ref, head_after)
+
+    def bump(old):
+        known = isinstance(old, dict) and (not head_before or old.get("head") in (head_before, UNKNOWN_HEAD))
+        return {"count": (_count(old) if known else 0) + 1, "head": head_after or UNKNOWN_HEAD}
+
+    return state.update(rounds_key(ref), bump)["count"]
+
+
+def settled(threads: Sequence[Thread], checks: Sequence[Check], me: str, rounds: int, min_open: int = 3) -> str | None:
+    """Why a PR that already had a babysit round needs no more: fewer than `min_open` open threads, every one a
+    code-check Suggestion, and no failing check. A thread is one only when a bot wrote its first comment, with our
+    finding marker, and every other comment is a bot's or ours; a person's comment or a forged header never settles. An open thread we already answered, or one gone outdated, is not work, but a Warning there still keeps the PR out."""
+    # imported here because render reaches precheck, which imports this module
+    from codecheck.core.render import FINDING_MARKER, parse_comment
+
+    if rounds < 1 or any(c.state == "fail" for c in checks):
+        return None
+    live = [t for t in threads if not t.is_resolved and t.comments]
+    if len(live) >= min_open:
+        return None
+    for t in live:
+        first = t.comments[0]
+        parsed = parse_comment(first.body)
+        if parsed is None or parsed["severity"] != "suggestion" or not FINDING_MARKER.search(first.body) or not first.is_bot:
+            return None
+        if not all(c.is_bot or comment_is_ours(c, me) for c in t.comments):
+            return None  # a person has written in this thread, whether or not we answered
+    return f"{len(live)} suggestion(s) left after round {rounds}: ready for you to merge"
+
+
 def select_work(items: Sequence[WorkItem], state: StateStore, mode: str, limit: int) -> list[WorkItem]:
     fresh = [i for i in items if state.get(loop_key(mode, i.ref)) != i.fingerprint]
     return fresh[:limit]

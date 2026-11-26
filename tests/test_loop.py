@@ -15,8 +15,9 @@ from gitutil import make_origin_and_clone
 
 from codecheck.commands import loop
 from codecheck.config import LoopConfig
-from codecheck.core.state import FileLock
-from codecheck.models import Check
+from codecheck.core.state import FileLock, babysit_rounds, note_round, rounds_key
+from codecheck.errors import CodeCheckError
+from codecheck.models import Check, Thread, ThreadComment
 from codecheck.runner import CommandResult
 
 pytestmark = pytest.mark.usefixtures("git_env")
@@ -412,3 +413,213 @@ def test_a_failed_headless_run_records_a_feedback_signal_a_successful_one_does_n
     call(ctx, "run-pr", "--mode", "review", "--pr", str(refs[0]), "--fingerprint", "sha1")
     [entry] = FeedbackStore(ctx.state).pending()
     assert entry["kind"] == "loop-failed" and entry["detail"] == {"mode": "review"}
+
+
+def _bot_thread(tid, severity):
+    body = f"**{severity}** · cat\n\nsomething to look at\n<!-- code-check:finding:0123456789ab -->"
+    return Thread(tid, "a.py", 3, False, False, (ThreadComment(1, "github-actions[bot]", body, "2026-01-01T00:00:00Z", is_bot=True),))
+
+
+def _babysit_setup(tmp_path, *severities, rounds=0, n=9, checks=()):
+    ctx, provider, fake, _refs, _ = setup(tmp_path)
+    pr = provider.add_pr(n, author="me", head_sha=f"mine{n}")
+    provider.threads[pr.ref] = [_bot_thread(f"T{i}", s) for i, s in enumerate(severities)]
+    provider.checks[pr.ref] = list(checks)
+    provider.listing["authored"] = [*provider.listing["authored"], pr.ref]
+    if rounds:
+        ctx.state.set(rounds_key(pr.ref), {"count": rounds, "head": pr.head_sha})
+    return ctx, provider, fake, pr
+
+
+def _push_during_run(provider, fake, pr):
+    """Make the headless run move the PR's head, as a babysit push does."""
+    real = fake.run
+
+    def run(args, **kw):
+        provider.prs[pr.ref] = replace(provider.prs[pr.ref], head_sha="pushed" + provider.prs[pr.ref].head_sha)
+        return real(args, **kw)
+
+    fake.run = run
+
+
+def test_a_run_that_pushes_counts_one_round_and_one_that_does_not_counts_none(tmp_path):
+    ctx, provider, fake, pr = _babysit_setup(tmp_path, "Warning")
+    out = call(ctx, "loop", "--mode", "babysit")[1]
+    assert out["results"][0]["rounds"] == 0 and babysit_rounds(ctx.state, pr.ref, "mine9") == 0
+    provider.prs[pr.ref] = replace(provider.prs[pr.ref], head_sha="human-push")  # the fingerprint changes: back in the queue
+    _push_during_run(provider, fake, pr)
+    out = call(ctx, "loop", "--mode", "babysit")[1]
+    assert out["results"][0]["rounds"] == 1 and babysit_rounds(ctx.state, pr.ref, provider.prs[pr.ref].head_sha) == 1
+
+
+def test_rounds_are_counted_per_pr_not_per_iteration(tmp_path):
+    ctx, provider, fake, a = _babysit_setup(tmp_path, "Warning", n=9)
+    b = provider.add_pr(10, author="me", head_sha="mine10")
+    provider.threads[b.ref] = [_bot_thread("B0", "Warning")]
+    provider.listing["authored"].append(b.ref)
+    _push_during_run(provider, fake, a)
+    ctx.config = replace(ctx.config, loop=LoopConfig(max_prs_per_iteration=1))
+    call(ctx, "loop", "--mode", "babysit")  # only PR 9 is handled in this iteration
+    assert (babysit_rounds(ctx.state, a.ref, provider.prs[a.ref].head_sha), babysit_rounds(ctx.state, b.ref, "mine10")) == (1, 0)
+
+
+def test_a_pr_at_the_round_limit_is_left_to_a_human_and_one_below_it_is_not(tmp_path):
+    ctx, _provider, fake, pr = _babysit_setup(tmp_path, "Warning", rounds=5)
+    out = call(ctx, "loop", "--mode", "babysit")[1]
+    assert out["processed"] == 0 and claude_calls(fake) == []
+    assert "round limit (5)" in out["skipped"][0]["reason"] and out["skipped"][0]["pr"] == str(pr.ref)
+    ctx.state.set(rounds_key(pr.ref), {"count": 4, "head": pr.head_sha})
+    assert call(ctx, "loop", "--mode", "babysit")[1]["processed"] == 1
+
+
+def test_the_round_limit_is_configurable(tmp_path):
+    ctx, *_ = _babysit_setup(tmp_path, "Warning", rounds=2)
+    ctx.config = replace(ctx.config, loop=LoopConfig(max_babysit_rounds=2))
+    assert call(ctx, "loop", "--mode", "babysit")[1]["processed"] == 0
+
+
+@pytest.mark.parametrize(("severities", "rounds", "checks", "stops"), [
+    (("Suggestion", "Suggestion"), 1, (), True),
+    (("Suggestion", "Suggestion"), 0, (), False),  # the first round always runs
+    (("Suggestion", "Suggestion", "Suggestion"), 1, (), False),  # three is not "fewer than 3"
+    (("Suggestion", "Warning"), 1, (), False),
+    (("Suggestion", "Critical"), 1, (), False),
+    (("Suggestion",), 1, (Check("build", "fail"),), False),  # a failing check is still work
+])
+def test_a_pr_with_only_a_few_suggestions_left_after_a_round_is_ready_for_you(tmp_path, severities, rounds, checks, stops):
+    ctx, _provider, fake, _pr = _babysit_setup(tmp_path, *severities, rounds=rounds, checks=checks)
+    out = call(ctx, "loop", "--mode", "babysit")[1]
+    assert (out["processed"] == 0) is stops and (claude_calls(fake) == []) is stops
+    if stops:
+        assert "ready for you to merge" in out["skipped"][0]["reason"]
+
+
+def test_a_thread_that_is_not_a_code_check_comment_never_settles_a_pr(tmp_path):
+    ctx, provider, _fake, pr = _babysit_setup(tmp_path, "Suggestion", rounds=1)
+    human = Thread("H", "a.py", 3, False, False, (ThreadComment(2, "bob", "please rename this", "2026-01-01T00:00:00Z"),))
+    provider.threads[pr.ref].append(human)
+    assert call(ctx, "loop", "--mode", "babysit")[1]["processed"] == 1
+
+
+def test_the_round_limit_must_be_a_positive_integer(tmp_path):
+    from codecheck.config import ConfigError, validate
+    ctx, *_ = setup(tmp_path)
+    with pytest.raises(ConfigError, match="max_babysit_rounds"):
+        validate(replace(ctx.config, loop=LoopConfig(max_babysit_rounds=0)))
+
+
+def test_someone_else_pushing_restarts_the_count(tmp_path):
+    ctx, provider, fake, pr = _babysit_setup(tmp_path, "Warning", rounds=5)
+    assert call(ctx, "loop", "--mode", "babysit")[1]["processed"] == 0
+    provider.prs[pr.ref] = replace(provider.prs[pr.ref], head_sha="human-took-over")
+    out = call(ctx, "loop", "--mode", "babysit")[1]
+    assert out["processed"] == 1 and len(claude_calls(fake)) == 1
+
+
+def test_a_run_whose_head_cannot_be_read_is_counted_anyway_and_keeps_the_count(tmp_path):
+    ctx, provider, fake, pr = _babysit_setup(tmp_path, "Warning", rounds=3)
+    real_get, real_run, ran = provider.get_pr, fake.run, []
+
+    def run(args, **kw):
+        ran.append(1)
+        return real_run(args, **kw)
+
+    def flaky(ref):
+        if ran:  # the read after the headless run
+            raise RuntimeError("api down")
+        return real_get(ref)
+
+    fake.run = run
+    provider.get_pr = flaky
+    out = call(ctx, "loop", "--mode", "babysit")[1]["results"][0]
+    assert out["rounds"] == 4 and "counted as a round" in out["rounds_note"]
+    provider.get_pr = real_get  # the API is back: the next iteration still sees all four rounds
+    assert babysit_rounds(ctx.state, pr.ref, provider.prs[pr.ref].head_sha) == 4
+
+
+def test_a_person_replying_on_a_suggestion_thread_keeps_the_pr_in_the_loop(tmp_path):
+    ctx, provider, _fake, pr = _babysit_setup(tmp_path, "Suggestion", rounds=1)
+    old = provider.threads[pr.ref][0]
+    reply = ThreadComment(2, "bob", "no, please change it", "2026-01-02T00:00:00Z")
+    provider.threads[pr.ref] = [replace(old, comments=(*old.comments, reply))]
+    assert call(ctx, "loop", "--mode", "babysit")[1]["processed"] == 1
+
+
+def test_a_person_typing_a_suggestion_header_does_not_settle_a_pr(tmp_path):
+    ctx, provider, _fake, pr = _babysit_setup(tmp_path, rounds=1)
+    body = "**Suggestion** · x\n\nplease fix\n<!-- code-check:finding:0123456789ab -->"
+    provider.threads[pr.ref] = [Thread("F", "a.py", 3, False, False, (ThreadComment(1, "bob", body, "2026-01-01T00:00:00Z"),))]
+    assert call(ctx, "loop", "--mode", "babysit")[1]["processed"] == 1
+
+
+def test_a_corrupt_round_entry_counts_as_zero_and_never_raises(tmp_path):
+    ctx, _provider, _fake, pr = _babysit_setup(tmp_path, "Warning")
+    ctx.state.set(rounds_key(pr.ref), {"head": "mine9", "count": "many"})
+    assert babysit_rounds(ctx.state, pr.ref, "mine9") == 0
+    assert note_round(ctx.state, pr.ref, "mine9", "next") == 1
+
+
+def test_a_run_whose_head_cannot_be_read_before_it_starts_is_counted_too(tmp_path):
+    ctx, provider, _fake, pr = _babysit_setup(tmp_path, "Warning")
+    provider.get_pr = lambda ref: (_ for _ in ()).throw(RuntimeError("api down"))
+    out = call(ctx, "run-pr", "--mode", "babysit", "--pr", str(pr.ref), "--fingerprint", "fp1")[1]
+    assert out["rounds"] == 1 and "counted as a round" in out["rounds_note"]
+
+
+def test_a_state_error_while_counting_a_round_does_not_fail_the_run(tmp_path):
+    ctx, provider, fake, pr = _babysit_setup(tmp_path, "Warning")
+    _push_during_run(provider, fake, pr)
+    real = ctx.state.update
+
+    def update(key, fn):
+        if key.endswith(":rounds"):
+            raise CodeCheckError("state lock timeout")
+        return real(key, fn)
+
+    ctx.state.update = update
+    out = call(ctx, "loop", "--mode", "babysit")[1]["results"][0]
+    assert out["ok"] is True and out["rounds"] is None and "could not be saved" in out["rounds_note"]
+
+
+def test_a_warning_we_already_answered_still_keeps_the_pr_out_of_ready(tmp_path):
+    ctx, provider, _fake, pr = _babysit_setup(tmp_path, "Warning", "Suggestion", rounds=1)
+    answered = provider.threads[pr.ref][0]
+    ours = ThreadComment(2, "me", "I disagree, here is why", "2026-01-02T00:00:00Z")
+    provider.threads[pr.ref][0] = replace(answered, comments=(*answered.comments, ours))  # last comment is ours
+    out = call(ctx, "loop", "--mode", "babysit")[1]
+    assert out["processed"] == 1 and out["skipped"] == []
+
+
+def test_an_answered_suggestion_does_not_stop_a_pr_from_settling(tmp_path):
+    ctx, provider, fake, pr = _babysit_setup(tmp_path, "Suggestion", "Suggestion", rounds=1)
+    answered = provider.threads[pr.ref][0]
+    ours = ThreadComment(2, "me", "declined, see reply", "2026-01-02T00:00:00Z")
+    provider.threads[pr.ref][0] = replace(answered, comments=(*answered.comments, ours))
+    out = call(ctx, "loop", "--mode", "babysit")[1]
+    assert out["processed"] == 0 and claude_calls(fake) == [] and "ready for you to merge" in out["skipped"][0]["reason"]
+
+
+def test_answered_suggestions_still_count_toward_the_open_thread_limit(tmp_path):
+    ctx, provider, _fake, pr = _babysit_setup(tmp_path, "Suggestion", "Suggestion", "Suggestion", rounds=1)
+    for i in (0, 1):
+        old = provider.threads[pr.ref][i]
+        ours = ThreadComment(10 + i, "me", "declined", "2026-01-02T00:00:00Z")
+        provider.threads[pr.ref][i] = replace(old, comments=(*old.comments, ours))
+    assert call(ctx, "loop", "--mode", "babysit")[1]["processed"] == 1
+
+
+def test_an_outdated_warning_keeps_the_pr_out_of_ready(tmp_path):
+    ctx, provider, _fake, pr = _babysit_setup(tmp_path, "Suggestion", rounds=1)
+    body = "**Warning** · logic\n\nthis is wrong\n<!-- code-check:finding:0123456789ab -->"
+    outdated = Thread("O", "a.py", 3, False, True, (ThreadComment(1, "github-actions[bot]", body, "2026-01-01T00:00:00Z", is_bot=True),))
+    provider.threads[pr.ref].append(outdated)
+    assert call(ctx, "loop", "--mode", "babysit")[1]["processed"] == 1
+
+
+def test_a_person_who_wrote_in_a_thread_we_then_answered_still_keeps_the_pr_out_of_ready(tmp_path):
+    ctx, provider, _fake, pr = _babysit_setup(tmp_path, "Suggestion", "Suggestion", rounds=1)
+    old = provider.threads[pr.ref][0]
+    person = ThreadComment(2, "bob", "no, this is wrong", "2026-01-02T00:00:00Z")
+    ours = ThreadComment(3, "me", "I disagree, see above", "2026-01-03T00:00:00Z")
+    provider.threads[pr.ref][0] = replace(old, comments=(*old.comments, person, ours))  # our reply is last
+    assert call(ctx, "loop", "--mode", "babysit")[1]["processed"] == 1

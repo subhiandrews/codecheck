@@ -38,6 +38,7 @@ def test_user_overrides_repo_and_env_overrides_both(tmp_path):
     ('[run_pr]\nclaude_bin = "/tmp/evil"\n', "run_pr"),
     ("[shadow]\nenabled = false\n", "shadow"),
     ("[loop]\nreview_forks = true\n", "loop.review_forks"),
+    ("[loop]\nmax_babysit_rounds = 99\n", "loop.max_babysit_rounds"),
     ('[address]\ntest_command = "true"\n', "address.test_command"),
     ('[deep_reviewer]\ncommand = "/tmp/evil"\n', "deep_reviewer.command"),
 ])

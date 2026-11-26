@@ -2,6 +2,12 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.7.0]
+
+### Added
+- The babysit loop stops after `loop.max_babysit_rounds` (default 5) pushed rounds per PR, and skips a PR that is down to a few Suggestions, leaving it to you.
+- `address-comments` declines multi-line Suggestion fixes once a round has happened.
+
 ## [1.6.3]
 
 ### Fixed

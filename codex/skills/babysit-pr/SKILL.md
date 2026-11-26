@@ -27,5 +27,6 @@ Ask for a PR reference and stop until one is provided.
 
 ## Rules
 
+- Rounds are counted per PR by the CLI (`loop.max_babysit_rounds`, default 5, one round per run that pushes). Unattended, `loop` leaves a PR at the limit to you, and also leaves one that has had a round and now has fewer than 3 open threads, all code-check Suggestions, with no failing check: it is listed under `skipped` ("ready for you to merge"). Report those lines as they are; never merge, and never retry a PR the loop skipped. A PR you name yourself (`babysit-pr <PR>`) is not limited: someone is watching.
 - Never ask questions when running unattended. Never force-push. Do not retry a check whose attempts are exhausted.
 - A CI-only fix does not re-request review; re-requesting happens in address-comments when threads were handled.

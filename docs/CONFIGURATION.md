@@ -4,7 +4,7 @@ Every code-check setting. The README has a minimal example; this is the full ref
 
 Settings are layered, highest precedence first: environment (`CODE_CHECK_<SECTION>__<KEY>`, for example `CODE_CHECK_REVIEW__AUTO_APPROVE=true`), your `~/.config/code-check/config.toml`, the repository's `.code-check.toml`, then the defaults below. Your own settings therefore win over a repository's. Unknown keys and wrong types in files are errors.
 
-A repository's `.code-check.toml` may **not** set the security-sensitive keys `state_dir`, anything under `[run_pr]`, `[feedback]`, `[shadow]`, `[golden]`, `[codex]`, `[codex_models]` or `[codex_reasoning]`, `review.auto_approve`, `review.attribution`, `review.label`, `review.login`, `review.ci_login`, `review.seed_comments`, `review.learn_guidance`, `loop.review_forks`, `address.test_command` or `deep_reviewer.command`: a repository you review is not trusted to choose what an unattended run may do or execute, where state is written, or whether reviews approve. Such a key in the repository file is an error that names the key; set it in your user file or the environment instead. Model names must match `[A-Za-z0-9._:[\]-]+`, `run_pr.permission_mode` must be one of `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`, and allowed-tool entries and prompts must not start with `-`.
+A repository's `.code-check.toml` may **not** set the security-sensitive keys `state_dir`, anything under `[run_pr]`, `[feedback]`, `[shadow]`, `[golden]`, `[codex]`, `[codex_models]` or `[codex_reasoning]`, `review.auto_approve`, `review.attribution`, `review.label`, `review.login`, `review.ci_login`, `review.seed_comments`, `review.learn_guidance`, `loop.review_forks`, `loop.max_babysit_rounds`, `address.test_command` or `deep_reviewer.command`: a repository you review is not trusted to choose what an unattended run may do or execute, where state is written, or whether reviews approve. Such a key in the repository file is an error that names the key; set it in your user file or the environment instead. Model names must match `[A-Za-z0-9._:[\]-]+`, `run_pr.permission_mode` must be one of `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`, and allowed-tool entries and prompts must not start with `-`.
 
 ```toml
 provider = "auto"              # auto (a gitlab.com remote means gitlab, anything else github), "github" or "gitlab"
@@ -37,6 +37,7 @@ performance_min_score = 3      # score of the loop, query and memory signals in 
 
 [loop]
 max_prs_per_iteration = 5      # babysit: PRs of yours handled per iteration
+max_babysit_rounds = 5         # babysit: unattended runs that move a PR's head before the loop leaves it to you (user config or environment only)
 max_review_prs_per_iteration = 3  # review: open PRs reviewed per iteration, newest first
 repos = []                     # empty = the clone you run in, or every clone directly under the directory you run in
 review_forks = false           # the unattended review loop skips fork-based PRs unless true
