@@ -24,3 +24,4 @@
    - Flag a record over 100 words, and flag an edit to an accepted record other than its Status line. A reversal is a new record that supersedes the old one (`--supersedes NNNN`).
    - Flag a record that restates how the code works, lists implementation steps, or contradicts the code without saying the code changed.
    - Flag design rationale added to `README.md` or `docs/ARCHITECTURE.md` that belongs in a record.
+   - Do not flag the wording, tone or ambiguity of a record or doc that states nothing false. Flag a number, name, link or claim that the diff or the code contradicts; a rewording alone is not worth a push and its review.
