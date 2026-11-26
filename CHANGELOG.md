@@ -2,6 +2,11 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.7.0]
+
+### Added
+- The babysit loop now limits rounds per PR. `loop.max_babysit_rounds` (default 5) counts the unattended runs that pushed to a PR; at the limit the PR is listed under `skipped` and left to you. After a round, a PR with fewer than 3 open threads, all code-check Suggestions, and no failing check is also skipped as ready for you to merge. `address-comments` now declines multi-line Suggestion fixes once a round has happened.
+
 ## [1.6.3]
 
 ### Fixed

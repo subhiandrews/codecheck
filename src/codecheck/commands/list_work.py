@@ -2,7 +2,14 @@ from dataclasses import replace
 
 from codecheck.commands._common import approval_skip, busy_checkout, pr_activity
 from codecheck.core.precheck import review_verdict
-from codecheck.core.state import WorkItem, babysit_work, loop_key, select_work
+from codecheck.core.state import (
+    WorkItem,
+    babysit_rounds,
+    babysit_work,
+    loop_key,
+    select_work,
+    settled,
+)
 from codecheck.errors import CodeCheckError
 from codecheck.models import same_pr_author
 
@@ -98,4 +105,13 @@ def _consider(ctx, mode: str, ref, me: str) -> tuple[WorkItem | None, str | None
         return WorkItem(ref, pr.head_sha, "new head"), None
     if pr.is_cross_repo:
         return None, "fork-based PR: cannot push in Phase 1"
-    return babysit_work(pr, ctx.provider.list_threads(ref), ctx.provider.get_checks(ref), me), None
+    threads, checks = ctx.provider.list_threads(ref), ctx.provider.get_checks(ref)
+    item = babysit_work(pr, threads, checks, me)
+    if item is None:
+        return None, None
+    rounds = babysit_rounds(ctx.state, ref)
+    if rounds >= ctx.config.loop.max_babysit_rounds:
+        return None, f"babysit round limit ({ctx.config.loop.max_babysit_rounds}) reached: needs a human"
+    if why := settled(threads, checks, me, rounds):
+        return None, why
+    return item, None

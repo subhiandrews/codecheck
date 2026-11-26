@@ -46,6 +46,7 @@ class ReviewConfig:
 @dataclass(frozen=True, slots=True)
 class LoopConfig:
     max_prs_per_iteration: int = 5
+    max_babysit_rounds: int = 5  # babysit: pushes the unattended loop makes to one PR before it is left to you
     max_review_prs_per_iteration: int = 3  # review mode only: the newest open PRs of the repository come first
     repos: tuple[str, ...] = ()
     review_forks: bool = False  # the unattended review loop skips fork-based PRs unless this is true
@@ -354,6 +355,8 @@ def validate(cfg: Config) -> Config:
         if not isinstance(value, str) or not MODEL_NAME.fullmatch(value):
             raise ConfigError(f"config key models.{key} is not a valid model name: {value!r}")
     validate_codex(cfg)
+    if type(cfg.loop.max_babysit_rounds) is not int or cfg.loop.max_babysit_rounds < 1:
+        raise ConfigError("config key loop.max_babysit_rounds must be a positive integer")
     routing = cfg.review.routing
     if routing.mode not in ("auto", "off"):
         raise ConfigError("config key review.routing.mode must be \"auto\" or \"off\"")
