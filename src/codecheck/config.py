@@ -182,7 +182,7 @@ _FREEFORM = {(table, "per_language") for table in ("models", "codex_models", "co
 _REMOVED = {("review", "routing", "max_comment_percent"), ("review", "routing", "docs_min_comment_lines")}
 # Keys (or whole tables) a repository's .code-check.toml may not set.
 REPO_FORBIDDEN = {
-    ("state_dir",), ("run_pr",), ("feedback",), ("shadow",), ("golden",), ("review", "auto_approve"), ("review", "attribution"), ("review", "label"), ("review", "login"), ("review", "ci_login"), ("review", "seed_comments"), ("review", "learn_guidance"), ("loop", "review_forks"),
+    ("state_dir",), ("run_pr",), ("feedback",), ("shadow",), ("golden",), ("review", "auto_approve"), ("review", "attribution"), ("review", "label"), ("review", "login"), ("review", "ci_login"), ("review", "seed_comments"), ("review", "learn_guidance"), ("loop", "review_forks"), ("loop", "max_babysit_rounds"),
     ("address", "test_command"), ("deep_reviewer", "command"),
     ("codex",), ("codex_models",), ("codex_reasoning",),
 }

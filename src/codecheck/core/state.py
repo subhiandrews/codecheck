@@ -269,24 +269,38 @@ def rounds_key(ref: PRRef) -> str:
     return f"{loop_key('babysit', ref)}:rounds"
 
 
-def babysit_rounds(state: StateStore, ref: PRRef) -> int:
-    """How many unattended babysit runs have pushed to this PR (per PR, never per iteration)."""
+def _count(v) -> int:
+    return v["count"] if isinstance(v, dict) and type(v.get("count")) is int and v["count"] >= 0 else 0
+
+
+def babysit_rounds(state: StateStore, ref: PRRef, head: str) -> int:
+    """How many unattended babysit runs have pushed to this PR (per PR, never per iteration). The count is tied to
+    the head our last push left; when someone else has pushed since, a person has taken over and it starts again."""
     v = state.get(rounds_key(ref))
-    return int(v["count"]) if isinstance(v, dict) and type(v.get("count")) is int else 0
+    return _count(v) if isinstance(v, dict) and v.get("head") == head else 0
 
 
-def note_round(state: StateStore, ref: PRRef, head_before: str, head_after: str) -> int:
-    """Count one round when a run moved the PR's head; a run that only replied or reran a check costs nothing."""
-    if not head_before or not head_after or head_before == head_after:
-        return babysit_rounds(state, ref)
-    return state.update(rounds_key(ref), lambda old: {"count": (old["count"] if isinstance(old, dict) else 0) + 1})["count"]
+def note_round(state: StateStore, ref: PRRef, head_before: str, head_after: str) -> int | None:
+    """Count one round when a run moved the PR's head; a run that only replied or reran a check costs nothing.
+    None when a head could not be read, so the caller can say the round went uncounted."""
+    if not head_before or not head_after:
+        return None
+    if head_before == head_after:
+        return babysit_rounds(state, ref, head_after)
+
+    def bump(old):
+        known = isinstance(old, dict) and old.get("head") == head_before
+        return {"count": (_count(old) if known else 0) + 1, "head": head_after}
+
+    return state.update(rounds_key(ref), bump)["count"]
 
 
 def settled(threads: Sequence[Thread], checks: Sequence[Check], me: str, rounds: int, min_open: int = 3) -> str | None:
     """Why a PR that already had a babysit round needs no more: fewer than `min_open` open threads, every one a
-    code-check Suggestion, and no failing check. A thread of anyone else, or one we cannot classify, never settles."""
+    code-check Suggestion, and no failing check. A thread is one only when the review bot wrote every comment in it
+    and the first carries our finding marker; a person's reply or comment, or a forged header, never settles."""
     # imported here because render reaches precheck, which imports this module
-    from codecheck.core.render import parse_comment
+    from codecheck.core.render import FINDING_MARKER, parse_comment
 
     if rounds < 1 or any(c.state == "fail" for c in checks):
         return None
@@ -295,7 +309,8 @@ def settled(threads: Sequence[Thread], checks: Sequence[Check], me: str, rounds:
         return None
     for t in open_:
         parsed = parse_comment(t.comments[0].body)
-        if parsed is None or parsed["severity"] != "suggestion":
+        if (parsed is None or parsed["severity"] != "suggestion" or not FINDING_MARKER.search(t.comments[0].body)
+                or not all(c.is_bot for c in t.comments)):
             return None
     return f"{len(open_)} suggestion(s) left after round {rounds}: ready for you to merge"
 

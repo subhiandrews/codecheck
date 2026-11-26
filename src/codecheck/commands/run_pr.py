@@ -115,7 +115,10 @@ def run_one(ctx, mode: str, ref, fingerprint: str | None = None, dry_run: bool =
     if fingerprint:
         extra = loop_bookkeeping(ctx, mode, ref, fingerprint, parsed["ok"])
         if head_before:
-            extra["rounds"] = note_round(ctx.state, ref, head_before, _head(ctx, ref))
+            rounds = note_round(ctx.state, ref, head_before, _head(ctx, ref))
+            extra["rounds"] = rounds
+            if rounds is None:
+                extra["rounds_note"] = "the PR head could not be read, so this run was not counted against the round limit"
     ctx.record(new_run_id(), {"type": "headless_run", "pr": str(ref), "mode": mode, "ok": parsed["ok"],
                               "cost_usd": parsed["cost"], "usage": parsed["usage"], "duration_s": duration})
     return {"pr": str(ref), "ok": parsed["ok"], "summary": parsed["summary"], "cost_usd": parsed["cost"],

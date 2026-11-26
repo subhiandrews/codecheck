@@ -109,7 +109,7 @@ def _consider(ctx, mode: str, ref, me: str) -> tuple[WorkItem | None, str | None
     item = babysit_work(pr, threads, checks, me)
     if item is None:
         return None, None
-    rounds = babysit_rounds(ctx.state, ref)
+    rounds = babysit_rounds(ctx.state, ref, pr.head_sha)
     if rounds >= ctx.config.loop.max_babysit_rounds:
         return None, f"babysit round limit ({ctx.config.loop.max_babysit_rounds}) reached: needs a human"
     if why := settled(threads, checks, me, rounds):
