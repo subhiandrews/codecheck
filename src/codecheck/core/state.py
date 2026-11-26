@@ -273,24 +273,26 @@ def _count(v) -> int:
     return v["count"] if isinstance(v, dict) and type(v.get("count")) is int and v["count"] >= 0 else 0
 
 
+UNKNOWN_HEAD = "?"  # stored when a head could not be read: the count is kept until a head can be compared again
+
+
 def babysit_rounds(state: StateStore, ref: PRRef, head: str) -> int:
     """How many unattended babysit runs have pushed to this PR (per PR, never per iteration). The count is tied to
     the head our last push left; when someone else has pushed since, a person has taken over and it starts again."""
     v = state.get(rounds_key(ref))
-    return _count(v) if isinstance(v, dict) and v.get("head") == head else 0
+    return _count(v) if isinstance(v, dict) and v.get("head") in (head, UNKNOWN_HEAD) else 0
 
 
-def note_round(state: StateStore, ref: PRRef, head_before: str, head_after: str) -> int | None:
+def note_round(state: StateStore, ref: PRRef, head_before: str, head_after: str) -> int:
     """Count one round when a run moved the PR's head; a run that only replied or reran a check costs nothing.
-    None when a head could not be read, so the caller can say the round went uncounted."""
-    if not head_before or not head_after:
-        return None
-    if head_before == head_after:
+    When either head could not be read the run is counted anyway and the head is stored as unknown, so one
+    failed read can never restart the count."""
+    if head_before and head_before == head_after:
         return babysit_rounds(state, ref, head_after)
 
     def bump(old):
-        known = isinstance(old, dict) and old.get("head") == head_before
-        return {"count": (_count(old) if known else 0) + 1, "head": head_after}
+        known = isinstance(old, dict) and (not head_before or old.get("head") in (head_before, UNKNOWN_HEAD))
+        return {"count": (_count(old) if known else 0) + 1, "head": head_after or UNKNOWN_HEAD}
 
     return state.update(rounds_key(ref), bump)["count"]
 
@@ -299,13 +301,13 @@ def settled(threads: Sequence[Thread], checks: Sequence[Check], me: str, rounds:
     """Why a PR that already had a babysit round needs no more: fewer than `min_open` open threads, every one a
     code-check Suggestion, and no failing check. A thread is one only when a bot wrote its first comment, with our
     finding marker, and no person has replied while it waits for us; a person's comment or a forged header never
-    settles. An open thread we already answered is not work, but a Warning there still keeps the PR out."""
+    settles. An open thread we already answered, or one gone outdated, is not work, but a Warning there still keeps the PR out."""
     # imported here because render reaches precheck, which imports this module
     from codecheck.core.render import FINDING_MARKER, parse_comment
 
     if rounds < 1 or any(c.state == "fail" for c in checks):
         return None
-    live = [t for t in threads if not t.is_resolved and not t.is_outdated and t.comments]
+    live = [t for t in threads if not t.is_resolved and t.comments]
     if len(live) >= min_open:
         return None
     waiting = {t.id for t in actionable_threads(threads, me)}

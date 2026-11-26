@@ -516,8 +516,8 @@ def test_someone_else_pushing_restarts_the_count(tmp_path):
     assert out["processed"] == 1 and len(claude_calls(fake)) == 1
 
 
-def test_a_run_whose_head_cannot_be_read_says_it_was_not_counted(tmp_path):
-    ctx, provider, fake, _pr = _babysit_setup(tmp_path, "Warning")
+def test_a_run_whose_head_cannot_be_read_is_counted_anyway_and_keeps_the_count(tmp_path):
+    ctx, provider, fake, pr = _babysit_setup(tmp_path, "Warning", rounds=3)
     real_get, real_run, ran = provider.get_pr, fake.run, []
 
     def run(args, **kw):
@@ -532,7 +532,9 @@ def test_a_run_whose_head_cannot_be_read_says_it_was_not_counted(tmp_path):
     fake.run = run
     provider.get_pr = flaky
     out = call(ctx, "loop", "--mode", "babysit")[1]["results"][0]
-    assert out["rounds"] is None and "not counted" in out["rounds_note"]
+    assert out["rounds"] == 4 and "counted as a round" in out["rounds_note"]
+    provider.get_pr = real_get  # the API is back: the next iteration still sees all four rounds
+    assert babysit_rounds(ctx.state, pr.ref, provider.prs[pr.ref].head_sha) == 4
 
 
 def test_a_person_replying_on_a_suggestion_thread_keeps_the_pr_in_the_loop(tmp_path):
@@ -557,11 +559,11 @@ def test_a_corrupt_round_entry_counts_as_zero_and_never_raises(tmp_path):
     assert note_round(ctx.state, pr.ref, "mine9", "next") == 1
 
 
-def test_a_run_whose_head_cannot_be_read_before_it_starts_says_so_too(tmp_path):
+def test_a_run_whose_head_cannot_be_read_before_it_starts_is_counted_too(tmp_path):
     ctx, provider, _fake, pr = _babysit_setup(tmp_path, "Warning")
     provider.get_pr = lambda ref: (_ for _ in ()).throw(RuntimeError("api down"))
     out = call(ctx, "run-pr", "--mode", "babysit", "--pr", str(pr.ref), "--fingerprint", "fp1")[1]
-    assert out["rounds"] is None and "not counted" in out["rounds_note"]
+    assert out["rounds"] == 1 and "counted as a round" in out["rounds_note"]
 
 
 def test_a_state_error_while_counting_a_round_does_not_fail_the_run(tmp_path):
@@ -576,7 +578,7 @@ def test_a_state_error_while_counting_a_round_does_not_fail_the_run(tmp_path):
 
     ctx.state.update = update
     out = call(ctx, "loop", "--mode", "babysit")[1]["results"][0]
-    assert out["ok"] is True and out["rounds"] is None and "not counted" in out["rounds_note"]
+    assert out["ok"] is True and out["rounds"] is None and "could not be saved" in out["rounds_note"]
 
 
 def test_a_warning_we_already_answered_still_keeps_the_pr_out_of_ready(tmp_path):
@@ -603,4 +605,12 @@ def test_answered_suggestions_still_count_toward_the_open_thread_limit(tmp_path)
         old = provider.threads[pr.ref][i]
         ours = ThreadComment(10 + i, "me", "declined", "2026-01-02T00:00:00Z")
         provider.threads[pr.ref][i] = replace(old, comments=(*old.comments, ours))
+    assert call(ctx, "loop", "--mode", "babysit")[1]["processed"] == 1
+
+
+def test_an_outdated_warning_keeps_the_pr_out_of_ready(tmp_path):
+    ctx, provider, _fake, pr = _babysit_setup(tmp_path, "Suggestion", rounds=1)
+    body = "**Warning** · logic\n\nthis is wrong\n<!-- code-check:finding:0123456789ab -->"
+    outdated = Thread("O", "a.py", 3, False, True, (ThreadComment(1, "github-actions[bot]", body, "2026-01-01T00:00:00Z", is_bot=True),))
+    provider.threads[pr.ref].append(outdated)
     assert call(ctx, "loop", "--mode", "babysit")[1]["processed"] == 1
