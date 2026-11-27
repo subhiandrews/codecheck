@@ -11,8 +11,11 @@ we reviewed and the head now. Each inline finding gets one signal:
 
 A signal is a candidate only: an author's reply is not evidence that the code changed, so a person reads the diff
 before any label is written. A mention of us is reported once per PR (`mentions_us`), never counted as a reply.
-`replied_unverified` / `unverified` mean the cited line or the file's patch was unavailable, the compare hit GitHub's
-300-file cap and did not list the file, or the head no longer descends from the reviewed commit (`diverged`).
+`replied_unverified` / `unverified` mean the cited line or the file's patch was unavailable, or the compare hit
+GitHub's 300-file cap or the head no longer descends from the reviewed commit (`diverged`) and the file's text at the
+two commits could not be read either. When the compare is unusable that way the cited file is diffed at the two commits
+instead; such a finding carries `via: contents` and `approximate: true`, because the head also holds the base branch's
+own edits to the file.
 
 Usage:
   python -B evals/deepeval/outcomes.py --posted ~/.local/share/code-check-evals/posted-reviews-2026-11-24.json \
@@ -22,6 +25,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import base64
+import difflib
 import json
 import re
 import subprocess
@@ -29,6 +34,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 NEAR = 10
 COMPARE_CAP = 300  # GitHub lists at most this many changed files for a whole comparison, even when paged
@@ -71,7 +77,7 @@ def touched_old_lines(patch: str) -> set[int]:
     """Old-side line numbers a compare patch removes, plus the old line each insertion sits next to."""
     touched: set[int] = set()
     old = 0
-    for raw in patch.splitlines():
+    for raw in patch.removesuffix("\n").split("\n"):  # GitHub numbers lines by "\n" only; splitlines() also breaks on \f etc.
         hunk = HUNK_RE.match(raw)
         if hunk:
             old = int(hunk.group(1))
@@ -101,6 +107,42 @@ def code_change(files: list[dict], path: str, line: int, near: int, capped: bool
                 return "changed_near"
             return "file_changed"
     return "unknown" if capped else "file_untouched"
+
+
+def _file_lines(gh: Gh, base: str, path: str, sha: str) -> list[str] | None:
+    """The file's lines at one commit, split on "\\n" only (GitHub's numbering); None when it cannot be read."""
+    try:
+        blob = gh(f"{base}/contents/{quote(path, safe='/')}?ref={quote(sha, safe='')}")
+        if not isinstance(blob, dict) or blob.get("encoding") != "base64":
+            return None
+        return base64.b64decode(blob["content"]).decode("utf-8").removesuffix("\n").split("\n")
+    except Exception:  # noqa: BLE001  # best effort: any failure leaves the finding unknown
+        return None
+
+
+def contents_change(gh: Gh, base: str, path: str, line: int, near: int, reviewed: str, head: str,
+                    cache: dict | None = None) -> str:
+    """Compare the cited file's text at the reviewed commit and at the head when the whole-PR compare cannot say.
+
+    The compare is unusable after a merge of the base branch (over the file cap) or a rebase (a different merge base),
+    but one file's text at two commits still is: changed_near, file_changed, file_untouched, or unknown when either
+    copy cannot be read (missing, binary, or too large for the contents endpoint). The result is always approximate:
+    after a rebase or a merge of the base branch, the head also carries whatever the base changed in that file."""
+    if not line:
+        return "unknown"
+    cache = {} if cache is None else cache
+    texts = []
+    for sha in (reviewed, head):
+        if (path, sha) not in cache:  # a failed read is cached too, so it is not retried for the next comment
+            cache[(path, sha)] = _file_lines(gh, base, path, sha)
+        if cache[(path, sha)] is None:
+            return "unknown"
+        texts.append(cache[(path, sha)])
+    # the first two lines are the "---"/"+++" file headers, which touched_old_lines would read as a removal
+    patch = "\n".join(list(difflib.unified_diff(texts[0], texts[1], n=0, lineterm=""))[2:])
+    if not patch:
+        return "file_untouched"
+    return "changed_near" if any(abs(t - line) <= near for t in touched_old_lines(patch)) else "file_changed"
 
 
 def signal(replied: bool, change: str) -> str:
@@ -138,6 +180,7 @@ def collect(entry: dict, gh: Gh, me: str, near: int = NEAR) -> dict:
     mentioned = any(_human(c.get("user"), me) and c["created_at"] > posted_at and mention.search(c.get("body") or "")
                     for c in issue)
     findings = []
+    blobs: dict = {}  # (path, sha) -> lines, shared by every comment on the same file
     by_id = {c["id"]: c for c in everything}
     sizes = {}
     for f in files:  # a renamed file is cited by its old path
@@ -152,7 +195,13 @@ def collect(entry: dict, gh: Gh, me: str, near: int = NEAR) -> dict:
         # without original_line the code change is unknown
         line = full.get("original_line") or 0
         replies = [r for r in everything if r.get("in_reply_to_id") == c["id"] and _human(r.get("user"), me)]
-        change = code_change(files, c["path"], line, near, capped=diverged or len(files) >= COMPARE_CAP)
+        capped = diverged or len(files) >= COMPARE_CAP
+        change = code_change(files, c["path"], line, near, capped=capped)
+        via = None
+        if change == "unknown" and capped and head != reviewed:
+            fallback = contents_change(gh, base, c["path"], line, near, reviewed, head, blobs)
+            if fallback != "unknown":
+                change, via = fallback, "contents"
         severity = KIND_RE.match(c.get("body") or "")
         findings.append({
             "comment_id": c["id"], "path": c["path"], "line": line,
@@ -160,6 +209,7 @@ def collect(entry: dict, gh: Gh, me: str, near: int = NEAR) -> dict:
             "replies": len(replies), "reactions": (c.get("reactions") or {}).get("total_count", 0),
             "code": change, "file_delta": sizes.get(c["path"], "+0/-0"),
             "signal": signal(bool(replies), change),
+            **({"via": via, "approximate": True} if via else {}),
         })
     return {
         "repo": repo, "pr": pr, "review_id": rid, "reviewed_head": reviewed, "head": head,
@@ -200,7 +250,7 @@ def summary(result: dict) -> list[str]:
         for f in p["findings"]:
             lines.append(f"{p['repo']}#{p['pr']} {f['path']}:{f['line']} {f['kind'] or '-'}: {f['signal']} "
                          f"(replies {f['replies']}, reactions {f['reactions']}, code {f['code']} {f['file_delta']}, "
-                         f"pr {p['state']})")
+                         f"pr {p['state']})" + (" via contents (approximate)" if f.get("via") else ""))
     return lines
 
 
