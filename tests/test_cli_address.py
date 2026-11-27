@@ -46,7 +46,7 @@ def test_status_reports_branch_dirty_and_pushability(tmp_path):
 def test_workspace_in_place_refuses_dirty_and_forks_and_creates_worktree_elsewhere(tmp_path):
     ctx, provider, pr, clone, _origin = own_pr_setup(tmp_path)
     code, out = call(ctx, "workspace", "--pr", str(pr.ref))
-    assert out == {"path": str(clone), "created": False, "base_ref": "main", "base": "origin/main", "behind_base": 0, "guidance": None, "project_context": None}
+    assert out == {"path": str(clone), "created": False, "base_ref": "main", "base": "origin/main", "base_fetched": True, "behind_base": 0, "guidance": None, "project_context": None}
 
     (clone / "scratch.txt").write_text("x")
     code, out = call(ctx, "workspace", "--pr", str(pr.ref))
@@ -69,7 +69,8 @@ def test_workspace_in_place_refuses_dirty_and_forks_and_creates_worktree_elsewhe
     assert out["base_ref"] == "main" and out["base"] == "origin/main" and isinstance(out["behind_base"], int)
     for bad in ("-x", "a;b", "$(id)", "a..b"):  # never offered to the skill as a command argument
         provider.prs[pr.ref] = replace(pr, base_ref=bad)
-        assert call(ctx, "workspace", "--pr", str(pr.ref))[1]["base"] is None
+        out = call(ctx, "workspace", "--pr", str(pr.ref))[1]
+        assert out["base"] is None and out["behind_base"] is None and out["base_fetched"] is False
     provider.prs[pr.ref] = pr
 
 
