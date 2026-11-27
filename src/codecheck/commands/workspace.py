@@ -1,4 +1,5 @@
 import hashlib
+import re
 import shutil
 from pathlib import Path
 
@@ -19,6 +20,21 @@ HELP = "Return a safe directory to edit the PR branch in (in place, or an isolat
 
 def add_arguments(p) -> None:
     p.add_argument("--pr", required=True)
+
+
+SAFE_BASE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._/+@-]*")
+
+
+def _base(wt: Git, cfg, pr) -> dict:
+    """Where the skill merges the base from. `base` (`<remote>/<base_ref>`) is only given when the branch name is plain
+    enough to paste into a shell command as it is, and `behind_base` counts the commits it has that `wt` lacks."""
+    ok = SAFE_BASE.fullmatch(pr.base_ref) is not None and ".." not in pr.base_ref
+    base = f"{cfg.remote}/{pr.base_ref}" if ok else None
+    try:
+        behind = wt.behind_count(base) if base else None
+    except CodeCheckError:
+        behind = None
+    return {"base_ref": pr.base_ref, "base": base, "behind_base": behind}
 
 
 def managed_clone(ctx, repo: str) -> Git:
@@ -71,7 +87,7 @@ def run(args, ctx) -> dict:
     if here == ref.repo and ctx.env.get("CODE_CHECK_UNATTENDED") != "1" and ctx.git.current_branch() == pr.head_ref:
         if ctx.git.is_dirty():
             raise CodeCheckError("working tree has uncommitted changes; commit or stash them first")
-        return {"path": str(ctx.git.cwd), "created": False, **_guidance(ctx.git, cfg, pr, "HEAD")}
+        return {"path": str(ctx.git.cwd), "created": False, **_guidance(ctx.git, cfg, pr, "HEAD"), **_base(ctx.git, cfg, pr)}
     base = ctx.git if here == ref.repo else managed_clone(ctx, ref.repo)
     refspec, local_ref = ctx.provider.fetch_refspec(ref)
     if not base.fetch(cfg.remote, refspec):
@@ -106,4 +122,4 @@ def run(args, ctx) -> dict:
     path.parent.mkdir(parents=True, exist_ok=True)
     base.worktree_add_branch(path, branch, local_ref)
     return {"path": str(path), "created": True, "git_dir": str(Path(base.cwd)),
-            **_guidance(base, cfg, pr, local_ref)}
+            **_guidance(base, cfg, pr, local_ref), **_base(Git(ctx.runner, path), cfg, pr)}
