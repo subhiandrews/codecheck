@@ -1,0 +1,379 @@
+{
+  "version": 1,
+  "case_id": "prometheus-prometheus-20550-74d573fd",
+  "repo": "prometheus/prometheus",
+  "pr": 20550,
+  "head_sha": "74d573fd7bf8fa3b1677f41b04bc4740a8be203c",
+  "diff": "diff --git a/tsdb/db.go b/tsdb/db.go\nindex 80b8f7eb0..0b96ca9b2 100644\n--- a/tsdb/db.go\n+++ b/tsdb/db.go\n@@ -1741,24 +1741,14 @@ func (db *DB) compactOOOHead(ctx context.Context) error {\n \treturn nil\n }\n \n-// compactOOO creates a new block per possible block range in the compactor's directory from the OOO Head given.\n-// Each ULID in the result corresponds to a block in a unique time range.\n+// writeOOOHeadBlocks writes the given out-of-order head to dest as one block\n+// per block range and returns the ULIDs of the written blocks. Each block\n+// carries the from-out-of-order compaction hint.\n // The db.cmtx mutex should be held before calling this method.\n-func (db *DB) compactOOO(dest string, oooHead *OOOCompactionHead) (_ []ulid.ULID, err error) {\n-\tdb.logger.Info(\"out-of-order compaction started\")\n-\tstart := time.Now()\n-\n+func (db *DB) writeOOOHeadBlocks(dest string, oooHead *OOOCompactionHead) ([]ulid.ULID, error) {\n \tblockSize := oooHead.ChunkRange()\n \toooHeadMint, oooHeadMaxt := oooHead.MinTime(), oooHead.MaxTime()\n-\tulids := make([]ulid.ULID, 0)\n-\tdefer func() {\n-\t\tif err != nil {\n-\t\t\t// Best effort removal of created block on any error.\n-\t\t\tfor _, uid := range ulids {\n-\t\t\t\t_ = os.RemoveAll(filepath.Join(db.dir, uid.String()))\n-\t\t\t}\n-\t\t}\n-\t}()\n+\tvar ulids []ulid.ULID\n \n \tmeta := &BlockMeta{}\n \tmeta.Compaction.SetOutOfOrder()\n@@ -1767,10 +1757,28 @@ func (db *DB) compactOOO(dest string, oooHead *OOOCompactionHead) (_ []ulid.ULID\n \t\t// Block intervals are half-open: [b.MinTime, b.MaxTime). Block intervals are always +1 than the total samples it includes.\n \t\tuids, err := db.compactor.Write(dest, oooHead.CloneForTimeRange(mint, maxt-1), mint, maxt, meta)\n \t\tif err != nil {\n-\t\t\treturn nil, err\n+\t\t\treturn ulids, err\n \t\t}\n \t\tulids = append(ulids, uids...)\n \t}\n+\treturn ulids, nil\n+}\n+\n+// compactOOO creates a new block per possible block range in the compactor's directory from the OOO Head given.\n+// Each ULID in the result corresponds to a block in a unique time range.\n+// The db.cmtx mutex should be held before calling this method.\n+func (db *DB) compactOOO(dest string, oooHead *OOOCompactionHead) (_ []ulid.ULID, err error) {\n+\tdb.logger.Info(\"out-of-order compaction started\")\n+\tstart := time.Now()\n+\n+\tulids, err := db.writeOOOHeadBlocks(dest, oooHead)\n+\tif err != nil {\n+\t\t// Best effort removal of created block on any error.\n+\t\tfor _, uid := range ulids {\n+\t\t\t_ = os.RemoveAll(filepath.Join(dest, uid.String()))\n+\t\t}\n+\t\treturn nil, err\n+\t}\n \n \tif len(ulids) == 0 {\n \t\tdb.logger.Info(\n@@ -2626,6 +2634,22 @@ func (db *DB) Snapshot(dir string, withHead bool) error {\n \tif _, err := db.compactor.Write(dir, head, mint, maxt+1, nil); err != nil {\n \t\treturn fmt.Errorf(\"snapshot head block: %w\", err)\n \t}\n+\n+\t// The range head used above only covers the samples in the in-order head, so the samples\n+\t// still in the out-of-order head need their own blocks, the same way compactOOO writes them.\n+\tif db.oooWasEnabled.Load() {\n+\t\t// Read the out-of-order head without modifying the source DB, so a snapshot neither\n+\t\t// m-maps the in-memory OOO chunks nor cuts a new WBL segment.\n+\t\toooHead, err := newOOOHeadReadView(context.Background(), db.head)\n+\t\tif err != nil {\n+\t\t\treturn fmt.Errorf(\"get ooo head for snapshot: %w\", err)\n+\t\t}\n+\t\tif oooHead.MinTime() != math.MaxInt64 {\n+\t\t\tif _, err := db.writeOOOHeadBlocks(dir, oooHead); err != nil {\n+\t\t\t\treturn fmt.Errorf(\"snapshot ooo head blocks: %w\", err)\n+\t\t\t}\n+\t\t}\n+\t}\n \treturn nil\n }\n \ndiff --git a/tsdb/db_append_v2_test.go b/tsdb/db_append_v2_test.go\nindex db2716eb9..09b974966 100644\n--- a/tsdb/db_append_v2_test.go\n+++ b/tsdb/db_append_v2_test.go\n@@ -526,45 +526,197 @@ func TestSkippingInvalidValuesInSameTxn_AppendV2(t *testing.T) {\n }\n \n func TestDB_Snapshot_AppendV2(t *testing.T) {\n-\tdb := newTestDB(t)\n+\tconst mint = int64(1414141414000)\n+\n+\ttype point struct {\n+\t\tts    int64\n+\t\tvalue float64\n+\t}\n+\n+\tcases := []struct {\n+\t\tname        string\n+\t\topts        *Options\n+\t\tinOrder     []point\n+\t\toutOfOrder  []point\n+\t\twantSamples int\n+\t\twantSum     float64\n+\t}{\n+\t\t{\n+\t\t\tname: \"in-order samples\",\n+\t\t\tinOrder: func() []point {\n+\t\t\t\tpoints := make([]point, 0, 1000)\n+\t\t\t\tfor i := range 1000 {\n+\t\t\t\t\tpoints = append(points, point{ts: mint + int64(i), value: 1})\n+\t\t\t\t}\n+\t\t\t\treturn points\n+\t\t\t}(),\n+\t\t\twantSamples: 1000,\n+\t\t\twantSum:     1000,\n+\t\t},\n+\t\t{\n+\t\t\tname: \"out-of-order head samples\",\n+\t\t\topts: func() *Options {\n+\t\t\t\topts := DefaultOptions()\n+\t\t\t\topts.OutOfOrderTimeWindow = 60 * time.Minute.Milliseconds()\n+\t\t\t\treturn opts\n+\t\t\t}(),\n+\t\t\tinOrder: func() []point {\n+\t\t\t\tpoints := make([]point, 0, 10)\n+\t\t\t\tfor i := range 10 {\n+\t\t\t\t\tpoints = append(points, point{ts: mint + int64(i)*1000, value: 1})\n+\t\t\t\t}\n+\t\t\t\treturn points\n+\t\t\t}(),\n+\t\t\t// Samples older than the latest in-order sample end up in the\n+\t\t\t// out-of-order head instead of the in-order head block.\n+\t\t\toutOfOrder:  []point{{ts: mint + 5500, value: 2}},\n+\t\t\twantSamples: 11,\n+\t\t\twantSum:     12,\n+\t\t},\n+\t}\n+\n+\tfor _, c := range cases {\n+\t\tt.Run(c.name, func(t *testing.T) {\n+\t\t\topts := DefaultOptions()\n+\t\t\tif c.opts != nil {\n+\t\t\t\topts = c.opts\n+\t\t\t}\n+\t\t\tdb := newTestDB(t, withOpts(opts))\n+\n+\t\t\t// Append the in-order samples in one commit.\n+\t\t\tctx := context.Background()\n+\t\t\tapp := db.AppenderV2(ctx)\n+\t\t\tfor _, p := range c.inOrder {\n+\t\t\t\t_, err := app.Append(0, labels.FromStrings(\"foo\", \"bar\"), 0, p.ts, p.value, nil, nil, storage.AOptions{})\n+\t\t\t\trequire.NoError(t, err)\n+\t\t\t}\n+\t\t\trequire.NoError(t, app.Commit())\n+\n+\t\t\t// Append the out-of-order samples in a separate commit.\n+\t\t\tapp = db.AppenderV2(ctx)\n+\t\t\tfor _, p := range c.outOfOrder {\n+\t\t\t\t_, err := app.Append(0, labels.FromStrings(\"foo\", \"bar\"), 0, p.ts, p.value, nil, nil, storage.AOptions{})\n+\t\t\t\trequire.NoError(t, err)\n+\t\t\t}\n+\t\t\trequire.NoError(t, app.Commit())\n+\n+\t\t\t// Create a snapshot and reopen the DB from it.\n+\t\t\tsnap := t.TempDir()\n+\t\t\trequire.NoError(t, db.Snapshot(snap, true))\n+\t\t\trequire.NoError(t, db.Close())\n+\n+\t\t\tdb = newTestDB(t, withDir(snap), withOpts(opts))\n+\n+\t\t\tquerier, err := db.Querier(mint, mint+10000)\n+\t\t\trequire.NoError(t, err)\n+\t\t\tdefer func() { require.NoError(t, querier.Close()) }()\n+\n+\t\t\tseriesSet := querier.Select(ctx, false, nil, labels.MustNewMatcher(labels.MatchEqual, \"foo\", \"bar\"))\n+\t\t\tvar series chunkenc.Iterator\n+\t\t\tn := 0\n+\t\t\tsum := 0.0\n+\t\t\tfor seriesSet.Next() {\n+\t\t\t\tseries = seriesSet.At().Iterator(series)\n+\t\t\t\tfor series.Next() == chunkenc.ValFloat {\n+\t\t\t\t\t_, v := series.At()\n+\t\t\t\t\tn++\n+\t\t\t\t\tsum += v\n+\t\t\t\t}\n+\t\t\t\trequire.NoError(t, series.Err())\n+\t\t\t}\n+\t\t\trequire.NoError(t, seriesSet.Err())\n+\t\t\trequire.Empty(t, seriesSet.Warnings())\n+\t\t\trequire.Equal(t, c.wantSamples, n)\n+\t\t\trequire.Equal(t, c.wantSum, sum)\n+\t\t})\n+\t}\n+}\n+\n+// TestDB_Snapshot_OutOfOrderHeadNoSideEffects ensures that snapshotting a DB with\n+// samples in the out-of-order head does not modify the source DB. In particular a\n+// snapshot must not m-map the in-memory out-of-order head chunk and must not cut\n+// new WBL segments: the WBL is not truncated afterwards, so a restarted DB would\n+// replay those samples into the head a second time.\n+func TestDB_Snapshot_OutOfOrderHeadNoSideEffects(t *testing.T) {\n+\topts := DefaultOptions()\n+\topts.OutOfOrderTimeWindow = 60 * time.Minute.Milliseconds()\n+\tdb := newTestDB(t, withOpts(opts))\n+\tdir := db.Dir()\n \n-\t// append data\n \tctx := context.Background()\n-\tapp := db.AppenderV2(ctx)\n \tmint := int64(1414141414000)\n-\tfor i := range 1000 {\n-\t\t_, err := app.Append(0, labels.FromStrings(\"foo\", \"bar\"), 0, mint+int64(i), 1.0, nil, nil, storage.AOptions{})\n+\n+\t// Append 10 in-order samples to advance the head, then 10 out-of-order\n+\t// samples that stay in the out-of-order head chunk.\n+\tapp := db.AppenderV2(ctx)\n+\tfor i := range 10 {\n+\t\t_, err := app.Append(0, labels.FromStrings(\"foo\", \"bar\"), 0, mint+int64(i)*1000, 1, nil, nil, storage.AOptions{})\n \t\trequire.NoError(t, err)\n \t}\n \trequire.NoError(t, app.Commit())\n \n-\t// create snapshot\n-\tsnap := t.TempDir()\n-\trequire.NoError(t, db.Snapshot(snap, true))\n+\tapp = db.AppenderV2(ctx)\n+\tfor i := range 10 {\n+\t\t_, err := app.Append(0, labels.FromStrings(\"foo\", \"bar\"), 0, mint+int64(500+i), 2, nil, nil, storage.AOptions{})\n+\t\trequire.NoError(t, err)\n+\t}\n+\trequire.NoError(t, app.Commit())\n+\n+\trequire.Equal(t, 1, countWBLSegments(t, db))\n+\trequire.Equal(t, 10, countHeadOOOSamples(t, db))\n+\n+\t// Taking a snapshot must be a read-only operation.\n+\tfor i := range 2 {\n+\t\trequire.NoError(t, db.Snapshot(t.TempDir(), true), \"snapshot %d\", i)\n+\t\trequire.Equal(t, 1, countWBLSegments(t, db), \"snapshot %d cut a new WBL segment\", i)\n+\t\trequire.Equal(t, 10, countHeadOOOSamples(t, db), \"snapshot %d changed the out-of-order head\", i)\n+\t}\n+\twblSegments := countWBLSegments(t, db)\n+\n \trequire.NoError(t, db.Close())\n \n-\t// reopen DB from snapshot\n-\tdb = newTestDB(t, withDir(snap))\n+\t// Restarting the source DB must not replay samples that were already held in\n+\t// the head when the snapshots were taken. Opening the write log adds one\n+\t// segment for new writes, so only that segment may have been added.\n+\tdb = newTestDB(t, withDir(dir), withOpts(opts))\n+\trequire.Equal(t, wblSegments+1, countWBLSegments(t, db))\n+\trequire.Equal(t, 10, countHeadOOOSamples(t, db))\n+}\n \n-\tquerier, err := db.Querier(mint, mint+1000)\n+// countWBLSegments returns the number of WBL segments of db.\n+func countWBLSegments(t *testing.T, db *DB) int {\n+\tt.Helper()\n+\trequire.NotNil(t, db.head.wbl)\n+\tentries, err := os.ReadDir(db.head.wbl.Dir())\n \trequire.NoError(t, err)\n-\tdefer func() { require.NoError(t, querier.Close()) }()\n+\treturn len(entries)\n+}\n \n-\t// sum values\n-\tseriesSet := querier.Select(context.Background(), false, nil, labels.MustNewMatcher(labels.MatchEqual, \"foo\", \"bar\"))\n-\tvar series chunkenc.Iterator\n-\tsum := 0.0\n-\tfor seriesSet.Next() {\n-\t\tseries = seriesSet.At().Iterator(series)\n-\t\tfor series.Next() == chunkenc.ValFloat {\n-\t\t\t_, v := series.At()\n-\t\t\tsum += v\n+// countHeadOOOSamples returns the number of samples held in the out-of-order\n+// part of the head, both in memory and m-mapped.\n+func countHeadOOOSamples(t *testing.T, db *DB) int {\n+\tt.Helper()\n+\tname, value := index.AllPostingsKey()\n+\tp := db.head.postings.Postings(context.Background(), name, value)\n+\tn := 0\n+\tfor p.Next() {\n+\t\tms := db.head.series.getByID(chunks.HeadSeriesRef(p.At()))\n+\t\tif ms == nil {\n+\t\t\tcontinue\n \t\t}\n-\t\trequire.NoError(t, series.Err())\n+\t\tms.Lock()\n+\t\tif ms.ooo != nil {\n+\t\t\tif c := ms.ooo.oooHeadChunk; c != nil {\n+\t\t\t\tn += len(c.chunk.samples)\n+\t\t\t}\n+\t\t\tfor _, c := range ms.ooo.oooMmappedChunks {\n+\t\t\t\tn += int(c.numSamples)\n+\t\t\t}\n+\t\t}\n+\t\tms.Unlock()\n \t}\n-\trequire.NoError(t, seriesSet.Err())\n-\trequire.Empty(t, seriesSet.Warnings())\n-\trequire.Equal(t, 1000.0, sum)\n+\trequire.NoError(t, p.Err())\n+\treturn n\n }\n \n // TestDB_Snapshot_ChunksOutsideOfCompactedRange_AppendV2 ensures that a snapshot removes chunks samples\ndiff --git a/tsdb/ooo_head_read.go b/tsdb/ooo_head_read.go\nindex fa1be72c8..67ad20529 100644\n--- a/tsdb/ooo_head_read.go\n+++ b/tsdb/ooo_head_read.go\n@@ -402,6 +402,62 @@ func NewOOOCompactionHead(ctx context.Context, head *Head) (*OOOCompactionHead,\n \treturn ch, nil\n }\n \n+// newOOOHeadReadView returns a read-only view of the out-of-order head as a\n+// BlockReader.\n+//\n+// Unlike NewOOOCompactionHead it does not modify the head: it does not m-map the\n+// in-memory OOO chunks and does not cut a new WBL segment. The view also includes\n+// the chunks that are still in memory, so it sees every OOO sample that queries\n+// see. It must only be used while the OOO data cannot be truncated, for example\n+// while holding db.cmtx; callers must not use it for compaction.\n+func newOOOHeadReadView(ctx context.Context, head *Head) (*OOOCompactionHead, error) {\n+\tch := &OOOCompactionHead{\n+\t\thead:       head,\n+\t\tchunkRange: head.chunkRange.Load(),\n+\t\tmint:       math.MaxInt64,\n+\t\tmaxt:       math.MinInt64,\n+\t}\n+\n+\thr := headIndexReader{head: head, mint: ch.mint, maxt: ch.maxt}\n+\tn, v := index.AllPostingsKey()\n+\tp, err := hr.Postings(ctx, n, v)\n+\tif err != nil {\n+\t\treturn nil, err\n+\t}\n+\tp = hr.SortedPostings(p)\n+\n+\tfor p.Next() {\n+\t\tseriesRef := p.At()\n+\t\tms := head.series.getByID(chunks.HeadSeriesRef(seriesRef))\n+\t\tif ms == nil {\n+\t\t\tcontinue\n+\t\t}\n+\n+\t\tms.Lock()\n+\t\tif ms.ooo != nil {\n+\t\t\thasOOOChunks := false\n+\t\t\tif c := ms.ooo.oooHeadChunk; c != nil && len(c.chunk.samples) > 0 {\n+\t\t\t\thasOOOChunks = true\n+\t\t\t\tch.mint = min(ch.mint, c.minTime)\n+\t\t\t\tch.maxt = max(ch.maxt, c.maxTime)\n+\t\t\t}\n+\t\t\tfor _, c := range ms.ooo.oooMmappedChunks {\n+\t\t\t\thasOOOChunks = true\n+\t\t\t\tch.mint = min(ch.mint, c.minTime)\n+\t\t\t\tch.maxt = max(ch.maxt, c.maxTime)\n+\t\t\t}\n+\t\t\tif hasOOOChunks {\n+\t\t\t\tch.postings = append(ch.postings, seriesRef)\n+\t\t\t}\n+\t\t}\n+\t\tms.Unlock()\n+\t}\n+\tif err := p.Err(); err != nil {\n+\t\treturn nil, err\n+\t}\n+\treturn ch, nil\n+}\n+\n // mmapOOOSeriesChunk m-maps OOO chunks for a single series during compaction head creation.\n // It uses deferred unlocking so that the series lock is released even if\n // mmapCurrentOOOHeadChunk panics (e.g. via handleChunkWriteError), preventing\n",
+  "reviewer_outputs": {
+    "architect": [
+      {
+        "anchor": "",
+        "category": "coupling",
+        "file": "tsdb/ooo_head_read.go",
+        "line": 413,
+        "message": "newOOOHeadReadView returns *OOOCompactionHead but silently depends on lastMmapRef==0, which is the only value that makes getOOOSeriesChunks (ooo_head_read.go:114) include the in-memory oooHeadChunk. That contract is not stated, and the series-scan loop is a near copy of NewOOOCompactionHead with different semantics. A later change to the maxMmapRef handling could silently drop the in-memory OOO samples from snapshots. Document that dependency on the type or in the function comment, and keep the test that covers in-memory OOO chunks.",
+        "reviewers": [
+          "architect"
+        ],
+        "severity": "suggestion",
+        "suggestion": ""
+      },
+      {
+        "anchor": "",
+        "category": "lifecycle",
+        "file": "tsdb/db.go",
+        "line": 2648,
+        "message": "If writeOOOHeadBlocks fails inside Snapshot, the OOO blocks it already wrote (it returns the partial ulids) are left in the snapshot dir, as is the in-order head block. compactOOO now cleans up its partial blocks, but Snapshot ignores the returned ulids, so the two callers handle errors differently. Snapshot holds only cmtx and mtx.RLock, not the head appender lock, so the view's mint/maxt are also a point-in-time scan while appends continue. That is acceptable for a snapshot, but it is worth a comment.",
+        "reviewers": [
+          "architect"
+        ],
+        "severity": "suggestion",
+        "suggestion": ""
+      }
+    ],
+    "doc-skeptic": [
+      {
+        "anchor": "",
+        "category": "docs",
+        "file": "tsdb/db_append_v2_test.go",
+        "line": 67,
+        "message": "Comments such as \"Append the in-order samples in one commit\", \"Append the out-of-order samples in a separate commit\" and \"Create a snapshot and reopen the DB from it\" only restate the next lines of code. Only the separate-commit remark carries any why, and it is not stated. Delete them or fold them into one line.",
+        "reviewers": [
+          "doc-skeptic"
+        ],
+        "severity": "suggestion",
+        "suggestion": "\t\t\t// In-order and out-of-order samples go in separate commits so the latter land in the OOO head."
+      }
+    ],
+    "lang-go": [
+      {
+        "anchor": "",
+        "category": "error-handling",
+        "file": "tsdb/db.go",
+        "line": 2648,
+        "message": "Snapshot's OOO error path returns without removing the OOO blocks already written into dir, while compactOOO (refactored in this same change) removes its partial ULIDs on error. The caller gets an error but the snapshot dir keeps a partial set of blocks. Suggest reusing the same best-effort cleanup of the ULIDs returned by writeOOOHeadBlocks.",
+        "reviewers": [
+          "lang-go"
+        ],
+        "severity": "suggestion",
+        "suggestion": "\t\t\tif _, err := db.writeOOOHeadBlocks(dir, oooHead); err != nil {\n\t\t\t\treturn fmt.Errorf(\"snapshot ooo head blocks: %w\", err)\n\t\t\t}"
+      },
+      {
+        "anchor": "",
+        "category": "context",
+        "file": "tsdb/db.go",
+        "line": 2643,
+        "message": "newOOOHeadReadView is called with context.Background(), so the O(series) walk over the head cannot be cancelled when the snapshot request is abandoned. Snapshot has no ctx parameter, so this is a hard-coded choice. Consider plumbing a ctx through Snapshot (the callers have one) and passing it here, as compactOOOHead does with NewOOOCompactionHead.",
+        "reviewers": [
+          "lang-go"
+        ],
+        "severity": "suggestion",
+        "suggestion": ""
+      },
+      {
+        "anchor": "",
+        "category": "naming",
+        "file": "tsdb/db_append_v2_test.go",
+        "line": 640,
+        "message": "New test TestDB_Snapshot_OutOfOrderHeadNoSideEffects lacks the _AppendV2 suffix. Every sibling test in this V2 file carries it (TestDB_Snapshot_AppendV2 at 528, TestDB_Snapshot_ChunksOutsideOfCompactedRange_AppendV2 at 725, TestDB_SnapshotWithDelete_AppendV2 at 771). Rename to match.",
+        "reviewers": [
+          "lang-go"
+        ],
+        "severity": "suggestion",
+        "suggestion": "func TestDB_Snapshot_OutOfOrderHeadNoSideEffects_AppendV2(t *testing.T) {"
+      }
+    ],
+    "performance": [],
+    "pragmatist": [
+      {
+        "anchor": "",
+        "category": "duplication",
+        "file": "tsdb/ooo_head_read.go",
+        "line": 405,
+        "message": "newOOOHeadReadView copies about 45 lines of NewOOOCompactionHead (postings walk, per-series locking, min/max tracking) and differs only by skipping the m-map and WBL cut. Two copies of this logic will drift. Consider factoring the shared scan or giving NewOOOCompactionHead a no-mutate mode. The PR description also says the fix uses NewOOOCompactionHead, but the code uses this new function, so the description should be updated.",
+        "reviewers": [
+          "pragmatist"
+        ],
+        "severity": "suggestion",
+        "suggestion": ""
+      },
+      {
+        "anchor": "",
+        "category": "scope",
+        "file": "tsdb/db_append_v2_test.go",
+        "line": 528,
+        "message": "The existing TestDB_Snapshot_AppendV2 is rewritten into a table-driven test with closures, rather than adding a small separate test as the PR description says (TestDB_Snapshot_WithOutOfOrder_AppendV2, which does not exist in this diff). That makes the diff noisier than needed and hides the original test's intent. Also, the WBL-segment-count assertion in the side-effects test couples to WBL internals. A short separate OOO snapshot test would be simpler to review.",
+        "reviewers": [
+          "pragmatist"
+        ],
+        "severity": "suggestion",
+        "suggestion": ""
+      }
+    ],
+    "security": [],
+    "skeptic": [
+      {
+        "anchor": "",
+        "category": "tests",
+        "file": "tsdb/db_append_v2_test.go",
+        "line": 53,
+        "message": "The new OOO snapshot test only covers one sample that stays in the in-memory OOO head chunk, in a single block range. The other new code paths have no test: m-mapped OOO chunks (the oooMmappedChunks loop in newOOOHeadReadView), OOO data spanning several block ranges (the loop in writeOOOHeadBlocks), and multiple series. A regression in any of them would pass. The side-effects test has 10 in-memory samples and one range too. Add a case with enough OOO samples to force an m-map, and one that spans two block ranges. The non-V2 Snapshot test in db_test.go is also unchanged.",
+        "reviewers": [
+          "skeptic"
+        ],
+        "severity": "suggestion",
+        "suggestion": ""
+      },
+      {
+        "anchor": "",
+        "category": "error-handling",
+        "file": "tsdb/db.go",
+        "line": 2643,
+        "message": "If the OOO block write fails, Snapshot returns an error but leaves the in-order head block and any OOO blocks already written in dir. Callers such as the admin API could then treat a partial snapshot as valid. The refactor now returns the ULIDs written before the failure but Snapshot does not use them to clean up. The same gap existed for the head block, so it is minor, but the new step widens it.",
+        "reviewers": [
+          "skeptic"
+        ],
+        "severity": "suggestion",
+        "suggestion": ""
+      }
+    ]
+  },
+  "aggregator": {
+    "dropped": [
+      {
+        "file": "tsdb/db.go",
+        "line": 2643,
+        "message": "Partial snapshot left in dir when the OOO block write fails.",
+        "reason": "duplicate",
+        "reviewers": [
+          "skeptic"
+        ]
+      },
+      {
+        "file": "tsdb/db.go",
+        "line": 2643,
+        "message": "newOOOHeadReadView is called with context.Background(); plumb a ctx through Snapshot.",
+        "reason": "low-value",
+        "reviewers": [
+          "lang-go"
+        ]
+      },
+      {
+        "file": "tsdb/db_append_v2_test.go",
+        "line": 528,
+        "message": "TestDB_Snapshot_AppendV2 rewritten table-driven instead of a small separate test; WBL segment count assertion couples to internals.",
+        "reason": "low-value",
+        "reviewers": [
+          "pragmatist"
+        ]
+      },
+      {
+        "file": "tsdb/db_append_v2_test.go",
+        "line": 67,
+        "message": "Test comments restate the next lines of code.",
+        "reason": "low-value",
+        "reviewers": [
+          "doc-skeptic"
+        ]
+      }
+    ],
+    "findings": [
+      {
+        "category": "error-handling",
+        "file": "tsdb/db.go",
+        "line": 2648,
+        "message": "When writeOOOHeadBlocks fails, Snapshot returns an error but leaves the in-order head block and any OOO blocks already written in dir. The ULIDs returned on failure are discarded. compactOOO, refactored in this same change, removes its partial blocks on error, so the two callers now handle the same failure differently. The admin API (web/api/v1/api.go:2795) passes the error on and does not clean up dir.",
+        "rated_because": null,
+        "reviewers": [
+          "architect",
+          "skeptic",
+          "lang-go"
+        ],
+        "severity": "suggestion",
+        "suggestion": "\t\t\tif uids, err := db.writeOOOHeadBlocks(dir, oooHead); err != nil {\n\t\t\t\tfor _, uid := range uids {\n\t\t\t\t\t_ = os.RemoveAll(filepath.Join(dir, uid.String()))\n\t\t\t\t}\n\t\t\t\treturn fmt.Errorf(\"snapshot ooo head blocks: %w\", err)\n\t\t\t}"
+      },
+      {
+        "category": "coupling",
+        "file": "tsdb/ooo_head_read.go",
+        "line": 413,
+        "message": "newOOOHeadReadView copies the postings walk and min/max tracking of NewOOOCompactionHead. It also depends on lastMmapRef staying 0, and nothing says so: getOOOSeriesChunks (ooo_head_read.go:114) only includes the in-memory oooHeadChunk when maxMmapRef == 0. If the two copies drift, or someone later sets lastMmapRef here, snapshots could silently lose in-memory OOO samples. Share the scan, or at least document the dependency. The PR description says the fix uses NewOOOCompactionHead, which the code no longer does.",
+        "rated_because": null,
+        "reviewers": [
+          "architect",
+          "pragmatist"
+        ],
+        "severity": "suggestion"
+      },
+      {
+        "category": "tests",
+        "file": "tsdb/db_append_v2_test.go",
+        "line": 53,
+        "message": "The OOO snapshot cases only cover samples that stay in the in-memory OOO head chunk, in one series and one block range. Two new paths have no test: the oooMmappedChunks loop in newOOOHeadReadView and the per-block-range loop in writeOOOHeadBlocks. A regression in either would still pass. Add a case with enough OOO samples to force an m-map and one whose OOO data spans two block ranges.",
+        "rated_because": null,
+        "reviewers": [
+          "skeptic"
+        ],
+        "severity": "suggestion"
+      },
+      {
+        "category": "naming",
+        "file": "tsdb/db_append_v2_test.go",
+        "line": 640,
+        "message": "TestDB_Snapshot_OutOfOrderHeadNoSideEffects is the only test in this file without an AppendV2/AppenderV2 marker. Its siblings are TestDB_Snapshot_AppendV2 (528), TestDB_Snapshot_ChunksOutsideOfCompactedRange_AppendV2 (725) and TestDB_SnapshotWithDelete_AppendV2 (771). The PR description also names a test, TestDB_Snapshot_WithOutOfOrder_AppendV2, that does not exist in the diff.",
+        "rated_because": null,
+        "reviewers": [
+          "lang-go",
+          "pragmatist"
+        ],
+        "severity": "suggestion",
+        "suggestion": "func TestDB_Snapshot_OutOfOrderHeadNoSideEffects_AppendV2(t *testing.T) {"
+      }
+    ]
+  },
+  "expected_posted": [
+    {
+      "file": "tsdb/db.go",
+      "line": 2648,
+      "category": "error-handling",
+      "severity": "suggestion",
+      "inline": true
+    },
+    {
+      "file": "tsdb/db_append_v2_test.go",
+      "line": 53,
+      "category": "tests",
+      "severity": "suggestion",
+      "inline": false
+    },
+    {
+      "file": "tsdb/db_append_v2_test.go",
+      "line": 640,
+      "category": "naming",
+      "severity": "suggestion",
+      "inline": true
+    },
+    {
+      "file": "tsdb/ooo_head_read.go",
+      "line": 413,
+      "category": "coupling",
+      "severity": "suggestion",
+      "inline": true
+    }
+  ],
+  "expected_decision": "APPROVE",
+  "labels": [
+    {
+      "id": "2d1af0aec2c8",
+      "file": "tsdb/db.go",
+      "line": 2648,
+      "severity": "suggestion",
+      "category": "error-handling",
+      "message": "When writeOOOHeadBlocks fails, Snapshot returns an error but leaves the in-order head block and any OOO blocks already written in dir. The ULIDs returned on failure are discarded. compactOOO, refactored in this same change, removes its partial blocks on error, so the two callers now handle the same failure differently. The admin API (web/api/v1/api.go:2795) passes the error on and does not clean up dir.",
+      "label": "expected"
+    },
+    {
+      "id": "31c0dd8f1886",
+      "file": "tsdb/db_append_v2_test.go",
+      "line": 53,
+      "severity": "suggestion",
+      "category": "tests",
+      "message": "The OOO snapshot cases only cover samples that stay in the in-memory OOO head chunk, in one series and one block range. Two new paths have no test: the oooMmappedChunks loop in newOOOHeadReadView and the per-block-range loop in writeOOOHeadBlocks. A regression in either would still pass. Add a case with enough OOO samples to force an m-map and one whose OOO data spans two block ranges.",
+      "label": "expected"
+    },
+    {
+      "id": "9aa9d4f7d24e",
+      "file": "tsdb/db_append_v2_test.go",
+      "line": 640,
+      "severity": "suggestion",
+      "category": "naming",
+      "message": "TestDB_Snapshot_OutOfOrderHeadNoSideEffects is the only test in this file without an AppendV2/AppenderV2 marker. Its siblings are TestDB_Snapshot_AppendV2 (528), TestDB_Snapshot_ChunksOutsideOfCompactedRange_AppendV2 (725) and TestDB_SnapshotWithDelete_AppendV2 (771). The PR description also names a test, TestDB_Snapshot_WithOutOfOrder_AppendV2, that does not exist in the diff.",
+      "label": "expected"
+    },
+    {
+      "id": "0c42dd8a0eaf",
+      "file": "tsdb/ooo_head_read.go",
+      "line": 413,
+      "severity": "suggestion",
+      "category": "coupling",
+      "message": "newOOOHeadReadView copies the postings walk and min/max tracking of NewOOOCompactionHead. It also depends on lastMmapRef staying 0, and nothing says so: getOOOSeriesChunks (ooo_head_read.go:114) only includes the in-memory oooHeadChunk when maxMmapRef == 0. If the two copies drift, or someone later sets lastMmapRef here, snapshots could silently lose in-memory OOO samples. Share the scan, or at least document the dependency. The PR description says the fix uses NewOOOCompactionHead, which the code no longer does.",
+      "label": "expected"
+    }
+  ],
+  "misses": [],
+  "signals": {
+    "tool_calls": 112,
+    "tool_errors": [],
+    "retries": 0,
+    "permission_denials": 0,
+    "agents": [
+      {
+        "name": "2d30fb48-35d0-478e-aae5-c91d95815c3a",
+        "tool_calls": 10,
+        "tool_errors": 0,
+        "turns": 19,
+        "output_tokens": 8553
+      },
+      {
+        "name": "agent-a1a32dc5172567fc2",
+        "tool_calls": 7,
+        "tool_errors": 0,
+        "turns": 9,
+        "output_tokens": 3318
+      },
+      {
+        "name": "agent-a44325596a3afd67a",
+        "tool_calls": 13,
+        "tool_errors": 0,
+        "turns": 17,
+        "output_tokens": 10400
+      },
+      {
+        "name": "agent-a81cbe87b08e22d7c",
+        "tool_calls": 5,
+        "tool_errors": 0,
+        "turns": 6,
+        "output_tokens": 1241
+      },
+      {
+        "name": "agent-ad07a314db8611382",
+        "tool_calls": 21,
+        "tool_errors": 0,
+        "turns": 28,
+        "output_tokens": 13978
+      },
+      {
+        "name": "agent-ae6d124a86e7de93b",
+        "tool_calls": 9,
+        "tool_errors": 0,
+        "turns": 12,
+        "output_tokens": 3254
+      },
+      {
+        "name": "agent-aeea894c0ed45ee22",
+        "tool_calls": 27,
+        "tool_errors": 0,
+        "turns": 41,
+        "output_tokens": 72829
+      },
+      {
+        "name": "agent-afc7b89caba8c6dcb",
+        "tool_calls": 12,
+        "tool_errors": 0,
+        "turns": 16,
+        "output_tokens": 10488
+      },
+      {
+        "name": "agent-aff7469aba24a687e",
+        "tool_calls": 8,
+        "tool_errors": 0,
+        "turns": 10,
+        "output_tokens": 2864
+      }
+    ],
+    "unreadable_lines": 0
+  },
+  "label_status": "confirmed",
+  "repo_private": false,
+  "repo_license": "apache-2.0"
+}

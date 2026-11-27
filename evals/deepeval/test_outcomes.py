@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import subprocess
 
@@ -70,6 +71,73 @@ def test_a_head_that_no_longer_descends_from_the_reviewed_commit_is_unknown():
     assert rebased["diverged"] is True and rebased["findings"][0]["code"] == "unknown"
     descended = collect(ENTRY, _gh(files=files, merge_base="old1"), "me")
     assert descended["diverged"] is False and descended["findings"][0]["code"] == "changed_near"
+
+
+def _with_contents(base, old, new):
+    """Serve a.py's text at the reviewed commit (old1) and the head (new1) through the contents endpoint."""
+    def gh(endpoint):
+        if endpoint.startswith("repos/o/r/contents/a.py?ref="):
+            text = {"old1": old, "new1": new}[endpoint.split("ref=")[1]]
+            return {"encoding": "base64", "content": base64.encodebytes(text.encode()).decode()}
+        return base(endpoint)
+    return gh
+
+
+OLD_TEXT = "\n".join(f"line {i}" for i in range(1, 31)) + "\n"
+
+
+def test_a_capped_compare_falls_back_to_the_cited_files_contents():
+    capped = [{"filename": f"f{i}.py", "patch": PATCH} for i in range(300)]
+    edited = OLD_TEXT.replace("line 12\n", "line 12 changed\n")
+    far = OLD_TEXT.replace("line 29\n", "line 29 changed\n")
+    near = collect(ENTRY, _with_contents(_gh(files=capped), OLD_TEXT, edited), "me")["findings"][0]
+    assert (near["code"], near["signal"], near["via"]) == ("changed_near", "changed_without_reply", "contents")
+    assert near["approximate"] is True  # a merged-in base also edits the file, so a contents diff is never exact
+    assert collect(ENTRY, _with_contents(_gh(files=capped), OLD_TEXT, far), "me")["findings"][0]["code"] == "file_changed"
+    same = collect(ENTRY, _with_contents(_gh(files=capped), OLD_TEXT, OLD_TEXT), "me")["findings"][0]
+    assert same["code"] == "file_untouched" and same["signal"] == "no_response_yet"
+
+
+def test_a_rebased_head_is_read_from_contents_and_marked_approximate():
+    edited = OLD_TEXT.replace("line 11\n", "line 11 changed\n")
+    pr = collect(ENTRY, _with_contents(_gh(merge_base="someone-elses-base", replies=[REPLY]), OLD_TEXT, edited), "me")
+    f = pr["findings"][0]
+    assert pr["diverged"] is True
+    assert (f["code"], f["signal"], f["via"]) == ("changed_near", "candidate_acted_on", "contents")
+    assert f["approximate"] is True
+
+
+def test_a_contents_failure_leaves_the_finding_unknown():
+    def gh(endpoint):
+        if endpoint.startswith("repos/o/r/contents/"):
+            raise subprocess.CalledProcessError(1, "gh", stderr="HTTP 404")
+        return _gh(merge_base="someone-elses-base")(endpoint)
+
+    f = collect(ENTRY, gh, "me")["findings"][0]
+    assert f["code"] == "unknown" and "via" not in f
+
+
+def test_a_form_feed_in_the_file_does_not_shift_the_line_numbers():
+    """GitHub numbers lines by "\\n" only; str.splitlines() would also break on \\x0c and shift every later line."""
+    lines = [f"line {i}" for i in range(1, 31)]
+    lines[2] = "line 3\x0cextra"
+    old = "\n".join(lines) + "\n"
+    edited = old.replace("line 21\n", "line 21 changed\n")  # line 21 is 10 lines from the cited 11: near
+    capped = [{"filename": f"f{i}.py", "patch": PATCH} for i in range(300)]
+    assert collect(ENTRY, _with_contents(_gh(files=capped), old, edited), "me")["findings"][0]["code"] == "changed_near"
+
+
+def test_touched_old_lines_counts_a_form_feed_in_a_context_line_as_one_line():
+    assert touched_old_lines("@@ -10,3 +10,3 @@\n a\x0cb\n-old\n+new\n keep") == {11, 12}
+
+
+def test_a_file_too_large_for_the_contents_api_stays_unknown():
+    def gh(endpoint):
+        if endpoint.startswith("repos/o/r/contents/"):
+            return {"encoding": "none", "content": ""}
+        return _gh(merge_base="someone-elses-base")(endpoint)
+
+    assert collect(ENTRY, gh, "me")["findings"][0]["code"] == "unknown"
 
 
 @pytest.mark.parametrize(("body", "found"), [
@@ -255,6 +323,30 @@ def test_run_skips_unposted_and_summarises():
     assert len(result["prs"]) == 1
     assert summary(result) == [
         "o/r#1 a.py:11 Warning: no_response_yet (replies 0, reactions 1, code file_untouched +0/-0, pr open)"]
+
+
+def test_summary_marks_a_finding_resolved_from_file_contents_as_approximate():
+    capped = [{"filename": f"f{i}.py", "patch": PATCH} for i in range(300)]
+    edited = OLD_TEXT.replace("line 12\n", "line 12 changed\n")
+    result = run({"posted_on": "2026-11-24", "prs": [ENTRY]}, _with_contents(_gh(files=capped), OLD_TEXT, edited))
+    assert summary(result)[0].endswith("pr open) via contents (approximate)")
+
+
+def test_comments_on_one_file_share_one_fetch_per_commit():
+    capped = [{"filename": f"f{i}.py", "patch": PATCH} for i in range(300)]
+    comment = {"path": "a.py", "line": 11, "original_line": 11, "body": "**Warning** · x"}
+    fetched = []
+
+    def gh(endpoint):
+        if endpoint.endswith("/reviews/7/comments"):
+            return [{"id": 100, **comment}, {"id": 101, **comment}, {"id": 102, **comment}]
+        if endpoint.startswith("repos/o/r/contents/"):
+            fetched.append(endpoint)
+        return _with_contents(_gh(files=capped), OLD_TEXT, OLD_TEXT.replace("line 12\n", "line 12 changed\n"))(endpoint)
+
+    findings = collect(ENTRY, gh, "me")["findings"]
+    assert [f["code"] for f in findings] == ["changed_near"] * 3
+    assert len(fetched) == 2  # the reviewed commit and the head, once each, not once per comment
 
 
 def test_null_line_on_the_review_listing_falls_back_to_the_pr_listing():

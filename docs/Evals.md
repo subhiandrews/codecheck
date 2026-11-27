@@ -51,7 +51,7 @@ A golden case freezes one review run: the diff, each reviewer's stored findings,
 
 Because no reviewer runs, replay is exact. It catches a change to the CLI that alters what gets posted. It cannot tell you whether a reviewer prompt is any good. That is why it can run on every commit and in CI without secrets or network.
 
-The repository ships **7 golden cases**. Six come from real pull requests (Guava and Tokio) and one, `seed-pipeline`, is hand-built.
+The repository ships **9 golden cases**. Eight come from real pull requests (Guava, Tokio, Prometheus and Angular) and one, `seed-pipeline`, is hand-built.
 
 ### Live: the part that follows the prompts
 
@@ -122,7 +122,7 @@ All of it is local and scrubbed of secrets before it is written. The scrub is pa
 
 ## Known limits
 
-- The sets are small: 7 golden cases and 5 snippets. The live score is coarse and the calibration estimate is weak.
+- The sets are small: 9 golden cases and 5 snippets. The live score is coarse and the calibration estimate is weak.
 - The evals cover the review panel. The `address-comments` flow records its verdicts in shadow mode, but nothing evaluates them.
 - No eval scores the reviewers with a judge yet. The pair question ("is this the same issue as that concern?") is the better basis for one, and it needs snippets that carry explicit concerns. See `docs/decisions/0023-the-llm-judge-is-advisory-only.md`.
 - The live eval is local, so a contributor who never installs the git hooks never runs it. CI does not backstop that.

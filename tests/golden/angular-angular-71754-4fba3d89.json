@@ -1,0 +1,282 @@
+{
+  "version": 1,
+  "case_id": "angular-angular-71754-4fba3d89",
+  "repo": "angular/angular",
+  "pr": 71754,
+  "head_sha": "4fba3d8948bfecb2a3be00610dcb0c2c56652d62",
+  "diff": "diff --git a/packages/forms/signals/compat/src/compat_structure.ts b/packages/forms/signals/compat/src/compat_structure.ts\nindex 6f706924d8..05c72f70c9 100644\n--- a/packages/forms/signals/compat/src/compat_structure.ts\n+++ b/packages/forms/signals/compat/src/compat_structure.ts\n@@ -143,6 +143,7 @@ export class CompatStructure extends FieldNodeStructure {\n     this.pathKeys = computed(() =>\n       this.parent ? [...this.parent.structure.pathKeys(), this.keyInParent()] : [],\n     );\n+    this.fieldManager.structures.add(this);\n   }\n \n   override getChild(): FieldNode | undefined {\ndiff --git a/packages/forms/signals/src/api/structure.ts b/packages/forms/signals/src/api/structure.ts\nindex bcabbf4d39..c9288c8981 100644\n--- a/packages/forms/signals/src/api/structure.ts\n+++ b/packages/forms/signals/src/api/structure.ts\n@@ -52,6 +52,8 @@ export interface FormOptions<TModel> {\n   /**\n    * The injector to use for dependency injection. If this is not provided, the injector for the\n    * current [injection context](guide/di/dependency-injection-context), will be used.\n+   *\n+   * Resources owned by the form's fields are cleaned up when this injector is destroyed.\n    */\n   injector?: Injector;\n \ndiff --git a/packages/forms/signals/src/errors.ts b/packages/forms/signals/src/errors.ts\nindex 5bd5621d28..db5f5fa42f 100644\n--- a/packages/forms/signals/src/errors.ts\n+++ b/packages/forms/signals/src/errors.ts\n@@ -31,4 +31,5 @@ export const enum RuntimeErrorCode {\n   RENDERED_HIDDEN_FIELD = 1916,\n   UNSUPPORTED_FEATURE = 1920,\n   TEXT_INPUT_NULL_VALUE = 1921,\n+  FORM_INJECTOR_DESTROYED = 1922,\n }\ndiff --git a/packages/forms/signals/src/field/manager.ts b/packages/forms/signals/src/field/manager.ts\nindex 18a9376b7a..5a56a75daa 100644\n--- a/packages/forms/signals/src/field/manager.ts\n+++ b/packages/forms/signals/src/field/manager.ts\n@@ -6,7 +6,7 @@\n  * found in the LICENSE file at https://angular.dev/license\n  */\n \n-import {APP_ID, effect, Injector, untracked} from '@angular/core';\n+import {APP_ID, DestroyRef, effect, Injector, untracked} from '@angular/core';\n import type {FormSubmitOptions} from '../api/types';\n import type {FieldNodeStructure} from './structure';\n \n@@ -22,6 +22,12 @@ export class FormFieldManager {\n   readonly rootName: string;\n   readonly submitOptions: FormSubmitOptions<unknown, unknown> | undefined;\n \n+  private destroyed = false;\n+\n+  get isDestroyed(): boolean {\n+    return this.destroyed;\n+  }\n+\n   constructor(\n     injector: Injector,\n     rootName: string | undefined,\n@@ -30,11 +36,21 @@ export class FormFieldManager {\n     this.injector = injector;\n     this.rootName = rootName ?? `${this.injector.get(APP_ID)}.form${nextFormId++}`;\n     this.submitOptions = submitOptions;\n+\n+    this.injector.get(DestroyRef).onDestroy(() => {\n+      this.destroyed = true;\n+      // Parents are registered before their children. Keep their injectors alive for child cleanup.\n+      const structures = Array.from(this.structures).reverse();\n+      this.structures.clear();\n+      for (const structure of structures) {\n+        structure.destroy();\n+      }\n+    });\n   }\n \n   /**\n-   * Contains all child field structures that have been created as part of the current form.\n-   * New child structures are automatically added when they are created.\n+   * Contains all field structures that have been created as part of the current form.\n+   * New structures are automatically added when they are created.\n    * Structures are destroyed and removed when they are no longer reachable from the root.\n    */\n   readonly structures = new Set<FieldNodeStructure>();\n@@ -55,6 +71,10 @@ export class FormFieldManager {\n   createFieldManagementEffect(root: FieldNodeStructure): void {\n     effect(\n       () => {\n+        if (this.destroyed) {\n+          return;\n+        }\n+\n         const liveStructures = new Set<FieldNodeStructure>();\n         this.markStructuresLive(root, liveStructures);\n \ndiff --git a/packages/forms/signals/src/field/structure.ts b/packages/forms/signals/src/field/structure.ts\nindex c93dc302af..d2ac095d3e 100644\n--- a/packages/forms/signals/src/field/structure.ts\n+++ b/packages/forms/signals/src/field/structure.ts\n@@ -94,6 +94,12 @@ export abstract class FieldNodeStructure {\n \n   /** Lazily initialized injector. */\n   get injector(): DestroyableInjector {\n+    if (this._injector === undefined && this.fieldManager.isDestroyed) {\n+      throw new RuntimeError(\n+        RuntimeErrorCode.FORM_INJECTOR_DESTROYED,\n+        ngDevMode && `Cannot create a field injector after the form's injector has been destroyed.`,\n+      );\n+    }\n     this._injector ??= Injector.create({\n       providers: [],\n       parent: this.fieldManager.injector,\n@@ -303,6 +309,11 @@ export abstract class FieldNodeStructure {\n     prevData: ChildrenData | undefined,\n     forceMaterialize: boolean,\n   ): ChildrenData | undefined {\n+    // Cleanup callbacks can read existing fields while the form is being destroyed.\n+    if (this.fieldManager.isDestroyed) {\n+      return prevData;\n+    }\n+\n     if (!isObject(value)) {\n       // Non-object values have no children. This short-circuit path makes `childrenMap` fast\n       // for primitive-valued fields.\n@@ -472,6 +483,7 @@ export class RootFieldNodeStructure extends FieldNodeStructure {\n   ) {\n     super(logic, node, createChildNode);\n     this.childrenMap = this.createChildrenMap();\n+    this.fieldManager.structures.add(this);\n   }\n }\n \ndiff --git a/packages/forms/signals/test/node/form_lifecycle.spec.ts b/packages/forms/signals/test/node/form_lifecycle.spec.ts\nnew file mode 100644\nindex 0000000000..a42b762715\n--- /dev/null\n+++ b/packages/forms/signals/test/node/form_lifecycle.spec.ts\n@@ -0,0 +1,232 @@\n+/**\n+ * @license\n+ * Copyright Google LLC All Rights Reserved.\n+ *\n+ * Use of this source code is governed by an MIT-style license that can be\n+ * found in the LICENSE file at https://angular.dev/license\n+ */\n+\n+import {\n+  Component,\n+  createEnvironmentInjector,\n+  DestroyRef,\n+  EnvironmentInjector,\n+  inject,\n+  resource,\n+  ResourceRef,\n+  signal,\n+} from '@angular/core';\n+import {TestBed} from '@angular/core/testing';\n+import {FormControl} from '@angular/forms';\n+import {timeout, useAutoTick} from '@angular/private/testing';\n+import {compatForm} from '../../compat/public_api';\n+import {FieldNode} from '../../src/field/node';\n+import {\n+  applyEach,\n+  createManagedMetadataKey,\n+  form,\n+  metadata,\n+  SchemaOrSchemaFn,\n+  validateAsync,\n+} from '../../public_api';\n+\n+describe('form lifecycle', () => {\n+  useAutoTick();\n+\n+  // Release pending validation resources even if the field teardown under test fails.\n+  const resources: ResourceRef<string | undefined>[] = [];\n+\n+  afterEach(() => {\n+    for (const ref of resources) {\n+      ref.destroy();\n+    }\n+    resources.length = 0;\n+  });\n+\n+  function cleanupKey(onDestroy: () => void) {\n+    return createManagedMetadataKey(() => {\n+      inject(DestroyRef).onDestroy(onDestroy);\n+      return true;\n+    });\n+  }\n+\n+  function pendingValidation(loads: AbortSignal[]): SchemaOrSchemaFn<{name: string}> {\n+    return (p) => {\n+      validateAsync(p.name, {\n+        params: ({value}) => value(),\n+        factory: (params) => {\n+          const ref = resource({\n+            params,\n+            loader: ({abortSignal}) => {\n+              loads.push(abortSignal);\n+              return new Promise<string>(() => {});\n+            },\n+          });\n+          resources.push(ref);\n+          return ref;\n+        },\n+        onSuccess: () => undefined,\n+        onError: () => undefined,\n+      });\n+    };\n+  }\n+\n+  it('cleans up root and child fields when the form injector is destroyed before its first tick', () => {\n+    const injector = createEnvironmentInjector([], TestBed.inject(EnvironmentInjector));\n+    const destroyed = jasmine.createSpy('destroyed');\n+    const rootKey = cleanupKey(() => destroyed('root'));\n+    const childKey = cleanupKey(() => destroyed('child'));\n+    const f = form(\n+      signal({name: ''}),\n+      (p) => {\n+        metadata(p, rootKey, () => undefined);\n+        metadata(p.name, childKey, () => undefined);\n+      },\n+      {injector},\n+    );\n+    expect(f().metadata(rootKey)).toBeTrue();\n+    expect(f.name().metadata(childKey)).toBeTrue();\n+\n+    injector.destroy();\n+\n+    expect(destroyed.calls.allArgs()).toEqual([['child'], ['root']]);\n+  });\n+\n+  it('does not create fields or field injectors during teardown', () => {\n+    const injector = createEnvironmentInjector([], TestBed.inject(EnvironmentInjector));\n+    const f = form(signal({child: '', nested: {name: ''}}), {injector});\n+    const child = (f.child() as unknown as FieldNode).structure;\n+    const nested = (f.nested() as unknown as FieldNode).structure;\n+    const root = (f() as unknown as FieldNode).structure;\n+    const rootDestroyRef = root.injector.get(DestroyRef);\n+    const destroyed = jasmine.createSpy('destroyed').and.callFake(() => {\n+      expect(root.injector.get(DestroyRef).destroyed).toBeFalse();\n+      expect(f.nested.name).toBeUndefined();\n+      expect(() => nested.injector).toThrowError(/Cannot create a field injector/);\n+    });\n+    child.injector.get(DestroyRef).onDestroy(destroyed);\n+\n+    injector.destroy();\n+\n+    expect(destroyed).toHaveBeenCalledTimes(1);\n+    expect(rootDestroyRef.destroyed).toBeTrue();\n+    expect(f.nested.name).toBeUndefined();\n+  });\n+\n+  it('cleans up fields when their owning component is destroyed', () => {\n+    const destroyed = jasmine.createSpy('destroyed');\n+    const key = cleanupKey(destroyed);\n+\n+    @Component({template: ''})\n+    class Host {\n+      readonly f = form(signal(''), (p) => metadata(p, key, () => undefined));\n+    }\n+\n+    const fixture = TestBed.createComponent(Host);\n+    expect(fixture.componentInstance.f().metadata(key)).toBeTrue();\n+\n+    fixture.destroy();\n+\n+    expect(destroyed).toHaveBeenCalledTimes(1);\n+  });\n+\n+  for (const placement of ['root', 'child'] as const) {\n+    it(`cleans up a compat ${placement} field when the form injector is destroyed`, () => {\n+      const injector = createEnvironmentInjector([], TestBed.inject(EnvironmentInjector));\n+      const destroyed = jasmine.createSpy('destroyed');\n+      const control = new FormControl('', {nonNullable: true});\n+      const field =\n+        placement === 'root'\n+          ? compatForm(signal(control), {injector})\n+          : compatForm(signal({name: control}), {injector}).name;\n+      // Compat fields do not support metadata rules, so register directly with the field injector.\n+      (field() as unknown as FieldNode).structure.injector.get(DestroyRef).onDestroy(destroyed);\n+\n+      injector.destroy();\n+\n+      expect(destroyed).toHaveBeenCalledTimes(1);\n+    });\n+  }\n+\n+  it('does not clean up removed fields again when the form injector is destroyed', async () => {\n+    const injector = createEnvironmentInjector([], TestBed.inject(EnvironmentInjector));\n+    const destroyed = jasmine.createSpy('destroyed');\n+    const key = cleanupKey(destroyed);\n+    const model = signal(['first', 'second']);\n+    const f = form(model, (p) => applyEach(p, (item) => metadata(item, key, () => undefined)), {\n+      injector,\n+    });\n+    expect(f[0]().metadata(key)).toBeTrue();\n+    expect(f[1]().metadata(key)).toBeTrue();\n+    await timeout();\n+\n+    model.set(['first']);\n+    await timeout();\n+    expect(destroyed).toHaveBeenCalledTimes(1);\n+\n+    expect(() => injector.destroy()).not.toThrow();\n+    expect(destroyed).toHaveBeenCalledTimes(2);\n+  });\n+\n+  it('aborts pending validation and stops reacting after the form injector is destroyed', async () => {\n+    const injector = createEnvironmentInjector([], TestBed.inject(EnvironmentInjector));\n+    const loads: AbortSignal[] = [];\n+    const model = signal({name: 'first'});\n+    form(model, pendingValidation(loads), {injector});\n+    await timeout();\n+    expect(loads.length).toBe(1);\n+    expect(loads[0].aborted).toBeFalse();\n+\n+    injector.destroy();\n+\n+    expect(loads[0].aborted).toBeTrue();\n+    model.set({name: 'second'});\n+    await timeout();\n+    expect(loads.length).toBe(1);\n+  });\n+\n+  it('aborts pending validation when the owning component is destroyed', async () => {\n+    const loads: AbortSignal[] = [];\n+\n+    @Component({template: ''})\n+    class Host {\n+      readonly f = form(signal({name: 'first'}), pendingValidation(loads));\n+    }\n+\n+    const fixture = TestBed.createComponent(Host);\n+    await timeout();\n+    expect(loads.length).toBe(1);\n+    expect(loads[0].aborted).toBeFalse();\n+\n+    fixture.destroy();\n+\n+    expect(loads[0].aborted).toBeTrue();\n+  });\n+\n+  it('keeps validation alive until an explicitly provided injector is destroyed', async () => {\n+    const injector = createEnvironmentInjector([], TestBed.inject(EnvironmentInjector));\n+    const loads: AbortSignal[] = [];\n+\n+    @Component({template: ''})\n+    class Host {\n+      readonly model = signal({name: 'first'});\n+      readonly f = form(this.model, pendingValidation(loads), {injector});\n+    }\n+\n+    const fixture = TestBed.createComponent(Host);\n+    await timeout();\n+    expect(loads.length).toBe(1);\n+\n+    fixture.destroy();\n+\n+    expect(loads[0].aborted).toBeFalse();\n+    fixture.componentInstance.model.set({name: 'second'});\n+    await timeout();\n+    expect(loads.length).toBe(2);\n+    expect(loads[1].aborted).toBeFalse();\n+\n+    injector.destroy();\n+\n+    expect(loads[1].aborted).toBeTrue();\n+  });\n+});\n",
+  "reviewer_outputs": {
+    "architect": [
+      {
+        "anchor": "",
+        "category": "compatibility",
+        "file": "packages/forms/signals/src/field/structure.ts",
+        "line": 97,
+        "message": "The `injector` getter now throws a RuntimeError (new code 1922) once the form's injector is destroyed and the field has no injector yet. Any code that touches a field's lazily created injector after teardown (a computed or validator read, a late async callback, or an external-injector form that outlives its component) used to work and now throws from a getter. The throw sits in a shared accessor, and the PR description says there is no behaviour change beyond cleanup. Consider returning an already-destroyed injector or a no-op, or document this as a behaviour change and add a test for reads after destroy.",
+        "reviewers": [
+          "architect"
+        ],
+        "severity": "warning",
+        "suggestion": ""
+      }
+    ],
+    "doc-skeptic": [],
+    "lang-typescript": [
+      {
+        "anchor": "",
+        "category": "error-handling",
+        "file": "packages/forms/signals/src/field/manager.ts",
+        "line": 46,
+        "message": "The teardown loop has no error isolation. If one structure's destroy() throws (a user onDestroy callback or an R3Injector hook), the loop stops, the remaining structures keep their injectors and pending resources, and the exception aborts the form injector's other onDestroy hooks. The same unguarded call is at manager.ts:85 in the management effect. Wrap each destroy() in try/catch, keep going, and rethrow the first error after the loop.",
+        "reviewers": [
+          "lang-typescript"
+        ],
+        "severity": "warning",
+        "suggestion": "for (const structure of structures) {\n  try {\n    structure.destroy();\n  } catch (e) {\n    firstError ??= {e};\n  }\n}\nif (firstError) throw firstError.e;"
+      },
+      {
+        "anchor": "",
+        "category": "logic",
+        "file": "packages/forms/signals/compat/src/compat_structure.ts",
+        "line": 146,
+        "message": "Adding CompatStructure to the registry makes destroy() reach compat fields, but the compat resources are not owned by the structure's injector. extractControlPropToSignal (compat_field_node.ts:71) and getControlValueSignal create their toSignal subscriptions in getInjectorFromOptions(), which is the root or manager injector. Destroying an orphaned compat child therefore does not release its control subscriptions; only form teardown does. The compat test (form_lifecycle.spec.ts:139-155) passes only because it creates the structure's injector by hand, so it does not check real compat resources.",
+        "reviewers": [
+          "lang-typescript"
+        ],
+        "severity": "warning",
+        "suggestion": null
+      },
+      {
+        "anchor": "",
+        "category": "type-safety",
+        "file": "packages/forms/signals/test/node/form_lifecycle.spec.ts",
+        "line": 104,
+        "message": "The tests cast public form fields to the internal FieldNode with `as unknown as FieldNode` and then read `.structure` and `.injector`. Any rename of these internals breaks the test silently at compile time, and the casts hide that the test depends on internal structure. Expose the structure through a typed test helper, or add a comment explaining why the internal access is needed.",
+        "reviewers": [
+          "lang-typescript"
+        ],
+        "severity": "suggestion",
+        "suggestion": null
+      }
+    ],
+    "performance": [],
+    "pragmatist": [],
+    "security": [],
+    "skeptic": [
+      {
+        "anchor": "",
+        "category": "error-handling",
+        "file": "packages/forms/signals/src/field/manager.ts",
+        "line": 45,
+        "message": "One structure whose injector teardown throws (a user ngOnDestroy or onDestroy callback in a managed metadata key or resource) aborts the loop. `this.structures` is already cleared, so the remaining field injectors are never destroyed and nothing can retry them. That leaks the resources this PR sets out to release. Destroy each structure in its own try/catch and rethrow the first error (or an aggregate) after the loop.",
+        "reviewers": [
+          "skeptic"
+        ],
+        "severity": "warning",
+        "suggestion": "      let error: unknown;\n      for (const structure of structures) {\n        try {\n          structure.destroy();\n        } catch (e) {\n          error ??= e;\n        }\n      }\n      if (error !== undefined) throw error;"
+      },
+      {
+        "anchor": "",
+        "category": "compat",
+        "file": "packages/forms/signals/src/field/manager.ts",
+        "line": 32,
+        "message": "The constructor now calls `injector.get(DestroyRef).onDestroy(...)` unconditionally. `form()` or `compatForm()` will now throw if the given injector is already destroyed (onDestroy on a destroyed injector throws NG0205) or is a custom Injector that cannot resolve DestroyRef. Both worked before, because only APP_ID was needed. For example, `form()` called from an async callback with a captured component injector after the component is destroyed. The PR says there is no breaking change, and no test covers this path.",
+        "reviewers": [
+          "skeptic"
+        ],
+        "severity": "warning",
+        "suggestion": null
+      },
+      {
+        "anchor": "",
+        "category": "behavior",
+        "file": "packages/forms/signals/src/field/structure.ts",
+        "line": 97,
+        "message": "After owner destruction, the `injector` getter throws for any field that has not yet created its injector. Code that legitimately reads a field after teardown (a late-resolving async validator, a template read, an effect cleanup that touches `metadata()` or `validateAsync`) now throws a RuntimeError instead of being a no-op. Only the test's own cleanup callback is covered. Consider whether read paths should degrade instead of throwing.",
+        "reviewers": [
+          "skeptic"
+        ],
+        "severity": "suggestion",
+        "suggestion": null
+      }
+    ]
+  },
+  "aggregator": {
+    "dropped": [
+      {
+        "file": "packages/forms/signals/src/field/manager.ts",
+        "line": 32,
+        "message": "Unconditional injector.get(DestroyRef).onDestroy makes form() throw for destroyed or custom injectors that previously worked.",
+        "reason": "not-verified",
+        "reviewers": [
+          "skeptic"
+        ]
+      },
+      {
+        "file": "packages/forms/signals/src/field/structure.ts",
+        "line": 97,
+        "message": "injector getter now throws RuntimeError after form teardown for fields without an injector.",
+        "reason": "not-verified",
+        "reviewers": [
+          "architect",
+          "skeptic"
+        ]
+      },
+      {
+        "file": "packages/forms/signals/compat/src/compat_structure.ts",
+        "line": 146,
+        "message": "Compat toSignal subscriptions are owned by the root/manager injector, so destroying an orphaned compat structure does not release them.",
+        "reason": "out-of-scope",
+        "reviewers": [
+          "lang-typescript"
+        ]
+      },
+      {
+        "file": "packages/forms/signals/test/node/form_lifecycle.spec.ts",
+        "line": 104,
+        "message": "Tests cast public fields to internal FieldNode via `as unknown as FieldNode`.",
+        "reason": "low-value",
+        "reviewers": [
+          "lang-typescript"
+        ]
+      }
+    ],
+    "findings": [
+      {
+        "category": "error-handling",
+        "file": "packages/forms/signals/src/field/manager.ts",
+        "line": 45,
+        "message": "If one structure's `destroy()` throws during form teardown (for example a user `onDestroy` callback on a field injector), the loop stops. `this.structures` has already been cleared, so the remaining field injectors are never destroyed and their pending resources stay alive, which is the leak this change is meant to fix. Consider destroying each structure in its own try/catch and rethrowing the first error after the loop.",
+        "rated_because": "Both reviewers rated it warning. It only happens when a user cleanup callback throws, which is already an app bug. The existing orphan-cleanup loop (manager.ts:85) and Angular's own injector destroy hooks also stop at the first throw, so the project accepts this pattern; the impact is limited to that error path.",
+        "reviewers": [
+          "skeptic",
+          "lang-typescript"
+        ],
+        "severity": "suggestion",
+        "suggestion": "      let firstError: {e: unknown} | undefined;\n      for (const structure of structures) {\n        try {\n          structure.destroy();\n        } catch (e) {\n          firstError ??= {e};\n        }\n      }\n      if (firstError) throw firstError.e;"
+      }
+    ]
+  },
+  "expected_posted": [
+    {
+      "file": "packages/forms/signals/src/field/manager.ts",
+      "line": 45,
+      "category": "error-handling",
+      "severity": "suggestion",
+      "inline": true
+    }
+  ],
+  "expected_decision": "APPROVE",
+  "labels": [
+    {
+      "id": "1c3c9957b5f0",
+      "file": "packages/forms/signals/src/field/manager.ts",
+      "line": 45,
+      "severity": "suggestion",
+      "category": "error-handling",
+      "message": "If one structure's `destroy()` throws during form teardown (for example a user `onDestroy` callback on a field injector), the loop stops. `this.structures` has already been cleared, so the remaining field injectors are never destroyed and their pending resources stay alive, which is the leak this change is meant to fix. Consider destroying each structure in its own try/catch and rethrowing the first error after the loop.",
+      "label": "expected"
+    }
+  ],
+  "misses": [
+    {
+      "path": "packages/forms/signals/src/field/manager.ts",
+      "line": 72,
+      "author": "JeanMeche",
+      "body": "AGENT: A few architectural considerations regarding this teardown callback:\n\n1. **Placement in `createFieldManagementEffect`**: Registering the host injector's `onDestroy` callback inside `createFieldManagementEffect` conflates effect creation with one-time host lifecycle management. `FormFieldManager` already receives `injector` in its constructor; setting up `DestroyRef.onDestroy` in the constructor is cleaner and ensures teardown is configured regardless of how or when effects are created.\n\n2. **Destruction order (Root before Children)**: `this.structures` is a `Set`, so iteration order is insertion order. Because `RootFieldNodeStructure` is instantiated before its children, this loop destroys the root field first, followed by child fields. In Angular/DI lifecycles, teardown is typically bottom-up (children before parent/root). If a child field's `onDestroy` callback or managed metadata cleanup attempts to read from `root` or access services via root, the root injector has already been destroyed (causing `NG0205: Injector has already been destroyed`). Reversing the order or traversing bottom-up would prevent this.\n\n3. **Re-entrancy / Mutation hazard**: If any cleanup logic accesses another field on the form during teardown, `ChildFieldNodeStructure` will call `this.structures.add(this)` while iterating. Taking a snapshot (e.g. `Array.from(this.structures).reverse()`) and maintaining an `isDestroyed` guard avoids re-entrancy bugs and prevents zombie field allocation after host teardown."
+    },
+    {
+      "path": "packages/forms/signals/compat/src/compat_structure.ts",
+      "line": 146,
+      "author": "JeanMeche",
+      "body": "AGENT: Note an existing limitation with child compat nodes: in `packages/forms/signals/compat/src/compat_field_node.ts`, `extractControlPropToSignal` resolves its injector via `getInjectorFromOptions`, which returns `root.structure.injector` for child compat fields.\n\nBecause child compat structures don't own the injector used for `toSignal(control.statusChanges)`, removing an individual child compat field (e.g. from an array of FormControls) calls `destroy()` on an undefined `_injector`, leaving the subscription active on `root` until the entire form is destroyed.\n\nWhile adding `CompatStructure` to `structures` ensures that whole-form teardown cleans up anything registered on the compat structure's injector, child compat removal subscriptions remain retained on `root`."
+    },
+    {
+      "path": "packages/forms/signals/src/field/structure.ts",
+      "line": 223,
+      "author": "JeanMeche",
+      "body": "AGENT: Heads up: this optional-chaining fix (`this._injector?.destroy()`) has already been merged into `main` via #71737 (commit `67e5069327`). Rebasing on the latest `main` will clear up this change from the diff."
+    },
+    {
+      "path": "packages/forms/signals/test/node/form_lifecycle.spec.ts",
+      "line": 37,
+      "author": "JeanMeche",
+      "body": "AGENT: Minor cleanup: `const resources: ResourceRef<string | undefined>[] = [];` is set up and cleared in `afterEach`, but none of the specs in this file push into `resources`."
+    }
+  ],
+  "signals": {
+    "tool_calls": 118,
+    "tool_errors": [],
+    "retries": 0,
+    "permission_denials": 0,
+    "agents": [
+      {
+        "name": "2d30fb48-35d0-478e-aae5-c91d95815c3a",
+        "tool_calls": 11,
+        "tool_errors": 0,
+        "turns": 25,
+        "output_tokens": 13305
+      },
+      {
+        "name": "agent-a1c8ba03b75db7ba3",
+        "tool_calls": 10,
+        "tool_errors": 0,
+        "turns": 14,
+        "output_tokens": 5936
+      },
+      {
+        "name": "agent-a1d4e7e45d1cbb18c",
+        "tool_calls": 11,
+        "tool_errors": 0,
+        "turns": 13,
+        "output_tokens": 4215
+      },
+      {
+        "name": "agent-a762deb36c65777f3",
+        "tool_calls": 9,
+        "tool_errors": 0,
+        "turns": 11,
+        "output_tokens": 3302
+      },
+      {
+        "name": "agent-a9afd700717c0e28f",
+        "tool_calls": 5,
+        "tool_errors": 0,
+        "turns": 6,
+        "output_tokens": 1005
+      },
+      {
+        "name": "agent-aadb16c09a0139a47",
+        "tool_calls": 11,
+        "tool_errors": 0,
+        "turns": 14,
+        "output_tokens": 6859
+      },
+      {
+        "name": "agent-ade4449445b19e3e3",
+        "tool_calls": 11,
+        "tool_errors": 0,
+        "turns": 14,
+        "output_tokens": 5868
+      },
+      {
+        "name": "agent-ae1c9182bd3d13e65",
+        "tool_calls": 29,
+        "tool_errors": 0,
+        "turns": 44,
+        "output_tokens": 90522
+      },
+      {
+        "name": "agent-af2e7f3036df4a008",
+        "tool_calls": 21,
+        "tool_errors": 0,
+        "turns": 30,
+        "output_tokens": 15435
+      }
+    ],
+    "unreadable_lines": 0
+  },
+  "label_status": "confirmed",
+  "repo_private": false,
+  "repo_license": "mit"
+}
