@@ -565,6 +565,7 @@ def test_address_comments_merges_base_first_and_owns_ci_fixing():
         text = (REPO / root / "address-comments/SKILL.md").read_text()
         assert "merge --no-edit <base>" in text and "commit --no-edit" in text and "never rebase" in text
         assert text.index("merge --no-edit") < text.index("code-check threads --pr")
+        assert "<pre-merge>" in text and "pull --no-rebase" in text  # a failed merge push must not strand the worktree or rebase the merge
         for cmd in ("attempt --pr", "check-log --pr", "rerun-check --pr"):
             assert cmd in text
         babysit = (REPO / root / "babysit-pr/SKILL.md").read_text()
