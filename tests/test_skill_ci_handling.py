@@ -14,27 +14,24 @@ def _step(skill: str, number: int) -> str:
     return next(line for line in text.splitlines() if line.startswith(prefix))
 
 
-def test_babysit_goes_on_to_the_ci_step_when_address_comments_has_nothing_to_address():
-    step = _step("babysit-pr", 2)
-    assert "nothing to address" in step
-    assert "does not end this run" in step and "step 3" in step
-
-
-def test_address_comments_names_failing_checks_even_when_it_has_nothing_to_address():
+def test_address_comments_reaches_the_ci_step_when_it_has_nothing_to_address():
     nothing = _step("address-comments", 3)
-    assert "failing" in nothing and "code-check checks --pr <PR>" in nothing
+    assert "code-check checks --pr <PR>" in nothing and "skip to step 12" in nothing and "nothing to address" in nothing
 
 
-def test_address_comments_final_report_carries_the_failing_checks():
-    report = _step("address-comments", 12)
-    assert "code-check checks --pr <PR>" in report
-    assert "CI:" in report and "failing" in report and "babysit-pr" in report
+def test_address_comments_final_report_carries_the_ci_outcome():
+    report = _step("address-comments", 13)
+    assert "CI:" in report and "unrelated or flaky" in report and "need a human" in report
 
 
-def test_babysit_reruns_a_check_it_judges_unrelated_or_flaky_and_reports_it():
+def test_address_comments_reruns_a_check_it_judges_unrelated_or_flaky_and_reports_it():
     """#111: a check judged unrelated stayed red for ever, so a merge rule that needs green CI stuck the PR."""
-    text = (REPO / "skills" / "babysit-pr" / "SKILL.md").read_text()
-    step = next(line for line in text.splitlines() if line.lstrip().startswith("c. "))
+    text = (REPO / "skills" / "address-comments" / "SKILL.md").read_text()
+    step = next(line for line in text.splitlines() if line.lstrip().startswith("c. Decide whether THIS PR"))
     assert "code-check rerun-check --pr <PR> --check <name>" in step and "once" in step
-    report = _step("babysit-pr", 4)
-    assert "rerun" in report
+    assert "(<r> rerun)" in _step("address-comments", 13)
+
+
+def test_babysit_delegates_comments_and_ci_to_address_comments():
+    step = _step("babysit-pr", 1)
+    assert "address-comments" in step and "failing CI" in step

@@ -475,9 +475,8 @@ def test_long_running_commands_carry_bash_timeout_guidance():
     for skill in ("review-pr", "babysit-pr"):
         text = (REPO / f"skills/{skill}/SKILL.md").read_text()
         assert "run_in_background" in text and "code-check loop --mode" in text
-    for skill in ("address-comments", "babysit-pr"):
-        text = (REPO / f"skills/{skill}/SKILL.md").read_text()
-        assert "600000" in text and "push --pr" in text
+    text = (REPO / "skills/address-comments/SKILL.md").read_text()
+    assert "600000" in text and "push --pr" in text
     assert "code-check cleanup --run" in (REPO / "skills/review-local/SKILL.md").read_text()
 
 
@@ -493,14 +492,13 @@ def test_security_argument_is_documented_and_wired():
         assert "`--performance`" in lines[0] and "performance" in frontmatter(text)["argument-hint"]
         assert "`--full`" in lines[0] and "full" in frontmatter(text)["argument-hint"]
         assert "skips routing" in text and "`panel.routing`" in text
-    for name in ("address-comments", "babysit-pr"):
-        assert "guidance" in (REPO / f"skills/{name}/SKILL.md").read_text()
+    assert "guidance" in (REPO / "skills/address-comments/SKILL.md").read_text()
 
 
 def test_address_comments_self_reviews_once_before_push():
     text = (REPO / "skills/address-comments/SKILL.md").read_text()
     assert text.count("`code-check:review-local`") == 1
-    assert text.index("`code-check:review-local`") < text.index("push --pr")
+    assert text.index("`code-check:review-local`") < text.index("7. Run `code-check --cwd <WS> push --pr")
     assert "exactly once" in text and "code-check --cwd <WS> <subcommand>" in text
     codex = (REPO / "codex/skills/address-comments/SKILL.md").read_text()
     assert "$review-local" in codex and "code-check guidance evidence" in codex
@@ -560,3 +558,15 @@ def test_review_pr_rules_allow_the_feedback_question_they_now_ask():
     text = (REPO / "skills/review-pr/SKILL.md").read_text()
     rules = text.split("## Rules")[1].split("## Feedback")[0]
     assert "feedback" in rules.lower().split("ask no questions")[1].split("\n")[0]
+
+
+def test_address_comments_merges_base_first_and_owns_ci_fixing():
+    for root in ("skills", "codex/skills"):
+        text = (REPO / root / "address-comments/SKILL.md").read_text()
+        assert "merge --no-edit <base>" in text and "commit --no-edit" in text and "never rebase" in text
+        assert text.index("merge --no-edit") < text.index("code-check threads --pr")
+        assert "<pre-merge>" in text and "pull --no-rebase" in text  # a failed merge push must not strand the worktree or rebase the merge
+        for cmd in ("attempt --pr", "check-log --pr", "rerun-check --pr"):
+            assert cmd in text
+        babysit = (REPO / root / "babysit-pr/SKILL.md").read_text()
+        assert "rerun-check" not in babysit and "check-log" not in babysit

@@ -78,3 +78,4 @@ Records dated before 2026-11-20 were reconstructed from the original design spec
 - [0057-hand-off-comments-get-related-findings-by-shared-words.md](0057-hand-off-comments-get-related-findings-by-shared-words.md): hand-off comments get related findings by shared words
 - [0058-the-skeptic-checks-that-tests-reach-the-changed-code.md](0058-the-skeptic-checks-that-tests-reach-the-changed-code.md): The skeptic checks that tests reach the changed code
 - [0059-a-preference-verdict-counts-as-a-dispute-for-guidance-learning.md](0059-a-preference-verdict-counts-as-a-dispute-for-guidance-learning.md): A preference verdict counts as a dispute for guidance learning
+- [0060-address-comments-merges-the-base-and-fixes-failing-ci.md](0060-address-comments-merges-the-base-and-fixes-failing-ci.md): Address-comments merges the base and fixes failing CI

@@ -52,8 +52,6 @@ SUBSTITUTIONS = {
         FEEDBACK_RULE,
         (r" With no argument it works your open PRs .*? Use under /loop to keep your PRs moving\.", ""),
         (r"`code-check:address-comments`", "`$address-comments`"),
-        (r"with the Bash tool's maximum timeout of 600000 ms \(tests gate the push; handle a slow test run and a refused push as in address-comments\)",
-         "and allow up to 10 minutes for the configured tests to finish, as in address-comments"),
         QUEUE_RULE,
     ),
 }

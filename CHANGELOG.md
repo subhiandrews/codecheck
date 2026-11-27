@@ -2,6 +2,12 @@
 
 User-visible changes per release, newest first. Earlier releases: `git log`. The top entry must match `VERSION` (`tests/test_changelog.py`).
 
+## [1.8.0]
+
+### Changed
+- `address-comments` first merges the PR's base branch into its worktree (never a rebase; a non-mechanical conflict stops the run) and pushes it behind the test gate.
+- `address-comments` now also fixes failing CI checks, so `babysit-pr` only loops and invokes it.
+
 ## [1.7.3]
 
 ### Changed
